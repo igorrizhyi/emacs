@@ -396,6 +396,33 @@ For example, if current terminal is 'my_prod', cycles through 'my_prod', 'my_pro
                                 (format-time-string "%H:%M:%S" access-time)
                               "never")))
               (message "  %s (%s)" id time-str)))
+          
+          ;; Create completion choices and prompt user
+          ;; Use completion system with proper ordering preservation
+          (let ((choice (cond
+                         ;; For ivy, disable sorting to preserve our order
+                         ((and (boundp 'ivy-mode) ivy-mode)
+                          (let ((ivy-sort-functions-alist nil))
+                            (ivy-read "Switch to terminal (recent first): " choices)))
+                         ;; For vertico, disable sorting
+                         ((and (boundp 'vertico-mode) vertico-mode)
+                          (let ((vertico-sort-function nil))
+                            (completing-read "Switch to terminal (recent first): " choices nil t)))
+                         ;; For helm, disable sorting
+                         ((and (boundp 'helm-mode) helm-mode)
+                          (let ((helm-candidate-sort-fn nil))
+                            (completing-read "Switch to terminal (recent first): " choices nil t)))
+                         ;; For default completing-read, try to preserve order
+                         (t
+                          (let ((completion-cycle-threshold nil)
+                                (read-file-name-completion-ignore-case nil))
+                            (completing-read "Switch to terminal (recent first): " choices nil t))))))
+            (when choice
+              (let ((terminal (cdr (assoc choice choices))))
+                (switch-to-buffer (plist-get terminal :buffer))
+                ;; Update access time for the terminal we just switched to
+                (claude-code-terminal-update-last-focused))))
+
       (if active-terminals
           (message "No other terminal buffers (current terminal excluded)")
         (message "No active terminal buffers"))))))
