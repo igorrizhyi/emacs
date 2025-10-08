@@ -380,19 +380,23 @@ Returns a plist with :success, :stdout, :stderr, :exit-code, :timeout, :working-
         (setq-local mode-line-format mode-line-format)
         (when (eq mode-line-format nil)
           (setq-local mode-line-format (default-value 'mode-line-format)))
-        ;; Add terminal ID as centered header line with proper styling
+        ;; Add terminal ID as centered header line with border on entire header
         (setq-local header-line-format
                     '(:eval (when (bound-and-true-p claude-code-terminal-id)
                               (let* ((text (format " %s " claude-code-terminal-id))
                                      (width (window-width))
-                                     (padding (max 0 (/ (- width (length text)) 2))))
-                                (concat 
-                                 (make-string padding ?\s)
-                                 (propertize text 
-                                           'face '(:background "#3c3c3c" 
-                                                  :foreground "#ffffff" 
-                                                  :box (:line-width 2 :color "#666666" :style released-button)
-                                                  :weight bold)))))))
+                                     (padding (max 0 (/ (- width (length text)) 2)))
+                                     (full-line (concat (make-string padding ?\s) text (make-string padding ?\s))))
+                                (propertize full-line
+                                          'face '(:background "#2d2d2d" 
+                                                 :foreground "#ffffff" 
+                                                 :box (:line-width 1 :color "#555555" :style released-button)
+                                                 :weight bold
+                                                 :height 1.1))))))
+        ;; Also set a custom face for the header line itself to ensure border wraps
+        (face-remap-add-relative 'header-line 
+                                '(:box (:line-width 2 :color "#666666" :style released-button)
+                                  :background "#2d2d2d"))
         ;; Add some space after header line by using window margins
         (setq-local window-margins '(0 . 0))
         ;; Add an empty overlay at the beginning of the buffer for spacing
