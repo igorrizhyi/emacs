@@ -380,10 +380,14 @@ Returns a plist with :success, :stdout, :stderr, :exit-code, :timeout, :working-
         ;; (setq-local mode-line-format mode-line-format)
         ;; (when (eq mode-line-format nil)
         ;;   (setq-local mode-line-format (default-value 'mode-line-format)))
-        ;; Add terminal ID as simple header bar
+        ;; Add terminal ID as centered header bar with bold font
         (setq-local header-line-format
                     '(:eval (when (bound-and-true-p claude-code-terminal-id)
-                              claude-code-terminal-id)))
+                              (let* ((text claude-code-terminal-id)
+                                     (width (window-width))
+                                     (padding (max 0 (/ (- width (length text)) 2))))
+                                (concat (make-string padding ?\s)
+                                        (propertize text 'face '(:weight bold)))))))
         ;; Also set a custom face for the header line itself to ensure border wraps
         ;; (face-remap-add-relative 'header-line
         ;;                         '(:box (:line-width 2 :color "#666666" :style released-button)
