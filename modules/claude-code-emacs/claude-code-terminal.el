@@ -364,10 +364,33 @@ Returns a plist with :success, :stdout, :stderr, :exit-code, :timeout, :working-
     map)
   "Keymap for Claude Code terminal mode.")
 
+(defun claude-code-terminal-mode-line-format ()
+  "Generate mode line format showing terminal ID."
+  (when (bound-and-true-p claude-code-terminal-id)
+    (propertize (format " [Terminal: %s]" claude-code-terminal-id)
+                'face 'mode-line-emphasis)))
+
 (define-minor-mode claude-code-terminal-mode
   "Minor mode for Claude Code terminal buffers."
   :lighter " CC-Term"
-  :keymap claude-code-terminal-mode-map)
+  :keymap claude-code-terminal-mode-map
+  (if claude-code-terminal-mode
+      (progn
+        ;; Ensure mode line is visible in terminal buffers
+        (setq-local mode-line-format mode-line-format)
+        (when (eq mode-line-format nil)
+          (setq-local mode-line-format (default-value 'mode-line-format)))
+        ;; Add terminal ID to mode line
+        (setq-local mode-line-misc-info
+                    (append mode-line-misc-info
+                            '((:eval (claude-code-terminal-mode-line-format)))))
+        ;; Force mode line update
+        (force-mode-line-update))
+    ;; Remove terminal ID from mode line when mode is disabled
+    (setq-local mode-line-misc-info
+                (remove '(:eval (claude-code-terminal-mode-line-format))
+                        mode-line-misc-info))
+    (force-mode-line-update)))
 
 (defun claude-code-terminal-apply-large-font ()
   "Apply large font to Claude terminal buffers directly without scaling."
