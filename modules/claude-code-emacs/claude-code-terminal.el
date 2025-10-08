@@ -292,6 +292,53 @@ Returns a plist with :success, :stdout, :stderr, :exit-code, :timeout, :working-
 
 ;;; Interactive Commands
 
+(defun claude-code-terminal-cycle-prefix ()
+  "Cycle through terminals with the same prefix as the current terminal.
+For example, if current terminal is 'my_prod', cycles through 'my_prod', 'my_prod_1', 'my_prod_2', etc."
+  (interactive)
+  (let ((current-id (claude-code-terminal-get-current-id)))
+    (unless current-id
+      (user-error "Not in a Claude terminal buffer"))
+    
+    (claude-code-terminal-cleanup-dead-buffers)
+    (let* ((active-terminals (claude-code-terminal-list-active))
+           ;; Extract prefix (everything before the last underscore and number)
+           (prefix (if (string-match "^\\(.+\\)_[0-9]+$" current-id)
+                       (match-string 1 current-id)
+                     current-id))
+           ;; Find all terminals with the same prefix
+           (matching-terminals 
+            (seq-filter (lambda (term)
+                          (let ((term-id (plist-get term :terminal-id)))
+                            (or (string= term-id prefix)
+                                (string-match (concat "^" (regexp-quote prefix) "_[0-9]+$") term-id))))
+                        active-terminals))
+           ;; Sort terminals by ID for consistent cycling order
+           (sorted-terminals 
+            (sort matching-terminals 
+                  (lambda (a b)
+                    (let ((id-a (plist-get a :terminal-id))
+                          (id-b (plist-get b :terminal-id)))
+                      ;; Sort by name, treating numbers properly
+                      (string< id-a id-b)))))
+           ;; Find current terminal index
+           (current-index 
+            (seq-position sorted-terminals current-id 
+                         (lambda (term id) (string= (plist-get term :terminal-id) id))))
+           ;; Calculate next index (wrap around)
+           (next-index (if current-index
+                          (mod (1+ current-index) (length sorted-terminals))
+                        0)))
+      
+      (if (< (length matching-terminals) 2)
+          (message "Only one terminal with prefix '%s' found" prefix)
+        (let ((next-terminal (nth next-index sorted-terminals)))
+          (switch-to-buffer (plist-get next-terminal :buffer))
+          (message "Switched to terminal: %s (%d/%d)" 
+                   (plist-get next-terminal :terminal-id)
+                   (1+ next-index) 
+                   (length sorted-terminals)))))))
+
 (defun claude-code-terminal-switch ()
   "Switch to a terminal buffer."
   (interactive)
@@ -361,6 +408,7 @@ Returns a plist with :success, :stdout, :stderr, :exit-code, :timeout, :working-
     (define-key map (kbd "C-c C-c") (lambda () (interactive) (vterm-send-C-c)))
     (define-key map (kbd "C-c C-k") #'claude-code-terminal-kill)
     (define-key map (kbd "C-c C-s") #'claude-code-terminal-switch)
+    (define-key map (kbd "C-c C-t") #'claude-code-terminal-cycle-prefix)
     map)
   "Keymap for Claude Code terminal mode.")
 
