@@ -11,6 +11,7 @@
 ;; (load-file (expand-file-name "modules/monet/monet.el" doom-user-dir))
 (add-load-path! "themes")
 (add-to-list 'load-path (expand-file-name "modules/monet" doom-user-dir))
+(add-to-list 'load-path (expand-file-name "modules/claude-code-emacs" doom-user-dir))
 
 ;; Load custom modules
 (require 'my-terminal)
@@ -25,6 +26,7 @@
 (require 'my-external-file-indicator)
 (require 'my-jump-animation)
 (require 'my-spacious-padding)
+(require' claude-code-emacs)
 
 ;; Optimize general Emacs responsiveness
 (setq gc-cons-threshold (* 100 1024 1024))  ; 100MB instead of 800KB
@@ -503,7 +505,9 @@
 
 ;; Remap go to definition from gd to ge
 (map! :map evil-normal-state-map
-      "ge" #'+lookup/definition)  ; Go to definition with ge instead of gd
+      "ge" #'+lookup/definition   ; Go to definition with ge instead of gd
+      "<return>" #'+lookup/definition  ; Go to definition with Return key
+      "C-w" #'kill-current-buffer)  ; Kill buffer with C-w
 
 ;; Configure treemacs to open files in existing splits (most recent window)
 (after! treemacs

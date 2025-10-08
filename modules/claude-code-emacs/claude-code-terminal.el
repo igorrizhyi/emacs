@@ -358,7 +358,7 @@ Returns a plist with :success, :stdout, :stderr, :exit-code, :timeout, :working-
 
 (defvar claude-code-terminal-mode-map
   (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "C-c C-c") #'claude-code-terminal-start-claude-chat)
+    (define-key map (kbd "C-c C-c") (lambda () (interactive) (vterm-send-C-c)))
     (define-key map (kbd "C-c C-k") #'claude-code-terminal-kill)
     (define-key map (kbd "C-c C-s") #'claude-code-terminal-switch)
     map)
