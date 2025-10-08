@@ -340,18 +340,27 @@ For example, if current terminal is 'my_prod', cycles through 'my_prod', 'my_pro
                    (length sorted-terminals)))))))
 
 (defun claude-code-terminal-switch ()
-  "Switch to a terminal buffer."
+  "Switch to a terminal buffer, ordered by most recent usage."
   (interactive)
   (claude-code-terminal-cleanup-dead-buffers)
   (let ((active-terminals (claude-code-terminal-list-active)))
     (if active-terminals
-        (let* ((choices (mapcar (lambda (term)
+        ;; Sort terminals by recent usage (buffer-list order)
+        (let* ((sorted-terminals 
+                (sort active-terminals
+                      (lambda (a b)
+                        (let ((buf-a (plist-get a :buffer))
+                              (buf-b (plist-get b :buffer)))
+                          ;; Sort by position in buffer-list (most recent first)
+                          (< (or (cl-position buf-a (buffer-list)) 9999)
+                             (or (cl-position buf-b (buffer-list)) 9999))))))
+               (choices (mapcar (lambda (term)
                                   (cons (format "%s [%s]" 
                                                (plist-get term :buffer-name)
                                                (plist-get term :terminal-id))
                                         term))
-                               active-terminals))
-               (choice (completing-read "Switch to terminal: " choices nil t)))
+                               sorted-terminals))
+               (choice (completing-read "Switch to terminal (recent first): " choices nil t)))
           (when choice
             (let ((terminal (cdr (assoc choice choices))))
               (switch-to-buffer (plist-get terminal :buffer)))))
