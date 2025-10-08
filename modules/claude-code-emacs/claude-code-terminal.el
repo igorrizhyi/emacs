@@ -377,40 +377,21 @@ Returns a plist with :success, :stdout, :stderr, :exit-code, :timeout, :working-
   (if claude-code-terminal-mode
       (progn
         ;; Ensure mode line is visible in terminal buffers
-        (setq-local mode-line-format mode-line-format)
-        (when (eq mode-line-format nil)
-          (setq-local mode-line-format (default-value 'mode-line-format)))
-        ;; Add terminal ID as centered header line with border on entire header
+        ;; (setq-local mode-line-format mode-line-format)
+        ;; (when (eq mode-line-format nil)
+        ;;   (setq-local mode-line-format (default-value 'mode-line-format)))
+        ;; Add terminal ID as simple header bar
         (setq-local header-line-format
                     '(:eval (when (bound-and-true-p claude-code-terminal-id)
-                              (let* ((text (format " %s " claude-code-terminal-id))
-                                     (width (window-width))
-                                     (padding (max 0 (/ (- width (length text)) 2)))
-                                     (full-line (concat (make-string padding ?\s) text (make-string padding ?\s))))
-                                (propertize full-line
-                                          'face '(:background "#2d2d2d" 
-                                                 :foreground "#ffffff" 
-                                                 :box (:line-width 1 :color "#555555" :style released-button)
-                                                 :weight bold
-                                                 :height 1.1))))))
+                              claude-code-terminal-id)))
         ;; Also set a custom face for the header line itself to ensure border wraps
-        (face-remap-add-relative 'header-line 
-                                '(:box (:line-width 2 :color "#666666" :style released-button)
-                                  :background "#2d2d2d"))
-        ;; Add some space after header line by using window margins
-        (setq-local window-margins '(0 . 0))
-        ;; Add an empty overlay at the beginning of the buffer for spacing
-        (save-excursion
-          (goto-char (point-min))
-          (unless (looking-at "^\n")
-            (insert "\n\n")
-            (let ((overlay (make-overlay (point-min) (+ (point-min) 2))))
-              (overlay-put overlay 'face '(:height 0.5))
-              (overlay-put overlay 'claude-terminal-spacing t))))
+        ;; (face-remap-add-relative 'header-line
+        ;;                         '(:box (:line-width 2 :color "#666666" :style released-button)
+        ;;                           :background "#2d2d2d"))
         ;; Force display update
         (force-mode-line-update))
-    ;; Remove header line when mode is disabled
-    (setq-local header-line-format nil)
+    ;; Reset mode line when mode is disabled
+    (setq-local header-line-format (default-value 'header-line-format))
     (force-mode-line-update)))
 
 (defun claude-code-terminal-apply-large-font ()
