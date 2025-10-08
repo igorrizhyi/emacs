@@ -1,0 +1,701 @@
+;;; $DOOMDIR/config.el -*- lexical-binding: t; -*-
+
+;; Place your private configuration here! Remember, you do not need to run 'doom
+;; sync' after modifying this file!
+
+;; Add modules and themes directories to load path
+(add-load-path! "modules")
+;; (add-load-path! "modules/monet")
+;; (add-load-path! "modules/claude-code.el/")
+;; (load-file (expand-file-name "modules/claude-code.el/claude-code.el" doom-user-dir))
+;; (load-file (expand-file-name "modules/monet/monet.el" doom-user-dir))
+(add-load-path! "themes")
+(add-to-list 'load-path (expand-file-name "modules/monet" doom-user-dir))
+
+;; Load custom modules
+(require 'my-terminal)
+(require 'my-testrun-debug)
+(require 'my-python-debug)
+(require 'my-font-management)
+(require 'my-navigation)
+(require 'my-goto-last-change)
+(require 'my-smart-splits)
+(require 'my-smart-autosave)
+(require 'my-window-layout)
+(require 'my-external-file-indicator)
+(require 'my-jump-animation)
+(require 'my-spacious-padding)
+
+;; Optimize general Emacs responsiveness
+(setq gc-cons-threshold (* 100 1024 1024))  ; 100MB instead of 800KB
+(setq read-process-output-max (* 1024 1024))  ; 1MB instead of 4KB
+
+;; Enable smart auto-save that respects Evil mode states
+(setq my-smart-autosave-delay 2)  ; Wait 3 seconds after last change before saving
+(my-smart-autosave-global-mode 1) ; Enable globally for all file buffers
+
+;; Enable external file indicator to highlight dependency files
+(my-external-file-indicator-mode 1)
+
+;; Enable jump animations with overlay integration
+(my-jump-animation-mode 1)
+
+;; Optional: Disable built-in auto-save to avoid conflicts
+(setq auto-save-default nil)
+(when (fboundp 'auto-save-visited-mode)
+  (auto-save-visited-mode -1))
+
+;; Configure DAP (Debug Adapter Protocol) for debugging
+(use-package! dap-mode
+  :after lsp-mode
+  :commands dap-debug
+  :hook ((python-mode . dap-ui-mode) (python-mode . dap-mode))
+  :config
+  (require 'dap-python)
+  (require 'with-venv)
+  (setq dap-python-debugger 'debugpy)
+  (defun dap-python--pyenv-executable-find (command)
+    (with-venv (executable-find "python")))
+
+  (add-hook 'dap-stopped-hook
+            (lambda (arg) (call-interactively #'dap-hydra))))
+
+;; Global debug key bindings for Python (C-c d prefix)
+(map! :map python-mode-map
+      :prefix ("C-c d" . "debug")
+      "d" #'my/debug-nearest-test      ; Debug nearest test
+      "f" #'my/debug-test-file         ; Debug test file
+      "a" #'my/debug-test-with-args    ; Debug with args
+      "b" #'dap-breakpoint-toggle      ; Toggle breakpoint
+      "B" #'dap-breakpoint-delete-all  ; Clear all breakpoints
+      "n" #'dap-next                   ; Step over
+      "s" #'dap-step-in                ; Step in
+      "o" #'dap-step-out               ; Step out
+      "c" #'dap-continue               ; Continue
+      "r" #'dap-debug-restart          ; Restart
+      "q" #'dap-disconnect             ; Quit/disconnect
+      "v" #'dap-ui-locals              ; Show variables
+      "h" #'dap-hydra                  ; Debug hydra
+      )
+
+
+;; Some functionality uses this to identify you, e.g. GPG configuration, email
+;; clients, file templates and snippets. It is optional.
+;; (setq user-full-name "John Doe"
+;;       user-mail-address "john@doe.com")
+
+;; Doom exposes five (optional) variables for controlling fonts in Doom:
+;;
+;; - `doom-font' -- the primary font to use
+;; - `doom-variable-pitch-font' -- a non-monospace font (where applicable)
+;; - `doom-big-font' -- used for `doom-big-font-mode'; use this for
+;;   presentations or streaming.
+;; - `doom-symbol-font' -- for symbols
+;; - `doom-serif-font' -- for the `fixed-pitch-serif' face
+;;
+;; See 'C-h v doom-font' for documentation and more examples of what they
+;; accept. For example:
+;;
+;;(setq doom-font (font-spec :family "Fira Code" :size 12 :weight 'semi-light)
+;;      doom-variable-pitch-font (font-spec :family "Fira Sans" :size 13))
+;;
+;; If you or Emacs can't find your font, use 'M-x describe-font' to look them
+;; up, `M-x eval-region' to execute elisp code, and 'M-x doom/reload-font' to
+;; refresh your font settings. If Emacs still can't find your font, it likely
+;; wasn't installed correctly. Font issues are rarely Doom issues!
+
+;; There are two ways to load a theme. Both assume the theme is installed and
+;; available. You can either set `doom-theme' or manually load a theme with the
+;; `load-theme' function. This is the default:
+;; (setq doom-theme 'doom-one)
+;; (setq doom-theme 'doom-lantern)
+(setq doom-theme 'retro-hacker-amber)  ; Revert to working version
+;; (setq doom-theme 'catppuccin)
+;; (setq doom-theme 'doom-retro-hacker-amber)  ; New version (has issues)
+
+;; This determines the style of line numbers in effect. If set to `nil', line
+;; numbers are disabled. For relative line numbers, set this to `relative'.
+(setq display-line-numbers-type 'relative)
+;; Show 0 on current line instead of absolute number for pure relative mode
+(setq display-line-numbers-current-absolute nil)
+
+;; If you use `org' and don't want your org files in the default location below,
+;; change `org-directory'. It must be set before org loads!
+(setq org-directory "~/org/")
+
+
+;; Whenever you reconfigure a package, make sure to wrap your config in an
+;; `after!' block, otherwise Doom's defaults may override your settings. E.g.
+;;
+;;   (after! PACKAGE
+;;     (setq x y))
+;;
+;; The exceptions to this rule:
+;;
+;;   - Setting file/directory variables (like `org-directory')
+;;   - Setting variables which explicitly tell you to set them before their
+;;     package is loaded (see 'C-h v VARIABLE' to look up their documentation).
+;;   - Setting doom variables (which start with 'doom-' or '+').
+;;
+;; Here are some additional functions/macros that will help you configure Doom.
+;;
+;; - `load!' for loading external *.el files relative to this one
+;; - `use-package!' for configuring packages
+;; - `after!' for running code after a package has loaded
+;; - `add-load-path!' for adding directories to the `load-path', relative to
+;;   this file. Emacs searches the `load-path' when you load packages with
+;;   `require' or `use-package'.
+;; - `map!' for binding new keys
+;;
+;; To get information about any of these functions/macros, move the cursor over
+;; the highlighted symbol at press 'K' (non-evil users must press 'C-c c k').
+;; This will open documentation for it, including demos of how they are used.
+;; Alternatively, use `C-h o' to look up a symbol (functions, variables, faces,
+;; etc).
+;;
+;; You can also try 'gd' (or 'C-c c d') to jump to their definition and see how
+;; they are implemented.
+;;
+;; Python configuration - Use lsp-mode with lsp-pyright
+
+;; Automatic virtual environment activation
+(use-package! pyvenv
+  :config
+  ;; Function to automatically activate venv when opening Python files
+  (defun my/auto-activate-venv ()
+    "Automatically activate virtual environment if .venv exists in project root."
+    (when (and (derived-mode-p 'python-mode 'python-ts-mode)
+               (projectile-project-p))
+      (let* ((project-root (projectile-project-root))
+             (venv-path (expand-file-name ".venv" project-root)))
+        (when (file-directory-p venv-path)
+          (pyvenv-activate venv-path)
+          (message "Activated venv: %s" venv-path)))))
+  
+  ;; Hook to auto-activate venv
+  (add-hook 'python-mode-hook #'my/auto-activate-venv)
+  (add-hook 'python-ts-mode-hook #'my/auto-activate-venv)
+  
+  ;; Also activate when switching projects
+  (add-hook 'projectile-after-switch-project-hook #'my/auto-activate-venv))
+
+
+;; Configure lsp-pyright for superior pyright integration
+(lsp-register-client
+ (make-lsp-client
+  :new-connection (lsp-stdio-connection '("ty" "lsp"))
+  :major-modes '(python-mode)
+  :server-id 'ty-lsp))
+(add-hook 'python-mode-hook #'lsp)
+
+;; (use-package! lsp-pyright
+;;   :after lsp-mode
+;;   :config
+;;   ;; Use system pyright-langserver
+;;   ;; (setq lsp-pyright-langserver-command "/usr/bin/pyright-langserver")
+;;   (setq lsp-pyright-langserver-command "basedpyright")
+;;   
+;;   ;; Configure pyright settings for better type checking
+;;   (setq lsp-pyright-diagnostic-mode "workspace"
+;;         lsp-pyright-type-checking-mode "basic"
+;;         lsp-pyright-auto-import-completions t
+;;         lsp-pyright-auto-search-paths t
+;;         lsp-pyright-use-library-code-for-types t
+;;         lsp-pyright-report-missing-type-stubs nil))
+
+;; Auto-start LSP for Python files
+;; (add-hook! 'python-mode-hook #'lsp!)
+
+;; Configure LSP to work optimally with Corfu
+(after! lsp-mode
+  (setq lsp-completion-provider :capf)  ;; Use completion-at-point-functions (Corfu)
+  ;; Ultra-fast LSP responses
+  (setq lsp-idle-delay 0.05             ;; Almost immediate LSP responses (50ms)
+        lsp-response-timeout 3          ;; Faster timeout (3s instead of 30s)
+        lsp-completion-show-detail t    ;; Show completion details
+        lsp-completion-show-kind t      ;; Show completion kind icons
+        lsp-signature-auto-activate nil ;; Disable auto-show signatures
+        lsp-eldoc-enable-hover t        ;; Enable hover documentation
+        lsp-signature-render-documentation nil  ; Disable for speed
+        lsp-enable-file-watchers t
+        lsp-file-watch-threshold 2000   ;; Faster file watching
+        lsp-eldoc-render-all nil)       ;; Don't render everything for speed
+  ;; Breadcrumb configuration
+  (setq lsp-headerline-breadcrumb-enable t ;; Enable breadcrumb navigation in header
+        lsp-headerline-breadcrumb-icons-enable nil ;; Disable icons for speed
+        lsp-headerline-breadcrumb-enable-symbol-numbers nil
+        lsp-headerline-breadcrumb-segments '(symbols) ;; Only show symbols, no path
+        lsp-headerline-breadcrumb-enable-diagnostics nil ;; Disable diagnostics in breadcrumb
+        lsp-headerline-breadcrumb-enable-project-prefix nil) ;; No project prefix
+  
+  ;; Enable LSP semantic highlighting for method calls and variables
+  (setq lsp-semantic-tokens-enable t
+        lsp-enable-semantic-highlighting t
+        lsp-semantic-tokens-apply-modifiers t)
+  
+  ;; Map semantic tokens to faces for method call highlighting and bold variables
+  (setq lsp-semantic-tokens-faces
+        '(("method" . font-lock-function-call-face)
+          ("function" . font-lock-function-call-face)
+          ("member" . font-lock-function-call-face)
+          ("variable" . (:weight bold))
+          ("parameter" . (:weight bold)))))
+
+;; Debug function to check what face is at point
+(defun my/what-face ()
+  "Show the face(s) at the current point."
+  (interactive)
+  (let* ((point (point))
+         ;; Get text property faces
+         (text-face (get-text-property point 'face))
+         ;; Get font-lock faces
+         (font-lock-face (get-text-property point 'font-lock-face))
+         ;; Get overlay faces
+         (overlay-faces (mapcar (lambda (ov) (overlay-get ov 'face))
+                               (overlays-at point)))
+         ;; Remove nils from overlay faces
+         (overlay-faces (delq nil overlay-faces))
+         ;; Get face at point using face-at-point
+         (face-at-point (face-at-point t))
+         ;; Collect all faces
+         (all-faces (delq nil (list text-face font-lock-face face-at-point))))
+    (when overlay-faces
+      (setq all-faces (append all-faces overlay-faces)))
+    (message "Faces at point: %s\nText property: %s\nFont-lock: %s\nOverlays: %s\nFace-at-point: %s" 
+             all-faces text-face font-lock-face overlay-faces face-at-point)))
+
+;; Bind to F12 for easy access
+(global-set-key (kbd "<f12>") 'my/what-face)
+
+;; Additional function to check LSP semantic highlighting specifically
+(defun my/what-lsp-face ()
+  "Show LSP semantic token information at point."
+  (interactive)
+  (if (bound-and-true-p lsp-mode)
+      (let* ((semantic-tokens (get-text-property (point) 'lsp-semantic-token))
+             (lsp-face (get-text-property (point) 'lsp-face))
+             (semantic-faces (get-text-property (point) 'lsp-semantic-faces)))
+        (message "LSP semantic info: token=%s, lsp-face=%s, semantic-faces=%s"
+                 semantic-tokens lsp-face semantic-faces))
+    (message "LSP mode not active in this buffer")))
+
+;; Bind to Shift-F12 for LSP-specific face info
+(global-set-key (kbd "<S-f12>") 'my/what-lsp-face)
+
+;; Tree-sitter face inspection function
+(defun my/what-treesit-face ()
+  "Show tree-sitter specific face information at point."
+  (interactive)
+  (if (and (fboundp 'treesit-available-p) (treesit-available-p) 
+           (treesit-parser-list))
+      (let* ((node (treesit-node-at (point)))
+             (node-type (when node (treesit-node-type node)))
+             (node-text (when node (treesit-node-text node t)))
+             (treesit-face (get-text-property (point) 'treesit-face))
+             (font-lock-face (get-text-property (point) 'font-lock-face))
+             (face-prop (get-text-property (point) 'face)))
+        (message "Tree-sitter info:\nNode: %s\nType: %s\nText: %s\nTreesit face: %s\nFont-lock face: %s\nFace prop: %s"
+                 node node-type (if (> (length node-text) 50) 
+                                   (concat (substring node-text 0 47) "...")
+                                 node-text)
+                 treesit-face font-lock-face face-prop))
+    (message "Tree-sitter not active in this buffer")))
+
+;; Bind to F11 for tree-sitter specific face info
+(global-set-key (kbd "<f11>") 'my/what-treesit-face)
+
+
+;; Add custom font-lock for Python function and method calls
+;; (defun my/add-python-call-highlighting ()
+;;   "Add font-lock rules for Python function and method calls (only with parentheses)."
+;;   (font-lock-add-keywords
+;;    nil
+;;    '(
+;;      ;; Method calls: obj.method()
+;;      ("\\.[[:space:]]*\\([a-zA-Z_][a-zA-Z0-9_]*\\)[[:space:]]*[\\(]"
+;;       1 'font-lock-function-call-face)
+;;      ;; Regular function calls: function() - but NOT after a dot (to avoid double-matching methods)
+;;      ;; Match functions that are at start of line, after whitespace, or after non-dot characters
+;;      ("\\(?:^\\|[[:space:]]\\|[^.a-zA-Z0-9_]\\)\\([a-zA-Z_][a-zA-Z0-9_]*\\)[[:space:]]*[\\(]"
+;;       1 'font-lock-function-call-face)
+;;      )))
+
+;; Apply to Python modes
+;; (add-hook 'python-mode-hook #'my/add-python-call-highlighting)
+;; (add-hook 'python-ts-mode-hook #'my/add-python-call-highlighting)
+
+;; Make variable names medium weight and type names medium (lighter than bold)
+(custom-set-faces
+ '(font-lock-variable-name-face ((t (:weight medium))))
+ '(font-lock-type-face ((t (:weight medium)))))
+
+;; Define a custom face for keyword arguments (regular weight)
+(defface my/keyword-argument-face
+  '((t (:inherit default)))
+  "Face for keyword arguments with regular weight."
+  :group 'font-lock-faces)
+
+;; Tree-sitter configuration
+(use-package treesit
+  :when (and (fboundp 'treesit-available-p) (treesit-available-p))
+  :config
+  ;; Set tree-sitter library directory for Doom Emacs
+  (when (boundp 'treesit-extra-load-path)
+    (add-to-list 'treesit-extra-load-path 
+                 (expand-file-name ".local/etc/tree-sitter/" doom-user-dir)))
+  
+  ;; Customize tree-sitter font-lock by overriding existing face mappings
+  (defun my/customize-treesit-faces ()
+    "Customize tree-sitter face mappings for keyword arguments."
+    ;; Override the font-lock-variable-use-face for keyword arguments
+    (when (treesit-parser-list)
+      ;; Set custom face mapping for keyword_argument nodes
+      (setq-local treesit-font-lock-feature-list
+                  (append treesit-font-lock-feature-list '(custom)))
+      ;; Add our custom rule with higher priority
+      (setq-local treesit-font-lock-settings
+                  (append treesit-font-lock-settings
+                          (treesit-font-lock-rules
+                           :language 'python
+                           :feature 'custom
+                           :override t
+                           '((keyword_argument name: (identifier) @font-lock-constant-face)
+                             (keyword_argument value: (integer) @font-lock-variable-name-face)
+                             (keyword_argument value: (true) @font-lock-variable-name-face)
+                             (keyword_argument value: (false) @font-lock-variable-name-face)
+                             (keyword_argument value: (none) @font-lock-variable-name-face)
+                             (assignment right: (integer) @font-lock-variable-name-face)
+                             (assignment right: (true) @font-lock-variable-name-face)
+                             (assignment right: (false) @font-lock-variable-name-face)
+                             (assignment right: (none) @font-lock-variable-name-face)
+                             (class_definition name: (identifier) @font-lock-keyword-face)))))))
+  
+  ;; Apply after tree-sitter mode is enabled
+  (add-hook 'python-ts-mode-hook #'my/customize-treesit-faces)
+  
+  ;; Configure tree-sitter language sources
+  (setq treesit-language-source-alist
+        '((python "https://github.com/tree-sitter/tree-sitter-python")
+          (javascript "https://github.com/tree-sitter/tree-sitter-javascript")
+          (typescript "https://github.com/tree-sitter/tree-sitter-typescript" "master" "typescript/src")
+          (tsx "https://github.com/tree-sitter/tree-sitter-typescript" "master" "tsx/src")
+          (css "https://github.com/tree-sitter/tree-sitter-css")
+          (html "https://github.com/tree-sitter/tree-sitter-html")
+          (json "https://github.com/tree-sitter/tree-sitter-json")
+          (yaml "https://github.com/ikatyang/tree-sitter-yaml")
+          (bash "https://github.com/tree-sitter/tree-sitter-bash")
+          (rust "https://github.com/tree-sitter/tree-sitter-rust")
+          (go "https://github.com/tree-sitter/tree-sitter-go")
+          (cpp "https://github.com/tree-sitter/tree-sitter-cpp")
+          (elisp "https://github.com/Wilfred/tree-sitter-elisp")))
+  
+  ;; Auto-install missing grammars
+  (defun my/treesit-install-all-languages ()
+    "Install all tree-sitter language grammars."
+    (interactive)
+    (dolist (lang treesit-language-source-alist)
+      (let ((lang-name (car lang)))
+        (unless (treesit-language-available-p lang-name)
+          (message "Installing tree-sitter grammar for %s..." lang-name)
+          (treesit-install-language-grammar lang-name)))))
+  
+  ;; Enable tree-sitter modes automatically
+  (add-to-list 'major-mode-remap-alist '(python-mode . python-ts-mode))
+  (add-to-list 'major-mode-remap-alist '(javascript-mode . js-ts-mode))
+  (add-to-list 'major-mode-remap-alist '(typescript-mode . typescript-ts-mode))
+  (add-to-list 'major-mode-remap-alist '(css-mode . css-ts-mode))
+  (add-to-list 'major-mode-remap-alist '(json-mode . json-ts-mode))
+  (add-to-list 'major-mode-remap-alist '(yaml-mode . yaml-ts-mode))
+  (add-to-list 'major-mode-remap-alist '(sh-mode . bash-ts-mode))
+  (add-to-list 'major-mode-remap-alist '(rust-mode . rust-ts-mode))
+  (add-to-list 'major-mode-remap-alist '(go-mode . go-ts-mode))
+  (add-to-list 'major-mode-remap-alist '(c++-mode . c++-ts-mode))
+  ;; Note: elisp-ts-mode doesn't exist by default, so we comment this out
+  ;; (add-to-list 'major-mode-remap-alist '(emacs-lisp-mode . elisp-ts-mode))
+  )
+
+;; Set scroll margin - keep 10 lines above and below cursor
+(setq scroll-margin 13                     ; Required for ultra-scroll smooth scrolling
+      scroll-conservatively 130)          ; Scroll just enough to keep cursor visible
+;; Configure all-the-icons for smaller sizes
+;; (after! all-the-icons
+;;   ;; Set default scale factor for all icons to be smaller
+;;   (setq all-the-icons-scale-factor 0.7) ;; Make icons 70% of normal size
+;;   ;; Additional adjustment for better alignment
+;;   (setq all-the-icons-default-adjust -0.2))
+
+;; Enable smooth pixel-based scrolling
+;; (when (fboundp 'pixel-scroll-precision-mode)
+;;   (pixel-scroll-precision-mode nil))
+
+;; Set window title to project name
+(defun my/set-frame-title ()
+  "Set frame title to project name or buffer name."
+  (let ((project-name (when (bound-and-true-p projectile-mode)
+                        (projectile-project-name))))
+    (setq frame-title-format
+          (if project-name
+              project-name
+            "%b"))))
+
+(add-hook 'projectile-after-switch-project-hook #'my/set-frame-title)
+(add-hook '+workspace-switch-hook #'my/set-frame-title)
+
+;; Set initial title
+(my/set-frame-title)
+
+;; Enable preview for consult-ripgrep
+(after! consult
+  ;; Enable preview for consult-ripgrep by default
+  (consult-customize consult-ripgrep :preview-key 'any))
+
+;; Configure corfu to work better with LSP
+(after! corfu
+  (setq corfu-cycle t           ;; Enable cycling for `corfu-next/previous'
+        corfu-preselect 'prompt ;; Always preselect the prompt
+        ;; Popup positioning controls
+        corfu-min-width 80      ;; Minimum width of the popup
+        corfu-max-width 100     ;; Maximum width of the popup
+        corfu-count 5          ;; More candidates shown
+        corfu-scroll-margin 2   ;; Number of lines at the top/bottom during scrolling
+        ;; Ultra-fast completion settings
+        corfu-auto t            ;; Enable automatic completion
+        corfu-auto-delay 0.01   ;; Show completions almost immediately (50ms)
+        corfu-auto-prefix 2     ;; Start after 1 character
+        corfu-popupinfo-delay 0.0 ;; Show info immediately
+        ;; Enable Tab completion
+        tab-always-indent 'complete)
+  
+  ;; Key bindings for corfu
+  (map! :map corfu-map
+        :desc "Complete" "TAB" #'corfu-complete
+        :desc "Complete" "<tab>" #'corfu-complete
+        :desc "Previous" "S-TAB" #'corfu-previous
+        :desc "Previous" "<backtab>" #'corfu-previous))
+
+;; Smart window navigation function for C-h
+(defun my/smart-move-left ()
+  "Move to left window, or open Magit if already at leftmost window."
+  (interactive)
+  (let ((current-window (selected-window))
+        (left-window (windmove-find-other-window 'left)))
+    (if left-window
+        ;; There's a window to the left, move to it
+        (windmove-left)
+      ;; No window to the left (we're at leftmost), open Magit
+      (magit-status))))
+
+;; Window navigation keybindings - move focus between splits
+(map! "C-h" #'my/smart-move-left   ; Smart left movement or Magit
+      "C-l" #'windmove-right       ; Focus right window split
+      "C-k" #'my-window-layout-show-claude-code-right) ; Open Claude Code in right sidebar
+
+
+;; Jump navigation keybindings - like browser back/forward
+(map! :map evil-normal-state-map
+      "H" #'evil-jump-backward   ; Jump back (like C-o)
+      "L" #'evil-jump-forward)   ; Jump forward (like C-i)
+
+;; Make Evil word movement behave like Vim - treat underscores as part of words
+(with-eval-after-load 'evil
+  (defalias #'forward-evil-word #'forward-evil-symbol)
+  (setq-default evil-symbol-word-search t))
+
+;; Remap go to definition from gd to ge
+(map! :map evil-normal-state-map
+      "ge" #'+lookup/definition)  ; Go to definition with ge instead of gd
+
+;; Configure treemacs to open files in existing splits (most recent window)
+(after! treemacs
+  ;; Always open files in the most recently used window (other than treemacs)
+  (setq treemacs-default-visit-action 'treemacs-visit-node-in-most-recently-used-window)
+  ;; Don't create new windows when opening files
+  (setq treemacs-show-cursor nil
+        treemacs-is-never-other-window t))
+
+;; Map SPC-o to open file (same as SPC-SPC)
+(map! :leader
+      "o" #'projectile-find-file   ; Open file with SPC-o
+      "n" #'+lookup/references     ; Go to symbol in workspace (like VSCode) - fallback option
+      "f" #'consult-ripgrep ; Search in project with preview
+      "e" #'treemacs               ; Toggle treemacs with SPC-e
+      "r" #'my/run-nearest-test-with-class  ; Run nearest test with SPC-r (moved from SPC-e)
+      "<escape>" #'my-window-layout-close-auxiliary  ; Close auxiliary windows with SPC-ESC
+      (:prefix ("q" . "quit")
+       :desc "Kill buffer" "k" #'kill-current-buffer))
+
+;; Global keybinding for claude-code-terminal-create
+(map! "C-c c" #'claude-code-terminal-create)
+(map! "C-c r" #'lsp-workspace-restart)
+
+;; Global keybinding for Q to close window (like :q in Vim)
+(map! :map evil-normal-state-map
+      "Q" #'delete-window)
+
+;; Window layout key bindings with SPC-w prefix (window management)
+(map! :leader
+      (:prefix ("w" . "window layout")
+       :desc "Setup layout" "s" #'my-window-layout-setup
+       :desc "Reset layout" "r" #'my-window-layout-reset
+       :desc "Toggle left sidebar" "h" #'my-window-layout-toggle-left-sidebar
+       :desc "Toggle right sidebar" "l" #'my-window-layout-toggle-right-sidebar
+       :desc "Toggle bottom bar" "j" #'my-window-layout-toggle-bottom-bar
+       :desc "Toggle top bar" "k" #'my-window-layout-toggle-top-bar
+       :desc "Show with layout" "d" #'my-window-layout-show-with-layout
+       :desc "Layout status" "?" #'my-window-layout-status
+       ;; Convenience functions
+       :desc "Pytest bottom" "p" #'my-window-layout-show-pytest-bottom
+       :desc "Treemacs left" "t" #'my-window-layout-show-treemacs-left
+       :desc "Terminal bottom" "T" #'my-window-layout-show-terminal-bottom
+       :desc "Magit right" "g" #'my-window-layout-show-magit-right))
+
+;; Configure testrun.el for running tests
+(use-package! testrun
+  :config
+  ;; this will allow you to override the runners on your .dir-locals.el
+  (put 'testrun-runners 'safe-local-variable #'listp)
+  (put 'testrun-mode-alist 'safe-local-variable #'listp)
+  
+  ;; Configure testrun to use project root and local venv
+  ;; (setq testrun-runners
+  ;;       '((python-mode . ("python" "-m" "pytest" "-v"))
+  ;;         (python-ts-mode . ("python" "-m" "pytest" "-v"))))
+  ;; 
+  ;; ;; Function to find and activate local venv
+  ;; (defun my/testrun-setup-venv ()
+  ;;   "Setup virtual environment for testrun."
+  ;;   (when-let* ((project-root (projectile-project-root))
+  ;;               (venv-path (expand-file-name ".venv" project-root))
+  ;;               (python-path (expand-file-name "bin/python" venv-path)))
+  ;;     (when (file-exists-p python-path)
+  ;;       (setq-local testrun-runners
+  ;;                   `((python-mode . (,python-path "-m" "pytest" "-v"))
+  ;;                     (python-ts-mode . (,python-path "-m" "pytest" "-v")))))))
+  ;; 
+  ;; ;; Hook to setup venv when entering python files
+  ;; (add-hook 'python-mode-hook #'my/testrun-setup-venv)
+  ;; (add-hook 'python-ts-mode-hook #'my/testrun-setup-venv)
+  
+  ;; Global keybindings with C-c t prefix
+  (global-set-key
+   (kbd "C-c t")
+   (define-keymap
+     :prefix 'my/tests-key-map
+     "t" 'my/run-nearest-test-with-class  ; Use fixed version
+     "o" 'testrun-nearest                 ; Original version for comparison
+     "d" 'my/debug-testrun-nearest        ; Debug current position
+     "x" 'my/test-detection-at-point      ; Test detection functions
+     "s" 'my/show-testrun-config          ; Show testrun config
+     "c" 'testrun-namespace
+     "f" 'testrun-file
+     "a" 'my/testrun-all
+     "l" 'testrun-last
+     ;; Debug bindings
+     "D" 'my/debug-nearest-test           ; Debug nearest test
+     "F" 'my/debug-test-file              ; Debug current file
+     "A" 'my/debug-test-with-args         ; Debug with custom args
+     "b" 'dap-breakpoint-toggle           ; Toggle breakpoint (built-in)
+     "B" 'dap-breakpoint-delete-all       ; Clear all breakpoints (built-in)
+     "v" 'dap-ui-locals                   ; Show variables (built-in)
+     "V" 'dap-ui-sessions                 ; Show debug sessions (built-in)
+     "i" 'my/debug-session-info           ; Debug session info (custom)
+     "h" 'dap-hydra                       ; Debug controls (built-in)
+     "r" 'dap-debug-restart               ; Restart debug session (built-in)
+     ))
+  
+  ;; Leader key mappings
+  (map! :leader
+        (:prefix ("t" . "test")
+         :desc "Run test" "r" #'testrun
+         :desc "Run all tests" "a" #'my/testrun-all)))
+
+(use-package! copilot
+  :hook (prog-mode . copilot-mode)
+  :bind (:map copilot-completion-map
+              ("<tab>" . 'copilot-accept-completion)
+              ("TAB" . 'copilot-accept-completion)
+              ("C-TAB" . 'copilot-accept-completion-by-word)
+              ("C-<tab>" . 'copilot-accept-completion-by-word))
+  :config
+  ;; Increase max file size for Copilot completions (default is 100000)
+  (setq copilot-max-char 1000000)  ; 1 million characters (~500-1000 lines of code)
+  
+  ;; Add indentation settings for modes that don't have them in copilot-indentation-alist
+  (add-to-list 'copilot-indentation-alist '(prog-mode 4))
+  (add-to-list 'copilot-indentation-alist '(text-mode 4))
+  (add-to-list 'copilot-indentation-alist '(emacs-lisp-mode lisp-indent-offset))
+  (add-to-list 'copilot-indentation-alist '(python-mode python-indent-offset))
+  (add-to-list 'copilot-indentation-alist '(python-ts-mode python-indent-offset))
+  (add-to-list 'copilot-indentation-alist '(js-mode js-indent-level))
+  (add-to-list 'copilot-indentation-alist '(typescript-mode typescript-indent-level))
+  (add-to-list 'copilot-indentation-alist '(typescript-ts-mode typescript-ts-mode-indent-offset))
+  (add-to-list 'copilot-indentation-alist '(css-mode css-indent-offset))
+  (add-to-list 'copilot-indentation-alist '(html-mode sgml-basic-offset))
+  (add-to-list 'copilot-indentation-alist '(yaml-mode yaml-indent-offset))
+  (add-to-list 'copilot-indentation-alist '(sh-mode sh-basic-offset)))
+
+;; (use-package all-the-icons
+;;   :if (display-graphic-p))
+
+
+;; (use-package! lsp-treemacs-nerd-icons
+;;   ;; HACK: Load after the `lsp-treemacs' created default themes
+;;   :init (with-eval-after-load 'lsp-treemacs
+;;           (require 'lsp-treemacs-nerd-icons)))
+;;
+;; (use-package! lsp-treemacs
+;;   :custom
+;;   (lsp-treemacs-theme "nerd-icons-ext"))
+
+(use-package all-the-icons-nerd-fonts
+  :after all-the-icons
+  :demand t
+  :config
+  (all-the-icons-nerd-fonts-prefer))
+
+;; (use-package inheritenv :demand t)
+;; (use-package transient :demand t)
+
+(use-package monet
+  :defer t)
+
+;; (use-package ultra-scroll
+;;   ;:vc (:url "https://github.com/jdtsmith/ultra-scroll") ; if desired (emacs>=v30)
+;;   :init
+;;   (setq scroll-conservatively 3 ; or whatever value you prefer, since v0.4
+;;         scroll-margin 0)        ; important: scroll-margin>0 not yet supported
+;;   :config
+;;   (ultra-scroll-mode 1)
+;;   )
+
+(use-package claude-code :ensure t
+  :config
+  ;; optional IDE integration with Monet
+  (add-hook 'claude-code-process-environment-functions #'monet-start-server-function)
+  (monet-mode 1)
+
+  ;; Custom display function to use our window layout right sidebar
+  (defun my-claude-display-right-sidebar (buffer)
+    "Display Claude buffer in our window layout right sidebar."
+    ;; Ensure we have the main layout
+    (unless (eq (my-window-layout--get-state 'main-splits) 'visible)
+      (my-window-layout-setup))
+    ;; Show the right sidebar
+    (my-window-layout-show-right-sidebar)
+    ;; Get the right sidebar window and display the buffer there
+    (let ((right-sidebar-window (my-window-layout--get-window 'right-sidebar)))
+      (when right-sidebar-window
+        (set-window-buffer right-sidebar-window buffer)
+        (select-window right-sidebar-window)
+        right-sidebar-window)))
+
+  ;; Configure claude-code to use our custom display function
+  (setq claude-code-display-window-fn #'my-claude-display-right-sidebar)
+
+  (claude-code-mode)
+  ;; :bind-keymap ("C-c c" . claude-code-terminal-create)
+
+  :bind
+  (:repeat-map my-claude-code-map ("M" . claude-code-cycle-mode)))
+
+(spacious-padding-mode)
