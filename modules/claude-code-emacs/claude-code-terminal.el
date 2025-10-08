@@ -55,6 +55,9 @@ Used as fallback when no specific terminal ID is provided.")
   "ID of the last focused terminal buffer.
 Updated when a terminal buffer becomes active.")
 
+(defvar claude-code-terminal-access-times (make-hash-table :test 'equal)
+  "Hash table tracking last access time for each terminal ID.")
+
 ;;; Terminal Buffer Management
 
 (defun claude-code-terminal-generate-id ()
@@ -95,8 +98,9 @@ Returns the terminal ID."
       ;; Register terminal session
       (claude-code-terminal-register project-root buffer-name terminal-id)
       
-      ;; Update last created terminal ID
+      ;; Update last created terminal ID and record access time
       (setq claude-code-terminal-last-created terminal-id)
+      (puthash terminal-id (current-time) claude-code-terminal-access-times)
       
       ;; Switch to the buffer
       (switch-to-buffer buffer)
@@ -143,7 +147,9 @@ Returns the terminal ID."
 (defun claude-code-terminal-update-last-focused ()
   "Update last focused terminal ID based on current buffer."
   (when-let ((terminal-id (claude-code-terminal-get-current-id)))
-    (setq claude-code-terminal-last-focused terminal-id)))
+    (setq claude-code-terminal-last-focused terminal-id)
+    ;; Record access time for this terminal
+    (puthash terminal-id (current-time) claude-code-terminal-access-times)))
 
 (defun claude-code-terminal-get-last-focused ()
   "Get the ID of the last focused terminal.
@@ -343,34 +349,71 @@ For example, if current terminal is 'my_prod', cycles through 'my_prod', 'my_pro
   "Switch to a terminal buffer, ordered by most recent usage."
   (interactive)
   (claude-code-terminal-cleanup-dead-buffers)
-  (let ((active-terminals (claude-code-terminal-list-active)))
-    (if active-terminals
-        ;; Sort terminals by recent usage (buffer-list order)
+  ;; Update current terminal's access time before building the list
+  (claude-code-terminal-update-last-focused)
+  
+  (let* ((current-buffer (current-buffer))
+         (active-terminals (claude-code-terminal-list-active))
+         ;; Exclude current terminal from the list
+         (other-terminals (seq-filter (lambda (term)
+                                        (not (eq (plist-get term :buffer) current-buffer)))
+                                      active-terminals)))
+    (if other-terminals
+        ;; Sort terminals by access time (most recent first)
         (let* ((sorted-terminals 
-                (sort active-terminals
+                (sort other-terminals
                       (lambda (a b)
-                        (let ((buf-a (plist-get a :buffer))
-                              (buf-b (plist-get b :buffer)))
-                          ;; Sort by position in buffer-list (most recent first)
-                          (< (or (cl-position buf-a (buffer-list)) 9999)
-                             (or (cl-position buf-b (buffer-list)) 9999))))))
+                        (let* ((id-a (plist-get a :terminal-id))
+                               (id-b (plist-get b :terminal-id))
+                               (time-a (gethash id-a claude-code-terminal-access-times nil))
+                               (time-b (gethash id-b claude-code-terminal-access-times nil)))
+                          ;; Sort by access time (most recent first)
+                          ;; Terminals with access times come before those without
+                          (cond
+                           ((and time-a time-b) (time-less-p time-b time-a))
+                           (time-a nil)  ; a has time, b doesn't -> a comes first
+                           (time-b t)    ; b has time, a doesn't -> b comes first  
+                           (t nil)))))) ; both nil -> preserve order
                (choices (mapcar (lambda (term)
-                                  (cons (format "%s [%s]" 
-                                               (plist-get term :buffer-name)
-                                               (plist-get term :terminal-id))
-                                        term))
-                               sorted-terminals))
-               (choice (completing-read "Switch to terminal (recent first): " choices nil t)))
-          (when choice
-            (let ((terminal (cdr (assoc choice choices))))
-              (switch-to-buffer (plist-get terminal :buffer)))))
-      (message "No active terminal buffers"))))
+                                  (let* ((id (plist-get term :terminal-id))
+                                         (access-time (gethash id claude-code-terminal-access-times nil))
+                                         (time-str (if access-time
+                                                      (format-time-string "%H:%M:%S" access-time)
+                                                    "never")))
+                                    (cons (format "%s [%s] (%s)" 
+                                                 (plist-get term :buffer-name)
+                                                 (plist-get term :terminal-id)
+                                                 time-str)
+                                          term)))
+                               sorted-terminals)))
+          ;;
+          ;; Debug: print the sorted order
+          (message "Sorted terminal order:")
+          (dolist (term sorted-terminals)
+            (let* ((id (plist-get term :terminal-id))
+                   (access-time (gethash id claude-code-terminal-access-times nil))
+                   (time-str (if access-time
+                                (format-time-string "%H:%M:%S" access-time)
+                              "never")))
+              (message "  %s (%s)" id time-str)))
+      (if active-terminals
+          (message "No other terminal buffers (current terminal excluded)")
+        (message "No active terminal buffers"))))))
 
 (defun claude-code-terminal-kill ()
   "Kill current terminal buffer."
   (interactive)
   (when (claude-code-terminal-get-current-id)
     (kill-buffer (current-buffer))))
+
+(defun claude-code-terminal-debug-access-times ()
+  "Show all terminal access times for debugging."
+  (interactive)
+  (let ((times '()))
+    (maphash (lambda (id time)
+               (push (cons id (format-time-string "%H:%M:%S" time)) times))
+             claude-code-terminal-access-times)
+    (message "Access times: %s" times)))
 
 (defun claude-code-terminal-rename (new-terminal-id)
   "Rename current terminal buffer to NEW-TERMINAL-ID."
