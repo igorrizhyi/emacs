@@ -129,6 +129,155 @@
           (message "Closed %d other code split(s)" (length other-code-windows)))
       (message "No other code splits to close"))))
 
+;;; Helper Functions for Other Modules
+
+(defun my/show-buffer-main-left (buffer &optional line column)
+  "Show BUFFER in the leftmost code window, ensuring it exists.
+If LINE is provided, go to that line. If COLUMN is provided, go to that column.
+Creates a split if needed to ensure there are two code windows."
+  (let ((code-windows (my/get-code-windows))
+        (original-window (selected-window)))
+    
+    ;; Ensure we have at least two code windows
+    (cond
+     ((= (length code-windows) 0)
+      (user-error "No code windows available"))
+     ((= (length code-windows) 1)
+      ;; Create a second window
+      (split-window-right)))
+    
+    ;; Get updated code windows and find leftmost
+    (let* ((updated-windows (my/get-code-windows))
+           (leftmost-window (car (sort updated-windows 
+                                      (lambda (a b) 
+                                        (< (window-left-column a) 
+                                           (window-left-column b)))))))
+      
+      ;; Switch to leftmost window and show buffer
+      (select-window leftmost-window)
+      (switch-to-buffer buffer)
+      
+      ;; Navigate to specific position if provided
+      (when line
+        (goto-line line)
+        (when column
+          (move-to-column column)))
+      
+      (recenter)
+      leftmost-window)))
+
+(defun my/show-buffer-main-right (buffer &optional line column)
+  "Show BUFFER in the rightmost code window, ensuring it exists.
+If LINE is provided, go to that line. If COLUMN is provided, go to that column.
+Creates a split if needed to ensure there are two code windows."
+  (let ((code-windows (my/get-code-windows))
+        (original-window (selected-window)))
+    
+    ;; Ensure we have at least two code windows
+    (cond
+     ((= (length code-windows) 0)
+      (user-error "No code windows available"))
+     ((= (length code-windows) 1)
+      ;; Create a second window
+      (split-window-right)))
+    
+    ;; Get updated code windows and find rightmost
+    (let* ((updated-windows (my/get-code-windows))
+           (rightmost-window (car (sort updated-windows 
+                                       (lambda (a b) 
+                                         (> (window-left-column a) 
+                                            (window-left-column b)))))))
+      
+      ;; Switch to rightmost window and show buffer
+      (select-window rightmost-window)
+      (switch-to-buffer buffer)
+      
+      ;; Navigate to specific position if provided
+      (when line
+        (goto-line line)
+        (when column
+          (move-to-column column)))
+      
+      (recenter)
+      rightmost-window)))
+
+(defun my/show-buffer-other-split (buffer &optional line column)
+  "Show BUFFER in the other code split (opposite of current).
+If LINE is provided, go to that line. If COLUMN is provided, go to that column.
+Creates a split if needed and uses smart duplication logic."
+  (let ((current-window (selected-window))
+        (code-windows (my/get-code-windows)))
+    
+    ;; Ensure current buffer is a code buffer
+    (unless (my/is-main-code-buffer-p)
+      (user-error "Current buffer is not a main code buffer"))
+    
+    ;; Use smart duplicate to ensure we have proper splits
+    (my/smart-duplicate-buffer)
+    
+    ;; Now switch to the buffer we want to show
+    (switch-to-buffer buffer)
+    
+    ;; Navigate to specific position if provided
+    (when line
+      (goto-line line)
+      (when column
+        (move-to-column column)))
+    
+    (recenter)
+    (selected-window)))
+
+(defun my/show-file-main-left (file-path &optional line column)
+  "Show FILE-PATH in the leftmost code window.
+If LINE is provided, go to that line. If COLUMN is provided, go to that column."
+  (unless (file-exists-p file-path)
+    (user-error "File does not exist: %s" file-path))
+  
+  (let ((buffer (find-file-noselect file-path)))
+    (my/show-buffer-main-left buffer line column)))
+
+(defun my/show-file-main-right (file-path &optional line column)
+  "Show FILE-PATH in the rightmost code window.
+If LINE is provided, go to that line. If COLUMN is provided, go to that column."
+  (unless (file-exists-p file-path)
+    (user-error "File does not exist: %s" file-path))
+  
+  (let ((buffer (find-file-noselect file-path)))
+    (my/show-buffer-main-right buffer line column)))
+
+(defun my/show-file-other-split (file-path &optional line column)
+  "Show FILE-PATH in the other code split (opposite of current).
+If LINE is provided, go to that line. If COLUMN is provided, go to that column."
+  (unless (file-exists-p file-path)
+    (user-error "File does not exist: %s" file-path))
+  
+  (let ((buffer (find-file-noselect file-path)))
+    (my/show-buffer-other-split buffer line column)))
+
+(defun my/focus-main-left ()
+  "Focus the leftmost code window."
+  (interactive)
+  (let ((code-windows (my/get-code-windows)))
+    (when code-windows
+      (let ((leftmost-window (car (sort code-windows 
+                                       (lambda (a b) 
+                                         (< (window-left-column a) 
+                                            (window-left-column b)))))))
+        (select-window leftmost-window)
+        (message "Focused leftmost code window")))))
+
+(defun my/focus-main-right ()
+  "Focus the rightmost code window."
+  (interactive)
+  (let ((code-windows (my/get-code-windows)))
+    (when code-windows
+      (let ((rightmost-window (car (sort code-windows 
+                                        (lambda (a b) 
+                                          (> (window-left-column a) 
+                                             (window-left-column b)))))))
+        (select-window rightmost-window)
+        (message "Focused rightmost code window")))))
+
 ;; Key bindings
 ;; C-c s for smart duplicate buffer (original binding)
 (global-set-key (kbd "C-c s") #'my/smart-duplicate-buffer)

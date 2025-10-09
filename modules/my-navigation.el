@@ -6,6 +6,9 @@
 
 ;;; Code:
 
+;; Require smart splits for advanced split management
+(require 'my-smart-splits)
+
 (defun my/jump-up ()
   "Jump up 10 lines."
   (interactive)
@@ -214,19 +217,15 @@ Value: plist with :buffer :position :line :preview :created-time :last-visited")
           (let* ((mark-name (car mark-entry))
                  (mark-info (cdr mark-entry))
                  (buffer (plist-get mark-info :buffer))
+                 (buffer-name (plist-get mark-info :buffer-name))
                  (file-path (plist-get mark-info :file-path))
                  (line-num (plist-get mark-info :line))
                  (last-visited (plist-get mark-info :last-visited))
                  (buffer-exists (and buffer (buffer-live-p buffer))))
             
-            (insert (format "## %s\n\n" mark-name))
-            (insert (format "**File:** `%s:%d`  \n" 
-                           (file-name-nondirectory file-path) line-num))
-            (insert (format "**Status:** %s  \n" 
-                           (if buffer-exists "✅ Active" "❌ Dead")))
-            (insert (format "**Last visited:** %s\n\n" 
-                           (format-time-string "%Y-%m-%d %H:%M:%S" last-visited)))
-            
+            (insert (format "### %s:%d  \n"
+                           (if file-path (file-name-nondirectory file-path) buffer-name) line-num))
+
             ;; Add context if buffer exists
             (when buffer-exists
               (let ((context-info (with-current-buffer buffer
@@ -311,7 +310,7 @@ If called with prefix arg, auto-generate a name."
                                                (propertize "[current]" 'face 'success)
                                              (if buffer-exists "" 
                                                (propertize "[dead]" 'face 'error)))
-                                           (propertize (file-name-nondirectory file-path) 
+                                           (propertize (if file-path (file-name-nondirectory file-path) buffer-name) 
                                                       'face 'font-lock-function-name-face)
                                            line-num
                                            (propertize preview 'face 'font-lock-comment-face))))
@@ -426,14 +425,14 @@ If called with prefix arg, auto-generate a name."
   (interactive)
   ;; Move to end of current line to avoid matching current line
   (end-of-line)
-  (if (re-search-forward "^## " nil t)
+  (if (re-search-forward "^### " nil t)
       (progn
         (beginning-of-line)
         (recenter-top-bottom 5))
     (progn
       ;; Wrap to beginning and find first mark
       (goto-char (point-min))
-      (when (re-search-forward "^## " nil t)
+      (when (re-search-forward "^### " nil t)
         (beginning-of-line)
         (recenter-top-bottom 5)))))
 
@@ -441,56 +440,15 @@ If called with prefix arg, auto-generate a name."
   "Move to previous mark section in markdown."
   (interactive)
   (beginning-of-line)
-  (if (re-search-backward "^## " nil t)
+  (if (re-search-backward "^### " nil t)
       (progn
         (beginning-of-line)
         (recenter-top-bottom 5))
     (progn
       (goto-char (point-max))
-      (when (re-search-backward "^## " nil t)
+      (when (re-search-backward "^### " nil t)
         (beginning-of-line)
         (recenter-top-bottom 5)))))
-
-(defun my/markdown-marks-jump-to-mark ()
-  "Jump to the actual location of the current mark in markdown view."
-  (interactive)
-  (let ((mark-name (my/markdown-marks-get-current-mark)))
-    (when mark-name
-      (let ((mark-info (gethash mark-name my/global-marks)))
-        (when mark-info
-          (let ((target-buffer (plist-get mark-info :buffer))
-                (target-pos (plist-get mark-info :position))
-                (file-path (plist-get mark-info :file-path))
-                (buffer-exists (and (plist-get mark-info :buffer) 
-                                   (buffer-live-p (plist-get mark-info :buffer)))))
-            
-            (cond
-             ((not buffer-exists)
-              ;; Try to reopen the file if buffer is dead
-              (if (and (stringp file-path) (file-exists-p file-path))
-                  (progn
-                    (find-file file-path)
-                    (goto-char target-pos)
-                    ;; Update the mark with new buffer
-                    (plist-put mark-info :buffer (current-buffer))
-                    (plist-put mark-info :last-visited (current-time))
-                    (puthash mark-name mark-info my/global-marks)
-                    ;; Update markdown file with new visit time
-                    (my/update-marks-markdown)
-                    (recenter)
-                    (message "Reopened file and jumped to mark '%s'" mark-name))
-                (message "Cannot jump to mark '%s': file no longer exists" mark-name)))
-             (t
-              ;; Buffer exists, jump to it
-              (switch-to-buffer target-buffer)
-              (goto-char target-pos)
-              ;; Update last visited time
-              (plist-put mark-info :last-visited (current-time))
-              (puthash mark-name mark-info my/global-marks)
-              ;; Update markdown file with new visit time
-              (my/update-marks-markdown)
-              (recenter)
-              (message "Jumped to mark '%s'" mark-name)))))))))
 
 (defun my/markdown-marks-refresh ()
   "Refresh the markdown file and reload it."
@@ -498,7 +456,7 @@ If called with prefix arg, auto-generate a name."
   (my/update-marks-markdown)
   (revert-buffer t t)
   (goto-char (point-min))
-  (when (re-search-forward "^## " nil t)
+  (when (re-search-forward "^### " nil t)
     (beginning-of-line)
     (recenter-top-bottom 5))
   (message "Refreshed marks markdown"))
@@ -549,7 +507,7 @@ If called with prefix arg, auto-generate a name."
           (my/markdown-marks-mode 1)
           ;; Move to first mark
           (goto-char (point-min))
-          (when (re-search-forward "^## " nil t)
+          (when (re-search-forward "^### " nil t)
             (beginning-of-line)
             (recenter-top-bottom 5))
           (message "Opened marks markdown (j/k: navigate, s/RET: jump, g: refresh, q: quit): %s" 
@@ -564,7 +522,7 @@ If called with prefix arg, auto-generate a name."
           (my/markdown-marks-mode 1)
           ;; Move to first mark
           (goto-char (point-min))
-          (when (re-search-forward "^## " nil t)
+          (when (re-search-forward "^### " nil t)
             (beginning-of-line)
             (recenter-top-bottom 5))
           (message "Created marks markdown (j/k: navigate, s/RET: jump, g: refresh, q: quit): %s" 
@@ -759,7 +717,7 @@ If called with prefix arg, auto-generate a name."
                              (if buffer-exists 
                                  (propertize "✓" 'face 'success)
                                (propertize "✗" 'face 'error))
-                             (propertize (file-name-nondirectory file-path) 
+                             (propertize (if file-path (file-name-nondirectory file-path) buffer-name) 
                                         'face 'font-lock-function-name-face)
                              line-num))
               (insert (format "    %s\n" 
