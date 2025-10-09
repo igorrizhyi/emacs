@@ -427,7 +427,7 @@ If called with prefix arg, auto-generate a name."
 
 (defvar my/marks-buffer-mode-map
   (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "RET") #'my/marks-buffer-jump-to-mark)
+    (define-key map (kbd "s") #'my/marks-buffer-jump-to-mark)
     (define-key map (kbd "j") #'my/marks-buffer-next-mark)
     (define-key map (kbd "k") #'my/marks-buffer-previous-mark)
     (define-key map (kbd "p") #'my/marks-buffer-preview-mark)
@@ -440,6 +440,16 @@ If called with prefix arg, auto-generate a name."
   "Minor mode for navigating marks buffer."
   :lighter " Marks"
   :keymap my/marks-buffer-mode-map)
+
+;; Evil mode integration for marks buffer
+(with-eval-after-load 'evil
+  (evil-define-key 'normal my/marks-buffer-mode-map
+    "s" #'my/marks-buffer-jump-to-mark
+    "j" #'my/marks-buffer-next-mark
+    "k" #'my/marks-buffer-previous-mark
+    "p" #'my/marks-buffer-preview-mark
+    "q" #'quit-window
+    "g" #'my/list-marks))
 
 (defun my/list-marks ()
   "List all global marks in a navigable buffer."
@@ -467,7 +477,7 @@ If called with prefix arg, auto-generate a name."
           (erase-buffer)
           (insert (propertize "Global Marks (sorted by last visited)\n" 'face 'font-lock-keyword-face))
           (insert (propertize "=========================================\n\n" 'face 'font-lock-comment-face))
-          (insert (propertize "j/k: navigate  RET: jump  p: preview  q: quit  g: refresh\n\n" 'face 'font-lock-doc-face))
+          (insert (propertize "j/k: navigate  s: jump  p: preview  q: quit  g: refresh\n\n" 'face 'font-lock-doc-face))
           
           (dolist (mark-entry marks-info)
             (let* ((mark-name (car mark-entry))
