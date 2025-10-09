@@ -461,6 +461,19 @@ If called with prefix arg, auto-generate a name."
     (when (re-search-forward "^<!-- PROJECT_ROOT: \\(.+\\) -->$" nil t)
       (match-string 1))))
 
+(defun my/refresh-markdown-buffer ()
+  "Force refresh the markdown buffer content from file."
+  (let ((markdown-file (my/get-project-marks-file))
+        (markdown-buffer (get-file-buffer (my/get-project-marks-file))))
+    (when markdown-buffer
+      (with-current-buffer markdown-buffer
+        (let ((inhibit-read-only t)
+              (current-pos (point)))
+          (erase-buffer)
+          (insert-file-contents markdown-file)
+          (goto-char current-pos)
+          (redisplay t))))))
+
 (defun my/find-mark-by-file-and-line (filename line-num)
   "Find a mark that matches the given filename and line number."
   (let ((found-mark nil))
@@ -523,19 +536,24 @@ If called with prefix arg, auto-generate a name."
                           (my/update-marks-markdown)
                           (message "DEBUG: Refreshing markdown buffer only...")
                           ;; CRITICAL: Make sure we're in the correct buffer before modifying
+                          (my/refresh-markdown-buffer)
                           (with-current-buffer current-markdown-buffer
                             (when (string-match-p "\\.md$" (buffer-name))  ; Safety check - only modify .md files
                               (let ((inhibit-read-only t)
                                     (current-pos (point)))
-                                (erase-buffer)
-                                (insert-file-contents (my/get-project-marks-file))
+
+                                ;; Use our dedicated refresh function
+                                (my/refresh-markdown-buffer)
+
                                 ;; Return to the same position
                                 (goto-char (point-min))
                                 (if (re-search-forward target-line nil t)
                                     (progn
                                       (beginning-of-line)
                                       (recenter-top-bottom 5))
-                                  (goto-char current-pos)))))
+                                  (goto-char current-pos))
+                                ;; Also force window update
+                                )))
                           (message "DEBUG: Markdown refresh complete"))))))
                 (message "Jumped to %s:%d in main-right split" filename line-num))
             (message "File not found: %s" full-path)))))
