@@ -466,11 +466,8 @@ If called with prefix arg, auto-generate a name."
   (let ((markdown-buffer (get-file-buffer (my/get-project-marks-file))))
     (when markdown-buffer
       (with-current-buffer markdown-buffer
-        (let ((current-pos (point)))
-          ;; Force revert without asking - answers "yes" automatically
-          (revert-buffer t t t)
-          (goto-char current-pos)
-          (redisplay t))))))
+        ;; Force revert without asking - answers "yes" automatically
+        (revert-buffer t t t)))))
 
 (defun my/find-mark-by-file-and-line (filename line-num)
   "Find a mark that matches the given filename and line number."
