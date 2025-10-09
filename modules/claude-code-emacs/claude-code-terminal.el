@@ -345,9 +345,10 @@ For example, if current terminal is 'my_prod', cycles through 'my_prod', 'my_pro
                    (1+ next-index) 
                    (length sorted-terminals)))))))
 
-(defun claude-code-terminal-switch ()
-  "Switch to a terminal buffer, ordered by most recent usage."
-  (interactive)
+(defun claude-code-terminal-switch (&optional arg)
+  "Switch to a terminal buffer, ordered by most recent usage.
+With prefix argument ARG (C-u), switch to the most recent terminal directly."
+  (interactive "P")
   (claude-code-terminal-cleanup-dead-buffers)
   ;; Update current terminal's access time before building the list
   (claude-code-terminal-update-last-focused)
@@ -557,7 +558,8 @@ For example, if current terminal is 'my_prod', cycles through 'my_prod', 'my_pro
   (define-key vterm-mode-map (kbd "C-c 1") 'claude-code-send-1)
   (define-key vterm-mode-map (kbd "C-c v") 'vterm-yank)
   (define-key vterm-mode-map (kbd "C-c k") 'my-window-layout-show-claude-code-right)
-  (define-key vterm-mode-map (kbd "C-l") 'windmove-right))
+  (define-key vterm-mode-map (kbd "C-l") 'windmove-right)
+  (define-key vterm-mode-map (kbd "C-u") 'claude-code-terminal-switch))
 
 (provide 'claude-code-terminal)
 ;;; claude-code-terminal.el ends here

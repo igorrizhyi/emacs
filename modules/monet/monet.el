@@ -1492,8 +1492,9 @@ DIFF-CONTEXT is a context object containing diff-buffer and temp buffers."
           (when (eq (selected-window) diff-window)
             ;; Try to select previous window
             (other-window -1))
-          ;; Delete the diff window
-          (delete-window diff-window)))
+          ;; Kill the buffer in the diff window
+          (with-selected-window diff-window
+            (kill-buffer))))
       (kill-buffer diff-buffer)
       ;; Kill the new temporary buffer
       (when (and new-temp-buffer (buffer-live-p new-temp-buffer))
