@@ -463,14 +463,12 @@ If called with prefix arg, auto-generate a name."
 
 (defun my/refresh-markdown-buffer ()
   "Force refresh the markdown buffer content from file."
-  (let ((markdown-file (my/get-project-marks-file))
-        (markdown-buffer (get-file-buffer (my/get-project-marks-file))))
+  (let ((markdown-buffer (get-file-buffer (my/get-project-marks-file))))
     (when markdown-buffer
       (with-current-buffer markdown-buffer
-        (let ((inhibit-read-only t)
-              (current-pos (point)))
-          (erase-buffer)
-          (insert-file-contents markdown-file)
+        (let ((current-pos (point)))
+          ;; Force revert without asking - answers "yes" automatically
+          (revert-buffer t t t)
           (goto-char current-pos)
           (redisplay t))))))
 
@@ -535,15 +533,12 @@ If called with prefix arg, auto-generate a name."
                           ;; Update markdown file
                           (my/update-marks-markdown)
                           (message "DEBUG: Refreshing markdown buffer only...")
-                          ;; CRITICAL: Make sure we're in the correct buffer before modifying
+                          ;; Use our dedicated refresh function
                           (my/refresh-markdown-buffer)
                           (with-current-buffer current-markdown-buffer
                             (when (string-match-p "\\.md$" (buffer-name))  ; Safety check - only modify .md files
                               (let ((inhibit-read-only t)
                                     (current-pos (point)))
-
-                                ;; Use our dedicated refresh function
-                                (my/refresh-markdown-buffer)
 
                                 ;; Return to the same position
                                 (goto-char (point-min))
