@@ -204,6 +204,7 @@ Value: plist with :buffer :position :line :preview :created-time :last-visited")
                      (file-name-nondirectory (directory-file-name project-root))))
       (insert (format "*Generated: %s*\n\n" 
                      (format-time-string "%Y-%m-%d %H:%M:%S")))
+      (insert (format "<!-- PROJECT_ROOT: %s -->\n\n" project-root))
       
       ;; Sort marks by last visited (most recent first)
       (let ((marks-list '()))
@@ -453,42 +454,29 @@ If called with prefix arg, auto-generate a name."
         (beginning-of-line)
         (recenter-top-bottom 5)))))
 
+(defun my/get-project-root-from-markdown ()
+  "Extract the project root from the markdown file's PROJECT_ROOT comment."
+  (save-excursion
+    (goto-char (point-min))
+    (when (re-search-forward "^<!-- PROJECT_ROOT: \\(.+\\) -->$" nil t)
+      (match-string 1))))
+
 (defun my/markdown-marks-jump-to-mark ()
   "Jump to the mark at current markdown section in the main-right split."
   (interactive)
-  (save-excursion
-    (beginning-of-line)
-    ;; Look for heading pattern: ### filename:line
-    (when (re-search-forward "^### \\(.+\\):\\([0-9]+\\)" (line-end-position) t)
-      (let* ((filename (match-string 1))
-             (line-num (string-to-number (match-string 2)))
-             (project-root (if (fboundp 'projectile-project-root)
-                              (projectile-project-root)
-                            (if (fboundp 'project-root)
-                                (project-root (project-current))
-                              default-directory)))
-             (full-path (expand-file-name filename project-root)))
-        
-        (if (file-exists-p full-path)
-            (progn
-              ;; Use smart-splits function to show file in main-right split
-              (my/show-file-main-right full-path line-num)
-              (message "Jumped to %s:%d in main-right split" filename line-num))
-          (message "File not found: %s" full-path)))))
-  
-  ;; If we didn't find a heading on current line, look for the previous heading
-  (unless (save-excursion
-            (beginning-of-line)
-            (re-search-forward "^### \\(.+\\):\\([0-9]+\\)" (line-end-position) t))
+  (let ((stored-project-root (my/get-project-root-from-markdown)))
     (save-excursion
-      (when (re-search-backward "^### \\(.+\\):\\([0-9]+\\)" nil t)
+      (beginning-of-line)
+      ;; Look for heading pattern: ### filename:line
+      (when (re-search-forward "^### \\(.+\\):\\([0-9]+\\)" (line-end-position) t)
         (let* ((filename (match-string 1))
                (line-num (string-to-number (match-string 2)))
-               (project-root (if (fboundp 'projectile-project-root)
-                                (projectile-project-root)
-                              (if (fboundp 'project-root)
-                                  (project-root (project-current))
-                                default-directory)))
+               (project-root (or stored-project-root
+                                (if (fboundp 'projectile-project-root)
+                                    (projectile-project-root)
+                                  (if (fboundp 'project-root)
+                                      (project-root (project-current))
+                                    default-directory))))
                (full-path (expand-file-name filename project-root)))
           
           (if (file-exists-p full-path)
@@ -496,7 +484,30 @@ If called with prefix arg, auto-generate a name."
                 ;; Use smart-splits function to show file in main-right split
                 (my/show-file-main-right full-path line-num)
                 (message "Jumped to %s:%d in main-right split" filename line-num))
-            (message "File not found: %s" full-path)))))))
+            (message "File not found: %s" full-path)))))
+    
+    ;; If we didn't find a heading on current line, look for the previous heading
+    (unless (save-excursion
+              (beginning-of-line)
+              (re-search-forward "^### \\(.+\\):\\([0-9]+\\)" (line-end-position) t))
+      (save-excursion
+        (when (re-search-backward "^### \\(.+\\):\\([0-9]+\\)" nil t)
+          (let* ((filename (match-string 1))
+                 (line-num (string-to-number (match-string 2)))
+                 (project-root (or stored-project-root
+                                  (if (fboundp 'projectile-project-root)
+                                      (projectile-project-root)
+                                    (if (fboundp 'project-root)
+                                        (project-root (project-current))
+                                      default-directory))))
+                 (full-path (expand-file-name filename project-root)))
+            
+            (if (file-exists-p full-path)
+                (progn
+                  ;; Use smart-splits function to show file in main-right split
+                  (my/show-file-main-right full-path line-num)
+                  (message "Jumped to %s:%d in main-right split" filename line-num))
+              (message "File not found: %s" full-path))))))))
 
 (defun my/markdown-marks-refresh ()
   "Refresh the markdown file and reload it."
