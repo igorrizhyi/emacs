@@ -310,8 +310,139 @@ If called with prefix arg, auto-generate a name."
           (remhash mark-name my/global-marks)
           (message "Deleted mark '%s'" mark-name))))))
 
+(defvar my/marks-buffer-marks-data nil
+  "Store marks data for the marks buffer navigation.")
+
+(defun my/marks-buffer-get-current-mark ()
+  "Get the mark name at current line in marks buffer."
+  (save-excursion
+    (beginning-of-line)
+    (when (looking-at "^\\([^ ]+\\)")
+      (match-string 1))))
+
+(defun my/marks-buffer-jump-to-mark ()
+  "Jump to the mark at current line and close marks buffer."
+  (interactive)
+  (let ((mark-name (my/marks-buffer-get-current-mark)))
+    (when mark-name
+      (let ((mark-info (gethash mark-name my/global-marks)))
+        (when mark-info
+          (quit-window t)  ; Close marks buffer
+          (let ((target-buffer (plist-get mark-info :buffer))
+                (target-pos (plist-get mark-info :position))
+                (file-path (plist-get mark-info :file-path))
+                (buffer-exists (and (plist-get mark-info :buffer) 
+                                   (buffer-live-p (plist-get mark-info :buffer)))))
+            
+            (cond
+             ((not buffer-exists)
+              ;; Try to reopen the file if buffer is dead
+              (if (and (stringp file-path) (file-exists-p file-path))
+                  (progn
+                    (find-file file-path)
+                    (goto-char target-pos)
+                    ;; Update the mark with new buffer
+                    (plist-put mark-info :buffer (current-buffer))
+                    (plist-put mark-info :last-visited (current-time))
+                    (puthash mark-name mark-info my/global-marks)
+                    (recenter)
+                    (message "Reopened file and jumped to mark '%s'" mark-name))
+                (message "Cannot jump to mark '%s': file no longer exists" mark-name)))
+             (t
+              ;; Buffer exists, jump to it
+              (switch-to-buffer target-buffer)
+              (goto-char target-pos)
+              ;; Update last visited time
+              (plist-put mark-info :last-visited (current-time))
+              (puthash mark-name mark-info my/global-marks)
+              (recenter)
+              (message "Jumped to mark '%s'" mark-name)))))))))
+
+(defun my/marks-buffer-next-mark ()
+  "Move to next mark in marks buffer."
+  (interactive)
+  (forward-line 1)
+  ;; Skip non-mark lines (preview, timestamp, empty lines)
+  (while (and (not (eobp))
+              (or (looking-at "^[ \t]")  ; Lines starting with whitespace
+                  (looking-at "^$")))    ; Empty lines
+    (forward-line 1))
+  (when (eobp)
+    ;; If we hit end, go to first mark
+    (goto-char (point-min))
+    (while (and (not (eobp))
+                (or (looking-at "^[ \t]")
+                    (looking-at "^$")
+                    (looking-at "^Global Marks")
+                    (looking-at "^=====")))
+      (forward-line 1))))
+
+(defun my/marks-buffer-previous-mark ()
+  "Move to previous mark in marks buffer."
+  (interactive)
+  (forward-line -1)
+  ;; Skip non-mark lines
+  (while (and (not (bobp))
+              (or (looking-at "^[ \t]")
+                  (looking-at "^$")
+                  (looking-at "^Global Marks")
+                  (looking-at "^=====")))
+    (forward-line -1))
+  (when (bobp)
+    ;; If we hit beginning, go to last mark
+    (goto-char (point-max))
+    (while (and (not (bobp))
+                (or (looking-at "^[ \t]")
+                    (looking-at "^$")))
+      (forward-line -1))))
+
+(defun my/marks-buffer-preview-mark ()
+  "Preview the mark at current line in another window."
+  (interactive)
+  (let ((mark-name (my/marks-buffer-get-current-mark)))
+    (when mark-name
+      (let ((mark-info (gethash mark-name my/global-marks)))
+        (when mark-info
+          (let ((target-buffer (plist-get mark-info :buffer))
+                (target-pos (plist-get mark-info :position))
+                (file-path (plist-get mark-info :file-path))
+                (buffer-exists (and (plist-get mark-info :buffer) 
+                                   (buffer-live-p (plist-get mark-info :buffer)))))
+            
+            (cond
+             ((and buffer-exists target-buffer)
+              ;; Buffer exists, show it in other window
+              (with-selected-window (other-window-for-scrolling)
+                (switch-to-buffer target-buffer)
+                (goto-char target-pos)
+                (recenter)))
+             ((and (stringp file-path) (file-exists-p file-path))
+              ;; Buffer doesn't exist, open file in other window
+              (with-selected-window (other-window-for-scrolling)
+                (find-file file-path)
+                (goto-char target-pos)
+                (recenter)))
+             (t
+              (message "Cannot preview mark: buffer/file not available")))))))))
+
+(defvar my/marks-buffer-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "RET") #'my/marks-buffer-jump-to-mark)
+    (define-key map (kbd "j") #'my/marks-buffer-next-mark)
+    (define-key map (kbd "k") #'my/marks-buffer-previous-mark)
+    (define-key map (kbd "p") #'my/marks-buffer-preview-mark)
+    (define-key map (kbd "q") #'quit-window)
+    (define-key map (kbd "g") #'my/list-marks)  ; Refresh
+    map)
+  "Keymap for marks buffer navigation.")
+
+(define-minor-mode my/marks-buffer-mode
+  "Minor mode for navigating marks buffer."
+  :lighter " Marks"
+  :keymap my/marks-buffer-mode-map)
+
 (defun my/list-marks ()
-  "List all global marks in a buffer."
+  "List all global marks in a navigable buffer."
   (interactive)
   (if (= (hash-table-count my/global-marks) 0)
       (message "No marks found")
@@ -334,8 +465,9 @@ If called with prefix arg, auto-generate a name."
       (with-current-buffer (get-buffer-create "*Global Marks*")
         (let ((inhibit-read-only t))
           (erase-buffer)
-          (insert "Global Marks (sorted by last visited):\n")
-          (insert "=========================================\n\n")
+          (insert (propertize "Global Marks (sorted by last visited)\n" 'face 'font-lock-keyword-face))
+          (insert (propertize "=========================================\n\n" 'face 'font-lock-comment-face))
+          (insert (propertize "j/k: navigate  RET: jump  p: preview  q: quit  g: refresh\n\n" 'face 'font-lock-doc-face))
           
           (dolist (mark-entry marks-info)
             (let* ((mark-name (car mark-entry))
@@ -347,20 +479,29 @@ If called with prefix arg, auto-generate a name."
                    (last-visited (plist-get mark-info :last-visited))
                    (buffer-exists (buffer-live-p (plist-get mark-info :buffer))))
               
-              (insert (format "%-15s %s %s:%d\n" 
-                             mark-name
-                             (if buffer-exists "✓" "✗")
-                             (file-name-nondirectory file-path)
+              (insert (format "%s %s %s:%d\n" 
+                             (propertize mark-name 'face 'font-lock-constant-face)
+                             (if buffer-exists 
+                                 (propertize "✓" 'face 'success)
+                               (propertize "✗" 'face 'error))
+                             (propertize (file-name-nondirectory file-path) 
+                                        'face 'font-lock-function-name-face)
                              line-num))
-              (insert (format "               %s\n" 
+              (insert (format "    %s\n" 
                              (propertize preview 'face 'font-lock-comment-face)))
-              (insert (format "               Last visited: %s\n\n" 
-                             (format-time-string "%Y-%m-%d %H:%M:%S" last-visited)))))
+              (insert (format "    %s\n\n" 
+                             (propertize (format-time-string "Last visited: %Y-%m-%d %H:%M:%S" last-visited)
+                                        'face 'font-lock-doc-face)))))
           
+          ;; Enable our custom mode and position cursor
+          (my/marks-buffer-mode 1)
+          (setq buffer-read-only t)
           (goto-char (point-min))
-          (view-mode 1)))
+          ;; Move to first actual mark
+          (my/marks-buffer-next-mark)))
       
-      (display-buffer "*Global Marks*"))))
+      ;; Display buffer and select it
+      (pop-to-buffer "*Global Marks*"))))
 
 ;; Keybindings for custom marks system
 (map! :leader
