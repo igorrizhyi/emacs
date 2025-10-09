@@ -362,10 +362,13 @@ If called with prefix arg, auto-generate a name."
   "Move to next mark in marks buffer."
   (interactive)
   (forward-line 1)
-  ;; Skip non-mark lines (preview, timestamp, empty lines)
+  ;; Skip non-mark lines (preview, timestamp, empty lines, headers)
   (while (and (not (eobp))
               (or (looking-at "^[ \t]")  ; Lines starting with whitespace
-                  (looking-at "^$")))    ; Empty lines
+                  (looking-at "^$")      ; Empty lines
+                  (looking-at "^Global Marks")  ; Header
+                  (looking-at "^=====")        ; Separator
+                  (looking-at "^j/k:")))       ; Navigation instructions
     (forward-line 1))
   (when (eobp)
     ;; If we hit end, go to first mark
@@ -374,7 +377,8 @@ If called with prefix arg, auto-generate a name."
                 (or (looking-at "^[ \t]")
                     (looking-at "^$")
                     (looking-at "^Global Marks")
-                    (looking-at "^=====")))
+                    (looking-at "^=====")
+                    (looking-at "^j/k:")))
       (forward-line 1))))
 
 (defun my/marks-buffer-previous-mark ()
@@ -386,7 +390,8 @@ If called with prefix arg, auto-generate a name."
               (or (looking-at "^[ \t]")
                   (looking-at "^$")
                   (looking-at "^Global Marks")
-                  (looking-at "^=====")))
+                  (looking-at "^=====")
+                  (looking-at "^j/k:")))
     (forward-line -1))
   (when (bobp)
     ;; If we hit beginning, go to last mark
