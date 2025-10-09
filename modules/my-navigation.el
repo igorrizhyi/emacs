@@ -424,11 +424,14 @@ If called with prefix arg, auto-generate a name."
 (defun my/markdown-marks-next-mark ()
   "Move to next mark section in markdown."
   (interactive)
+  ;; Move to end of current line to avoid matching current line
+  (end-of-line)
   (if (re-search-forward "^## " nil t)
       (progn
         (beginning-of-line)
         (recenter-top-bottom 5))
     (progn
+      ;; Wrap to beginning and find first mark
       (goto-char (point-min))
       (when (re-search-forward "^## " nil t)
         (beginning-of-line)
