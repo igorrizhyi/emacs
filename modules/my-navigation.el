@@ -137,6 +137,106 @@ Value: plist with :buffer :position :line :preview :created-time :last-visited")
 (defvar my/marks-counter 0
   "Counter for auto-generating mark names.")
 
+(defun my/get-language-for-mode ()
+  "Get the language identifier for markdown code blocks based on current major mode."
+  (cond
+   ((derived-mode-p 'emacs-lisp-mode) "elisp")
+   ((derived-mode-p 'lisp-mode) "lisp")
+   ((derived-mode-p 'python-mode) "python")
+   ((derived-mode-p 'python-ts-mode) "python")
+   ((derived-mode-p 'js-mode 'js2-mode 'js3-mode) "javascript")
+   ((derived-mode-p 'typescript-mode 'typescript-ts-mode) "typescript")
+   ((derived-mode-p 'java-mode) "java")
+   ((derived-mode-p 'c-mode) "c")
+   ((derived-mode-p 'c++-mode) "cpp")
+   ((derived-mode-p 'rust-mode 'rust-ts-mode) "rust")
+   ((derived-mode-p 'go-mode 'go-ts-mode) "go")
+   ((derived-mode-p 'ruby-mode) "ruby")
+   ((derived-mode-p 'php-mode) "php")
+   ((derived-mode-p 'sh-mode 'bash-ts-mode) "bash")
+   ((derived-mode-p 'sql-mode) "sql")
+   ((derived-mode-p 'css-mode) "css")
+   ((derived-mode-p 'html-mode) "html")
+   ((derived-mode-p 'xml-mode) "xml")
+   ((derived-mode-p 'yaml-mode) "yaml")
+   ((derived-mode-p 'json-mode) "json")
+   ((derived-mode-p 'markdown-mode) "markdown")
+   ((derived-mode-p 'org-mode) "org")
+   (t "text")))
+
+(defun my/get-project-marks-file ()
+  "Get the markdown file path for storing marks context for current project."
+  (let* ((project-root (if (fboundp 'projectile-project-root)
+                          (projectile-project-root)
+                        (if (fboundp 'project-root)
+                            (project-root (project-current))
+                          default-directory)))
+         (project-name (file-name-nondirectory (directory-file-name project-root)))
+         (safe-name (replace-regexp-in-string "[^a-zA-Z0-9_-]" "_" project-name)))
+    (expand-file-name (format "marks-%s.md" safe-name) temporary-file-directory)))
+
+(defun my/generate-mark-context (position)
+  "Generate context around POSITION with 3 lines before and after."
+  (save-excursion
+    (goto-char position)
+    (let* ((mark-line (line-number-at-pos))
+           (start-line (max 1 (- mark-line 3)))
+           (end-line (+ mark-line 3))
+           (start-pos (progn (goto-line start-line) (line-beginning-position)))
+           (end-pos (progn (goto-line end-line) (line-end-position)))
+           (context (buffer-substring-no-properties start-pos end-pos))
+           (language (my/get-language-for-mode)))
+      (list :context context :language language :start-line start-line :mark-line mark-line))))
+
+(defun my/update-marks-markdown ()
+  "Update the markdown file with all current marks."
+  (let ((markdown-file (my/get-project-marks-file))
+        (project-root (if (fboundp 'projectile-project-root)
+                         (projectile-project-root)
+                       (if (fboundp 'project-root)
+                           (project-root (project-current))
+                         default-directory))))
+    (with-temp-file markdown-file
+      (insert (format "# Global Marks for %s\n\n" 
+                     (file-name-nondirectory (directory-file-name project-root))))
+      (insert (format "*Generated: %s*\n\n" 
+                     (format-time-string "%Y-%m-%d %H:%M:%S")))
+      
+      ;; Sort marks by last visited (most recent first)
+      (let ((marks-list '()))
+        (maphash (lambda (name info) (push (cons name info) marks-list)) my/global-marks)
+        (setq marks-list (sort marks-list 
+                              (lambda (a b)
+                                (time-less-p (plist-get (cdr b) :last-visited)
+                                           (plist-get (cdr a) :last-visited)))))
+        
+        (dolist (mark-entry marks-list)
+          (let* ((mark-name (car mark-entry))
+                 (mark-info (cdr mark-entry))
+                 (buffer (plist-get mark-info :buffer))
+                 (file-path (plist-get mark-info :file-path))
+                 (line-num (plist-get mark-info :line))
+                 (last-visited (plist-get mark-info :last-visited))
+                 (buffer-exists (and buffer (buffer-live-p buffer))))
+            
+            (insert (format "## %s\n\n" mark-name))
+            (insert (format "**File:** `%s:%d`  \n" 
+                           (file-name-nondirectory file-path) line-num))
+            (insert (format "**Status:** %s  \n" 
+                           (if buffer-exists "✅ Active" "❌ Dead")))
+            (insert (format "**Last visited:** %s\n\n" 
+                           (format-time-string "%Y-%m-%d %H:%M:%S" last-visited)))
+            
+            ;; Add context if buffer exists
+            (when buffer-exists
+              (let ((context-info (with-current-buffer buffer
+                                   (my/generate-mark-context (plist-get mark-info :position)))))
+                (insert (format "```%s\n" (plist-get context-info :language)))
+                (insert (plist-get context-info :context))
+                (insert "\n```\n\n")))
+            
+            (insert "---\n\n")))))))
+
 (defun my/create-mark (&optional name)
   "Create a global mark at current position.
 If NAME is provided, use it as mark name. Otherwise, prompt for name.
@@ -179,6 +279,9 @@ If called with prefix arg, auto-generate a name."
                    :file-path (or (buffer-file-name current-buffer) 
                                   (buffer-name current-buffer)))
              my/global-marks)
+    
+    ;; Update markdown file with rich context
+    (my/update-marks-markdown)
     
     (message "Created mark '%s' at %s:%d" mark-name (buffer-name) line-num)))
 
@@ -308,7 +411,161 @@ If called with prefix arg, auto-generate a name."
              (mark-name (car (split-string selected "  "))))
         (when (and selected mark-name)
           (remhash mark-name my/global-marks)
+          ;; Update markdown file after deletion
+          (my/update-marks-markdown)
           (message "Deleted mark '%s'" mark-name))))))
+
+(defun my/markdown-marks-get-current-mark ()
+  "Get the mark name at current markdown section."
+  (save-excursion
+    (when (re-search-backward "^## \\(.+\\)$" nil t)
+      (match-string 1))))
+
+(defun my/markdown-marks-next-mark ()
+  "Move to next mark section in markdown."
+  (interactive)
+  (if (re-search-forward "^## " nil t)
+      (progn
+        (beginning-of-line)
+        (recenter-top-bottom 5))
+    (progn
+      (goto-char (point-min))
+      (when (re-search-forward "^## " nil t)
+        (beginning-of-line)
+        (recenter-top-bottom 5)))))
+
+(defun my/markdown-marks-previous-mark ()
+  "Move to previous mark section in markdown."
+  (interactive)
+  (beginning-of-line)
+  (if (re-search-backward "^## " nil t)
+      (progn
+        (beginning-of-line)
+        (recenter-top-bottom 5))
+    (progn
+      (goto-char (point-max))
+      (when (re-search-backward "^## " nil t)
+        (beginning-of-line)
+        (recenter-top-bottom 5)))))
+
+(defun my/markdown-marks-jump-to-mark ()
+  "Jump to the actual location of the current mark in markdown view."
+  (interactive)
+  (let ((mark-name (my/markdown-marks-get-current-mark)))
+    (when mark-name
+      (let ((mark-info (gethash mark-name my/global-marks)))
+        (when mark-info
+          (let ((target-buffer (plist-get mark-info :buffer))
+                (target-pos (plist-get mark-info :position))
+                (file-path (plist-get mark-info :file-path))
+                (buffer-exists (and (plist-get mark-info :buffer) 
+                                   (buffer-live-p (plist-get mark-info :buffer)))))
+            
+            (cond
+             ((not buffer-exists)
+              ;; Try to reopen the file if buffer is dead
+              (if (and (stringp file-path) (file-exists-p file-path))
+                  (progn
+                    (find-file file-path)
+                    (goto-char target-pos)
+                    ;; Update the mark with new buffer
+                    (plist-put mark-info :buffer (current-buffer))
+                    (plist-put mark-info :last-visited (current-time))
+                    (puthash mark-name mark-info my/global-marks)
+                    ;; Update markdown file with new visit time
+                    (my/update-marks-markdown)
+                    (recenter)
+                    (message "Reopened file and jumped to mark '%s'" mark-name))
+                (message "Cannot jump to mark '%s': file no longer exists" mark-name)))
+             (t
+              ;; Buffer exists, jump to it
+              (switch-to-buffer target-buffer)
+              (goto-char target-pos)
+              ;; Update last visited time
+              (plist-put mark-info :last-visited (current-time))
+              (puthash mark-name mark-info my/global-marks)
+              ;; Update markdown file with new visit time
+              (my/update-marks-markdown)
+              (recenter)
+              (message "Jumped to mark '%s'" mark-name)))))))))
+
+(defun my/markdown-marks-refresh ()
+  "Refresh the markdown file and reload it."
+  (interactive)
+  (my/update-marks-markdown)
+  (revert-buffer t t)
+  (goto-char (point-min))
+  (when (re-search-forward "^## " nil t)
+    (beginning-of-line)
+    (recenter-top-bottom 5))
+  (message "Refreshed marks markdown"))
+
+(defvar my/markdown-marks-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "j") #'my/markdown-marks-next-mark)
+    (define-key map (kbd "k") #'my/markdown-marks-previous-mark)
+    (define-key map (kbd "s") #'my/markdown-marks-jump-to-mark)
+    (define-key map (kbd "RET") #'my/markdown-marks-jump-to-mark)
+    (define-key map (kbd "g") #'my/markdown-marks-refresh)
+    (define-key map (kbd "q") #'quit-window)
+    map)
+  "Keymap for markdown marks navigation.")
+
+(define-minor-mode my/markdown-marks-mode
+  "Minor mode for navigating marks in markdown view."
+  :lighter " MdMarks"
+  :keymap my/markdown-marks-mode-map)
+
+;; Evil mode integration for markdown marks - normal mode only
+(with-eval-after-load 'evil
+  (evil-define-key 'normal my/markdown-marks-mode-map
+    "j" #'my/markdown-marks-next-mark
+    "k" #'my/markdown-marks-previous-mark
+    "s" #'my/markdown-marks-jump-to-mark
+    "RET" #'my/markdown-marks-jump-to-mark
+    "\r" #'my/markdown-marks-jump-to-mark
+    "g" #'my/markdown-marks-refresh
+    "q" #'quit-window)
+  
+  ;; Make sure we don't override normal j/k movement in insert mode
+  (evil-define-key 'insert my/markdown-marks-mode-map
+    (kbd "j") nil
+    (kbd "k") nil))
+
+(defun my/view-marks-markdown ()
+  "Open and view the markdown file with rich marks context."
+  (interactive)
+  (let ((markdown-file (my/get-project-marks-file)))
+    (if (file-exists-p markdown-file)
+        (progn
+          ;; Refresh the markdown file first
+          (my/update-marks-markdown)
+          ;; Open the file
+          (find-file markdown-file)
+          ;; Enable navigation mode
+          (my/markdown-marks-mode 1)
+          ;; Move to first mark
+          (goto-char (point-min))
+          (when (re-search-forward "^## " nil t)
+            (beginning-of-line)
+            (recenter-top-bottom 5))
+          (message "Opened marks markdown (j/k: navigate, s/RET: jump, g: refresh, q: quit): %s" 
+                   (file-name-nondirectory markdown-file)))
+      (if (= (hash-table-count my/global-marks) 0)
+          (message "No marks found. Create some marks first with `my/create-mark'")
+        (progn
+          ;; Generate the markdown file
+          (my/update-marks-markdown)
+          (find-file markdown-file)
+          ;; Enable navigation mode
+          (my/markdown-marks-mode 1)
+          ;; Move to first mark
+          (goto-char (point-min))
+          (when (re-search-forward "^## " nil t)
+            (beginning-of-line)
+            (recenter-top-bottom 5))
+          (message "Created marks markdown (j/k: navigate, s/RET: jump, g: refresh, q: quit): %s" 
+                   (file-name-nondirectory markdown-file)))))))
 
 (defvar my/marks-buffer-marks-data nil
   "Store marks data for the marks buffer navigation.")
@@ -524,7 +781,8 @@ If called with prefix arg, auto-generate a name."
        :desc "Create mark" "m" #'my/create-mark
        :desc "Jump to mark" "j" #'my/jump-to-mark
        :desc "Delete mark" "d" #'my/delete-mark
-       :desc "List marks" "l" #'my/list-marks))
+       :desc "List marks" "l" #'my/list-marks
+       :desc "View markdown" "v" #'my/view-marks-markdown))
 
 ;; Also bind to convenient keys
 (map! :n "gm" #'my/create-mark
