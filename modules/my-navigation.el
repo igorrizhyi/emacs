@@ -461,6 +461,23 @@ If called with prefix arg, auto-generate a name."
     (when (re-search-forward "^<!-- PROJECT_ROOT: \\(.+\\) -->$" nil t)
       (match-string 1))))
 
+(defun my/find-mark-by-file-and-line (filename line-num)
+  "Find a mark that matches the given filename and line number."
+  (let ((found-mark nil))
+    (message "DEBUG: Looking for filename=%s line-num=%d" filename line-num)
+    (maphash (lambda (mark-name mark-info)
+               (let ((file-path (plist-get mark-info :file-path))
+                     (mark-line (plist-get mark-info :line)))
+                 (message "DEBUG: Checking mark %s: file=%s line=%d" mark-name (when file-path (file-name-nondirectory file-path)) mark-line)
+                 (when (and file-path
+                           (string-equal filename (file-name-nondirectory file-path))
+                           (= line-num mark-line))
+                   (message "DEBUG: Found match!")
+                   (setq found-mark mark-name))))
+             my/global-marks)
+    (message "DEBUG: Returning found-mark: %s" found-mark)
+    found-mark))
+
 (defun my/markdown-marks-jump-to-mark ()
   "Jump to the mark at current markdown section in the main-right split."
   (interactive)
@@ -481,8 +498,45 @@ If called with prefix arg, auto-generate a name."
           
           (if (file-exists-p full-path)
               (progn
+                (message "DEBUG: Jumping to %s line %d" full-path line-num)
                 ;; Use smart-splits function to show file in main-right split
                 (my/show-file-main-right full-path line-num)
+                ;; Force a recenter to make sure we're at the right position
+                (when (get-file-buffer full-path)
+                  (with-current-buffer (get-file-buffer full-path)
+                    (goto-line line-num)
+                    (recenter)))
+                ;; Find and update the timestamp of the corresponding mark
+                (let ((mark-name (my/find-mark-by-file-and-line (file-name-nondirectory filename) line-num)))
+                  (message "DEBUG: Found mark name: %s" mark-name)
+                  (when mark-name
+                    (let ((mark-info (gethash mark-name my/global-marks)))
+                      (when mark-info
+                        (message "DEBUG: Updating timestamp for mark %s" mark-name)
+                        (plist-put mark-info :last-visited (current-time))
+                        (puthash mark-name mark-info my/global-marks)
+                        ;; Refresh the markdown file to reflect the new ordering
+                        (message "DEBUG: Refreshing markdown...")
+                        (let ((current-markdown-buffer (current-buffer))
+                              (target-line (concat "^### " (regexp-quote filename) ":" (number-to-string line-num))))
+                          ;; Update markdown file
+                          (my/update-marks-markdown)
+                          (message "DEBUG: Refreshing markdown buffer only...")
+                          ;; CRITICAL: Make sure we're in the correct buffer before modifying
+                          (with-current-buffer current-markdown-buffer
+                            (when (string-match-p "\\.md$" (buffer-name))  ; Safety check - only modify .md files
+                              (let ((inhibit-read-only t)
+                                    (current-pos (point)))
+                                (erase-buffer)
+                                (insert-file-contents (my/get-project-marks-file))
+                                ;; Return to the same position
+                                (goto-char (point-min))
+                                (if (re-search-forward target-line nil t)
+                                    (progn
+                                      (beginning-of-line)
+                                      (recenter-top-bottom 5))
+                                  (goto-char current-pos)))))
+                          (message "DEBUG: Markdown refresh complete"))))))
                 (message "Jumped to %s:%d in main-right split" filename line-num))
             (message "File not found: %s" full-path)))))
     
@@ -506,6 +560,24 @@ If called with prefix arg, auto-generate a name."
                 (progn
                   ;; Use smart-splits function to show file in main-right split
                   (my/show-file-main-right full-path line-num)
+                  ;; Find and update the timestamp of the corresponding mark
+                  (let ((mark-name (my/find-mark-by-file-and-line (file-name-nondirectory filename) line-num)))
+                    (when mark-name
+                      (let ((mark-info (gethash mark-name my/global-marks)))
+                        (when mark-info
+                          (plist-put mark-info :last-visited (current-time))
+                          (puthash mark-name mark-info my/global-marks)
+                          ;; Refresh the markdown file to reflect the new ordering
+                          (let ((current-markdown-buffer (current-buffer)))
+                            (my/update-marks-markdown)
+                            (with-current-buffer current-markdown-buffer
+                              (let ((inhibit-read-only t))
+                                (revert-buffer t t t))
+                              ;; Return to the same position in the markdown
+                              (goto-char (point-min))
+                              (when (re-search-forward (concat "^### " (regexp-quote filename) ":" (number-to-string line-num)) nil t)
+                                (beginning-of-line)
+                                (recenter-top-bottom 5))))))))
                   (message "Jumped to %s:%d in main-right split" filename line-num))
               (message "File not found: %s" full-path))))))))
 
