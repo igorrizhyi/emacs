@@ -892,6 +892,117 @@ WINDOW is the window that was selected."
       ;; Display buffer and select it
       (pop-to-buffer "*Global Marks*"))))
 
+;;; Mark Auto-Maintenance System
+
+(defvar my/mark-auto-update-enabled t
+  "Enable automatic mark position updates on file save.")
+
+(defvar my/mark-removal-notification t
+  "Show notification when marks are removed.")
+
+(defvar my/file-marks-cache (make-hash-table :test 'equal)
+  "Cache mapping file paths to lists of mark names for performance.")
+
+(defun my/get-marks-for-file (file-path)
+  "Get all marks that belong to FILE-PATH."
+  (let ((marks-list '()))
+    (maphash (lambda (mark-name mark-info)
+               (when (string-equal file-path (plist-get mark-info :file-path))
+                 (push mark-name marks-list)))
+             my/global-marks)
+    marks-list))
+
+(defun my/find-line-by-content (content &optional original-line)
+  "Find line number(s) containing CONTENT. Prefer closest to ORIGINAL-LINE."
+  (let ((matches '())
+        (line-num 1))
+    (save-excursion
+      (goto-char (point-min))
+      (while (not (eobp))
+        (let ((line-content (string-trim 
+                            (buffer-substring-no-properties 
+                             (line-beginning-position) 
+                             (line-end-position)))))
+          (when (string-equal content line-content)
+            (push line-num matches)))
+        (forward-line 1)
+        (setq line-num (1+ line-num))))
+    
+    (cond
+     ((null matches) nil)
+     ((= 1 (length matches)) (car matches))
+     (original-line 
+      ;; Multiple matches - return closest to original line
+      (car (sort matches 
+                 (lambda (a b) 
+                   (< (abs (- a original-line))
+                      (abs (- b original-line)))))))
+     (t (car matches)))))
+
+(defun my/update-mark-position (mark-name new-line)
+  "Update MARK-NAME to NEW-LINE position."
+  (let ((mark-info (gethash mark-name my/global-marks)))
+    (when mark-info
+      (let* ((file-path (plist-get mark-info :file-path))
+             (buffer (find-file-noselect file-path)))
+        (with-current-buffer buffer
+          (goto-line new-line)
+          (let ((new-pos (point))
+                (new-preview (string-trim 
+                             (buffer-substring-no-properties 
+                              (line-beginning-position) 
+                              (line-end-position)))))
+            ;; Update mark info
+            (plist-put mark-info :line new-line)
+            (plist-put mark-info :position new-pos)
+            (plist-put mark-info :preview new-preview)
+            (plist-put mark-info :last-visited (current-time))
+            (puthash mark-name mark-info my/global-marks)))))))
+
+(defun my/remove-obsolete-mark (mark-name)
+  "Remove MARK-NAME that no longer has valid content."
+  (when my/mark-removal-notification
+    (message "Removed obsolete mark: %s" mark-name))
+  (remhash mark-name my/global-marks))
+
+(defun my/update-marks-after-save ()
+  "Update mark positions after file save."
+  (when (and my/mark-auto-update-enabled 
+             (buffer-file-name))
+    (let* ((file-path (buffer-file-name))
+           (marks-in-file (my/get-marks-for-file file-path)))
+      
+      (when marks-in-file
+        (let ((updated-count 0)
+              (removed-count 0))
+          
+          (dolist (mark-name marks-in-file)
+            (let* ((mark-info (gethash mark-name my/global-marks))
+                   (original-line (plist-get mark-info :line))
+                   (preview-content (plist-get mark-info :preview))
+                   (new-line (my/find-line-by-content preview-content original-line)))
+              
+              (cond
+               ((and new-line (= new-line original-line))
+                ;; Mark position unchanged - do nothing
+                nil)
+               (new-line
+                ;; Content found at different line - update
+                (my/update-mark-position mark-name new-line)
+                (setq updated-count (1+ updated-count)))
+               (t
+                ;; Content not found - remove mark
+                (my/remove-obsolete-mark mark-name)
+                (setq removed-count (1+ removed-count))))))
+          
+          ;; Show summary if changes were made
+          (when (or (> updated-count 0) (> removed-count 0))
+            (my/update-marks-markdown)
+            (message "Marks updated: %d moved, %d removed" updated-count removed-count)))))))
+
+;; Hook into file saves
+(add-hook 'after-save-hook #'my/update-marks-after-save)
+
 ;; Keybindings for custom marks system
 (map! :leader
       (:prefix ("j" . "jump/marks")
