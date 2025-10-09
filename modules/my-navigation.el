@@ -450,6 +450,51 @@ If called with prefix arg, auto-generate a name."
         (beginning-of-line)
         (recenter-top-bottom 5)))))
 
+(defun my/markdown-marks-jump-to-mark ()
+  "Jump to the mark at current markdown section in the main-right split."
+  (interactive)
+  (save-excursion
+    (beginning-of-line)
+    ;; Look for heading pattern: ### filename:line
+    (when (re-search-forward "^### \\(.+\\):\\([0-9]+\\)" (line-end-position) t)
+      (let* ((filename (match-string 1))
+             (line-num (string-to-number (match-string 2)))
+             (project-root (if (fboundp 'projectile-project-root)
+                              (projectile-project-root)
+                            (if (fboundp 'project-root)
+                                (project-root (project-current))
+                              default-directory)))
+             (full-path (expand-file-name filename project-root)))
+        
+        (if (file-exists-p full-path)
+            (progn
+              ;; Use smart-splits function to show file in main-right split
+              (my/show-file-main-right full-path line-num)
+              (message "Jumped to %s:%d in main-right split" filename line-num))
+          (message "File not found: %s" full-path)))))
+  
+  ;; If we didn't find a heading on current line, look for the previous heading
+  (unless (save-excursion
+            (beginning-of-line)
+            (re-search-forward "^### \\(.+\\):\\([0-9]+\\)" (line-end-position) t))
+    (save-excursion
+      (when (re-search-backward "^### \\(.+\\):\\([0-9]+\\)" nil t)
+        (let* ((filename (match-string 1))
+               (line-num (string-to-number (match-string 2)))
+               (project-root (if (fboundp 'projectile-project-root)
+                                (projectile-project-root)
+                              (if (fboundp 'project-root)
+                                  (project-root (project-current))
+                                default-directory)))
+               (full-path (expand-file-name filename project-root)))
+          
+          (if (file-exists-p full-path)
+              (progn
+                ;; Use smart-splits function to show file in main-right split
+                (my/show-file-main-right full-path line-num)
+                (message "Jumped to %s:%d in main-right split" filename line-num))
+            (message "File not found: %s" full-path)))))))
+
 (defun my/markdown-marks-refresh ()
   "Refresh the markdown file and reload it."
   (interactive)
