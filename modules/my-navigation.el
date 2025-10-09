@@ -224,7 +224,10 @@ Value: plist with :buffer :position :line :preview :created-time :last-visited")
                  (buffer-exists (and buffer (buffer-live-p buffer))))
             
             (insert (format "### %s:%d  \n"
-                           (if file-path (file-name-nondirectory file-path) buffer-name) line-num))
+                           (if file-path 
+                               (file-relative-name file-path project-root)
+                             buffer-name) 
+                           line-num))
 
             ;; Add context if buffer exists
             (when buffer-exists
