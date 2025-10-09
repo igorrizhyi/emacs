@@ -489,6 +489,8 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
     (define-key map (kbd "C-c C-k") #'claude-code-terminal-kill)
     (define-key map (kbd "C-c C-s") #'claude-code-terminal-switch)
     (define-key map (kbd "C-c C-t") #'claude-code-terminal-cycle-prefix)
+    ;; Override C-u for terminal switching (takes precedence over universal-argument)
+    (define-key map (kbd "C-u") #'claude-code-terminal-switch)
     map)
   "Keymap for Claude Code terminal mode.")
 
@@ -560,6 +562,12 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
   (define-key vterm-mode-map (kbd "C-c k") 'my-window-layout-show-claude-code-right)
   (define-key vterm-mode-map (kbd "C-l") 'windmove-right)
   (define-key vterm-mode-map (kbd "C-u") 'claude-code-terminal-switch))
+
+;; Evil mode bindings for terminal switching - ensures C-u works in all evil states
+(with-eval-after-load 'evil
+  (evil-define-key 'insert claude-code-terminal-mode-map (kbd "C-u") 'claude-code-terminal-switch)
+  (evil-define-key 'normal claude-code-terminal-mode-map (kbd "C-u") 'claude-code-terminal-switch)
+  (evil-define-key 'emacs claude-code-terminal-mode-map (kbd "C-u") 'claude-code-terminal-switch))
 
 (provide 'claude-code-terminal)
 ;;; claude-code-terminal.el ends here
