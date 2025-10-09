@@ -616,7 +616,22 @@ If called with prefix arg, auto-generate a name."
 (define-minor-mode my/markdown-marks-mode
   "Minor mode for navigating marks in markdown view."
   :lighter " MdMarks"
-  :keymap my/markdown-marks-mode-map)
+  :keymap my/markdown-marks-mode-map
+  (when my/markdown-marks-mode
+    ;; Add buffer-local hook to position cursor on line 7 when focused
+    (add-hook 'window-selection-change-functions #'my/markdown-marks-focus-hook nil t)))
+
+(defun my/markdown-marks-focus-hook (window)
+  "Position cursor on line 7 when markdown marks buffer gets focused.
+WINDOW is the window that was selected."
+  (message "oh shit")
+  (when (and (eq (current-buffer) (window-buffer (selected-window)))
+             my/markdown-marks-mode
+             (string-match-p "\\.md$" (buffer-name)))
+    (goto-line 7)
+    (beginning-of-line)
+    (message "damn")
+    (recenter-top-bottom 5)))
 
 ;; Evil mode integration for markdown marks - normal mode only
 (with-eval-after-load 'evil
