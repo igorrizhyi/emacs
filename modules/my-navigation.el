@@ -624,13 +624,11 @@ If called with prefix arg, auto-generate a name."
 (defun my/markdown-marks-focus-hook (window)
   "Position cursor on line 7 when markdown marks buffer gets focused.
 WINDOW is the window that was selected."
-  (message "oh shit")
   (when (and (eq (current-buffer) (window-buffer (selected-window)))
              my/markdown-marks-mode
              (string-match-p "\\.md$" (buffer-name)))
     (goto-line 7)
     (beginning-of-line)
-    (message "damn")
     (recenter-top-bottom 5)))
 
 ;; Evil mode integration for markdown marks - normal mode only
@@ -903,6 +901,9 @@ WINDOW is the window that was selected."
 (defvar my/file-marks-cache (make-hash-table :test 'equal)
   "Cache mapping file paths to lists of mark names for performance.")
 
+(defvar my/auto-updating-marks nil
+  "Flag to prevent focus hook during automatic mark updates.")
+
 (defun my/get-marks-for-file (file-path)
   "Get all marks that belong to FILE-PATH."
   (let ((marks-list '()))
@@ -952,11 +953,10 @@ WINDOW is the window that was selected."
                              (buffer-substring-no-properties 
                               (line-beginning-position) 
                               (line-end-position)))))
-            ;; Update mark info
+            ;; Update mark info (don't update last-visited during auto-maintenance)
             (plist-put mark-info :line new-line)
             (plist-put mark-info :position new-pos)
             (plist-put mark-info :preview new-preview)
-            (plist-put mark-info :last-visited (current-time))
             (puthash mark-name mark-info my/global-marks)))))))
 
 (defun my/remove-obsolete-mark (mark-name)
