@@ -324,7 +324,7 @@ BUFFER-OR-FUNCTION can be a buffer, buffer name, or a function to call."
        (setq section-window (my-window-layout--get-window 'main-right))))
     
     ;; Display content in the section window
-    (when section-window
+    (when (and section-window (window-live-p section-window))
       (message "DEBUG: Selecting window for section %s, window: %s" section section-window)
       (select-window section-window)
       (cond

@@ -284,11 +284,11 @@ If LINE is provided, go to that line. If COLUMN is provided, go to that column."
 
 ;; Force C-d to be smart duplicate buffer - override all other bindings
 (after! evil
-  (define-key evil-insert-state-map (kbd "C-d") #'my/smart-duplicate-buffer)
-  (define-key evil-normal-state-map (kbd "C-d") #'my/smart-duplicate-buffer)
-  (define-key evil-visual-state-map (kbd "C-d") #'my/smart-duplicate-buffer))
+  (define-key evil-insert-state-map (kbd "C-d") #'my/goto-jumps-selection)
+  (define-key evil-normal-state-map (kbd "C-d") #'my/goto-jumps-selection)
+  (define-key evil-visual-state-map (kbd "C-d") #'my/goto-jumps-selection))
 
-(global-set-key (kbd "C-d") #'my/smart-duplicate-buffer)
+(global-set-key (kbd "C-d") #'my/goto-jumps-selection)
 
 ;; Optional additional bindings (uncomment if desired):
 ;; (global-set-key (kbd "C-x o") #'my/smart-split-navigation)

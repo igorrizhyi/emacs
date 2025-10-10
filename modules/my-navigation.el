@@ -50,6 +50,13 @@ Uses `beginning-of-defun' with a negative argument to move forward."
       :i "C-<tab>" #'switch-to-buffer
       :v "C-<tab>" #'switch-to-buffer)
 
+;; Helper function to set evil jump before switching buffers
+(defun my/goto-jumps-selection ()
+  (interactive)
+  (evil-set-jump)
+  (windmove-left)
+  )
+
 ;; Force override with global-set-key as backup
 (with-eval-after-load 'yasnippet
   (global-set-key (kbd "C-<tab>") #'switch-to-buffer))
@@ -288,112 +295,116 @@ If called with prefix arg, auto-generate a name."
     
     (message "Created mark '%s' at %s:%d" mark-name (buffer-name) line-num)))
 
-(defun my/jump-to-mark ()
-  "Show all global marks with preview and jump to selected one."
-  (interactive)
-  (if (= (hash-table-count my/global-marks) 0)
-      (message "No marks found. Create some with `my/create-mark'")
-    
-    (let ((completion-choices '())
-          (mark-data (make-hash-table :test 'equal)))
-      
-      ;; Collect all marks and prepare for sorting
-      (maphash (lambda (mark-name mark-info)
-                 (let* ((buffer (plist-get mark-info :buffer))
-                        (buffer-name (plist-get mark-info :buffer-name))
-                        (file-path (plist-get mark-info :file-path))
-                        (line-num (plist-get mark-info :line))
-                        (preview (plist-get mark-info :preview))
-                        (last-visited (plist-get mark-info :last-visited))
-                        (is-current-buffer (eq buffer (current-buffer)))
-                        ;; Check if buffer still exists
-                        (buffer-exists (and buffer (buffer-live-p buffer)))
-                        (choice-text (format "%s %s %s:%d  %s" 
-                                           (propertize mark-name 'face 'font-lock-constant-face)
-                                           (if is-current-buffer 
-                                               (propertize "[current]" 'face 'success)
-                                             (if buffer-exists "" 
-                                               (propertize "[dead]" 'face 'error)))
-                                           (propertize (if file-path (file-name-nondirectory file-path) buffer-name) 
-                                                      'face 'font-lock-function-name-face)
-                                           line-num
-                                           (propertize preview 'face 'font-lock-comment-face))))
-                   
-                   (push (cons choice-text 
-                               (list :name mark-name 
-                                     :info mark-info 
-                                     :last-visited last-visited
-                                     :buffer-exists buffer-exists))
-                         completion-choices)
-                   (puthash choice-text 
-                            (list :name mark-name 
-                                  :info mark-info 
-                                  :buffer-exists buffer-exists)
-                            mark-data)))
-               my/global-marks)
-      
-      ;; Sort by last visited time (most recent first)
-      (setq completion-choices 
-            (sort completion-choices 
-                  (lambda (a b)
-                    (let ((time-a (plist-get (cdr a) :last-visited))
-                          (time-b (plist-get (cdr b) :last-visited)))
-                      (time-less-p time-b time-a)))))
-      
-      ;; Present completion interface
-      (let* ((choice-keys (mapcar #'car completion-choices))
-             (selected (cond
-                        ;; For ivy users
-                        ((and (boundp 'ivy-mode) ivy-mode)
-                         (ivy-read "Jump to mark (recent first): " choice-keys))
-                        ;; For vertico users  
-                        ((and (boundp 'vertico-mode) vertico-mode)
-                         (let ((vertico-sort-function nil))
-                           (completing-read "Jump to mark (recent first): " choice-keys nil t)))
-                        ;; For helm users
-                        ((and (boundp 'helm-mode) helm-mode)
-                         (let ((helm-candidate-sort-fn nil))
-                           (completing-read "Jump to mark (recent first): " choice-keys nil t)))
-                        ;; Default completing-read
-                        (t
-                         (completing-read "Jump to mark (recent first): " choice-keys nil t)))))
-        
-        (when selected
-          (let* ((mark-data-entry (gethash selected mark-data))
-                 (mark-name (plist-get mark-data-entry :name))
-                 (mark-info (plist-get mark-data-entry :info))
-                 (buffer-exists (plist-get mark-data-entry :buffer-exists))
-                 (target-buffer (plist-get mark-info :buffer))
-                 (target-pos (plist-get mark-info :position))
-                 (file-path (plist-get mark-info :file-path)))
-            
-            (cond
-             ((not buffer-exists)
-              ;; Try to reopen the file if buffer is dead
-              (if (and (stringp file-path) (file-exists-p file-path))
-                  (progn
-                    (find-file file-path)
-                    (goto-char target-pos)
-                    ;; Update the mark with new buffer
-                    (plist-put mark-info :buffer (current-buffer))
-                    (plist-put mark-info :last-visited (current-time))
-                    (puthash mark-name mark-info my/global-marks)
-                    (recenter)
-                    (message "Reopened file and jumped to mark '%s'" mark-name))
-                (progn
-                  (message "Cannot jump to mark '%s': file no longer exists" mark-name)
-                  (when (y-or-n-p (format "Remove dead mark '%s'? " mark-name))
-                    (remhash mark-name my/global-marks)
-                    (message "Removed dead mark '%s'" mark-name)))))
-             (t
-              ;; Buffer exists, jump to it
-              (switch-to-buffer target-buffer)
-              (goto-char target-pos)
-              ;; Update last visited time
-              (plist-put mark-info :last-visited (current-time))
-              (puthash mark-name mark-info my/global-marks)
-              (recenter)
-              (message "Jumped to mark '%s'" mark-name)))))))))
+;; (defun my/jump-to-mark ()
+;;   "Show all global marks with preview and jump to selected one."
+;;   (interactive)
+;;   (if (= (hash-table-count my/global-marks) 0)
+;;       (message "No marks found. Create some with `my/create-mark'")
+
+;;     (let ((completion-choices '())
+;;           (mark-data (make-hash-table :test 'equal)))
+
+;;       ;; Collect all marks and prepare for sorting
+;;       (maphash (lambda (mark-name mark-info)
+;;                  (let* ((buffer (plist-get mark-info :buffer))
+;;                         (buffer-name (plist-get mark-info :buffer-name))
+;;                         (file-path (plist-get mark-info :file-path))
+;;                         (line-num (plist-get mark-info :line))
+;;                         (preview (plist-get mark-info :preview))
+;;                         (last-visited (plist-get mark-info :last-visited))
+;;                         (is-current-buffer (eq buffer (current-buffer)))
+;;                         ;; Check if buffer still exists
+;;                         (buffer-exists (and buffer (buffer-live-p buffer)))
+;;                         (choice-text (format "%s %s %s:%d  %s"
+;;                                            (propertize mark-name 'face 'font-lock-constant-face)
+;;                                            (if is-current-buffer
+;;                                                (propertize "[current]" 'face 'success)
+;;                                              (if buffer-exists ""
+;;                                                (propertize "[dead]" 'face 'error)))
+;;                                            (propertize (if file-path (file-name-nondirectory file-path) buffer-name)
+;;                                                       'face 'font-lock-function-name-face)
+;;                                            line-num
+;;                                            (propertize preview 'face 'font-lock-comment-face))))
+
+;;                    (push (cons choice-text
+;;                                (list :name mark-name
+;;                                      :info mark-info
+;;                                      :last-visited last-visited
+;;                                      :buffer-exists buffer-exists))
+;;                          completion-choices)
+;;                    (puthash choice-text
+;;                             (list :name mark-name
+;;                                   :info mark-info
+;;                                   :buffer-exists buffer-exists)
+;;                             mark-data)))
+;;                my/global-marks)
+
+;;       ;; Sort by last visited time (most recent first)
+;;       (setq completion-choices
+;;             (sort completion-choices
+;;                   (lambda (a b)
+;;                     (let ((time-a (plist-get (cdr a) :last-visited))
+;;                           (time-b (plist-get (cdr b) :last-visited)))
+;;                       (time-less-p time-b time-a)))))
+
+;;       ;; Present completion interface
+;;       (let* ((choice-keys (mapcar #'car completion-choices))
+;;              (selected (cond
+;;                         ;; For ivy users
+;;                         ((and (boundp 'ivy-mode) ivy-mode)
+;;                          (ivy-read "Jump to mark (recent first): " choice-keys))
+;;                         ;; For vertico users
+;;                         ((and (boundp 'vertico-mode) vertico-mode)
+;;                          (let ((vertico-sort-function nil))
+;;                            (completing-read "Jump to mark (recent first): " choice-keys nil t)))
+;;                         ;; For helm users
+;;                         ((and (boundp 'helm-mode) helm-mode)
+;;                          (let ((helm-candidate-sort-fn nil))
+;;                            (completing-read "Jump to mark (recent first): " choice-keys nil t)))
+;;                         ;; Default completing-read
+;;                         (t
+;;                          (completing-read "Jump to mark (recent first): " choice-keys nil t)))))
+
+;;         (when selected
+;;           (let* ((mark-data-entry (gethash selected mark-data))
+;;                  (mark-name (plist-get mark-data-entry :name))
+;;                  (mark-info (plist-get mark-data-entry :info))
+;;                  (buffer-exists (plist-get mark-data-entry :buffer-exists))
+;;                  (target-buffer (plist-get mark-info :buffer))
+;;                  (target-pos (plist-get mark-info :position))
+;;                  (file-path (plist-get mark-info :file-path)))
+
+;;             (cond
+;;              ((not buffer-exists)
+;;               ;; Try to reopen the file if buffer is dead
+;;               (if (and (stringp file-path) (file-exists-p file-path))
+;;                   (progn
+;;                     (evil-set-jump)
+;;                     (message "evil set jump 1")
+;;                     (find-file file-path)
+;;                     (goto-char target-pos)
+;;                     ;; Update the mark with new buffer
+;;                     (plist-put mark-info :buffer (current-buffer))
+;;                     (plist-put mark-info :last-visited (current-time))
+;;                     (puthash mark-name mark-info my/global-marks)
+;;                     (recenter)
+;;                     (message "Reopened file and jumped to mark '%s'" mark-name))
+;;                 (progn
+;;                   (message "Cannot jump to mark '%s': file no longer exists" mark-name)
+;;                   (when (y-or-n-p (format "Remove dead mark '%s'? " mark-name))
+;;                     (remhash mark-name my/global-marks)
+;;                     (message "Removed dead mark '%s'" mark-name)))))
+;;              (t
+;;               ;; Buffer exists, jump to it
+;;               (evil-set-jump)
+;;               (message "evil set jump 2")
+;;               (switch-to-buffer target-buffer)
+;;               (goto-char target-pos)
+;;               ;; Update last visited time
+;;               (plist-put mark-info :last-visited (current-time))
+;;               (puthash mark-name mark-info my/global-marks)
+;;               (recenter)
+;;               (message "Jumped to mark '%s'" mark-name)))))))))
 
 (defun my/delete-mark ()
   "Delete a global mark."
@@ -512,6 +523,7 @@ If called with prefix arg, auto-generate a name."
                 ;; Force a recenter to make sure we're at the right position
                 (when (get-file-buffer full-path)
                   (with-current-buffer (get-file-buffer full-path)
+                    (message "evil jump 1")
                     (goto-line line-num)
                     (recenter)))
                 ;; Find and update the timestamp of the corresponding mark
@@ -650,6 +662,8 @@ WINDOW is the window that was selected."
 (defun my/view-marks-markdown ()
   "Open and view the markdown file with rich marks context."
   (interactive)
+  ;; Store jump position from current buffer before switching to marks
+  (evil-set-jump)
   (let ((markdown-file (my/get-project-marks-file)))
     (if (file-exists-p markdown-file)
         (progn
@@ -711,6 +725,8 @@ WINDOW is the window that was selected."
               ;; Try to reopen the file if buffer is dead
               (if (and (stringp file-path) (file-exists-p file-path))
                   (progn
+                    (evil-set-jump)
+                    (message "evil jump 3")
                     (find-file file-path)
                     (goto-char target-pos)
                     ;; Update the mark with new buffer
@@ -722,6 +738,8 @@ WINDOW is the window that was selected."
                 (message "Cannot jump to mark '%s': file no longer exists" mark-name)))
              (t
               ;; Buffer exists, jump to it
+              (evil-set-jump)
+              (message "evil jump 4")
               (switch-to-buffer target-buffer)
               (goto-char target-pos)
               ;; Update last visited time
@@ -932,7 +950,7 @@ WINDOW is the window that was selected."
     (cond
      ((null matches) nil)
      ((= 1 (length matches)) (car matches))
-     (original-line 
+     (original-line
       ;; Multiple matches - return closest to original line
       (car (sort matches 
                  (lambda (a b) 
@@ -1004,18 +1022,69 @@ WINDOW is the window that was selected."
 ;; Hook into file saves
 (add-hook 'after-save-hook #'my/update-marks-after-save)
 
+(defun my/jump-to-most-recent-mark ()
+  "Jump to the most recently visited mark."
+  (interactive)
+  (if (= (hash-table-count my/global-marks) 0)
+      (message "No marks found. Create some with `my/create-mark'")
+    
+    (let ((most-recent-mark nil)
+          (most-recent-time nil))
+      
+      ;; Find the most recently visited mark
+      (maphash (lambda (mark-name mark-info)
+                 (let ((last-visited (plist-get mark-info :last-visited)))
+                   (when (or (null most-recent-time)
+                            (time-less-p most-recent-time last-visited))
+                     (setq most-recent-mark mark-name)
+                     (setq most-recent-time last-visited))))
+               my/global-marks)
+      
+      (when most-recent-mark
+        (evil-set-jump)
+        (let* ((mark-info (gethash most-recent-mark my/global-marks))
+               (target-buffer (plist-get mark-info :buffer))
+               (target-pos (plist-get mark-info :position))
+               (file-path (plist-get mark-info :file-path))
+               (buffer-exists (and target-buffer (buffer-live-p target-buffer))))
+          
+          (cond
+           ((not buffer-exists)
+            ;; Try to reopen the file if buffer is dead
+            (if (and (stringp file-path) (file-exists-p file-path))
+                (progn
+                  (evil-set-jump)
+                  (find-file file-path)
+                  (goto-char target-pos)
+                  ;; Update the mark with new buffer
+                  (plist-put mark-info :buffer (current-buffer))
+                  (plist-put mark-info :last-visited (current-time))
+                  (puthash most-recent-mark mark-info my/global-marks)
+                  (recenter)
+                  (message "Jumped to most recent mark '%s'" most-recent-mark))
+              (message "Cannot jump to mark '%s': file no longer exists" most-recent-mark)))
+           (t
+            ;; Buffer exists, jump to it
+            (evil-set-jump)
+            (switch-to-buffer target-buffer)
+            (goto-char target-pos)
+            ;; Update last visited time
+            (plist-put mark-info :last-visited (current-time))
+            (puthash most-recent-mark mark-info my/global-marks)
+            (recenter)
+            (message "Jumped to most recent mark '%s'" most-recent-mark))))))))
+
 ;; Keybindings for custom marks system
 (map! :leader
       (:prefix ("j" . "jump/marks")
+       :desc "Jump to recent mark" "j" #'my/jump-to-most-recent-mark
        :desc "Create mark" "m" #'my/create-mark
-       :desc "Jump to mark" "j" #'my/jump-to-mark
        :desc "Delete mark" "d" #'my/delete-mark
-       :desc "List marks" "l" #'my/list-marks
+       :desc "List marks" "l" #'my/goto-jumps-selection
        :desc "View markdown" "v" #'my/view-marks-markdown))
 
 ;; Also bind to convenient keys
-(map! :n "gm" #'my/create-mark
-      :n "gj" #'my/jump-to-mark)
+(map! :n "gm" #'my/create-mark)
 
 (provide 'my-navigation)
 
