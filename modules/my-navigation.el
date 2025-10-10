@@ -207,10 +207,10 @@ Value: plist with :buffer :position :line :preview :created-time :last-visited")
                            (project-root (project-current))
                          default-directory))))
     (with-temp-file markdown-file
-      (insert (format "# Global Marks for %s\n\n" 
+      (insert (format "# Global Marks for %s\n"
                      (file-name-nondirectory (directory-file-name project-root))))
-      (insert (format "*Generated: %s*\n\n" 
-                     (format-time-string "%Y-%m-%d %H:%M:%S")))
+      ;; (insert (format "*Generated: %s*\n\n"
+      ;;                (format-time-string "%Y-%m-%d %H:%M:%S")))
       (insert (format "<!-- PROJECT_ROOT: %s -->\n\n" project-root))
       
       ;; Sort marks by last visited (most recent first)
@@ -230,7 +230,8 @@ Value: plist with :buffer :position :line :preview :created-time :last-visited")
                  (line-num (plist-get mark-info :line))
                  (last-visited (plist-get mark-info :last-visited))
                  (buffer-exists (and buffer (buffer-live-p buffer))))
-            
+
+            (insert "==============================================\n")
             (insert (format "### %s:%d  \n"
                            (if file-path 
                                (file-relative-name file-path project-root)
@@ -243,9 +244,8 @@ Value: plist with :buffer :position :line :preview :created-time :last-visited")
                                    (my/generate-mark-context (plist-get mark-info :position)))))
                 (insert (format "```%s\n" (plist-get context-info :language)))
                 (insert (plist-get context-info :context))
-                (insert "\n```\n\n")))
-            
-            (insert "---\n\n")))))))
+                (insert "\n```\n")))
+            ))))))
 
 (defun my/cleanup-old-marks ()
   "Keep only the 5 most recent marks, removing older ones."
@@ -643,13 +643,37 @@ If NAME is provided, use it as mark name. Otherwise, auto-generate based on time
     map)
   "Keymap for markdown marks navigation.")
 
+(defun my/apply-marks-markdown-styling ()
+  "Apply custom styling specifically for marks markdown buffer."
+  (setq-local truncate-lines t)
+  ;; Make all headers small
+  (face-remap-add-relative 'markdown-header-face-1 :height 0.8)
+  (face-remap-add-relative 'markdown-header-face-2 :height 0.7)
+  (face-remap-add-relative 'markdown-header-face-3 :height 0.8)
+  (face-remap-add-relative 'markdown-header-face-4 :height 0.7)
+  ;; Make regular text small
+  (face-remap-add-relative 'default :height 0.7)
+  ;; Make comments small
+  (face-remap-add-relative 'markdown-comment-face :height 0.7)
+  ;; Hide language keywords (python, elisp, etc.) and brackets
+  (face-remap-add-relative 'markdown-language-keyword-face :foreground "#1a1006" :height 0.1)
+  (face-remap-add-relative 'markdown-markup-face :foreground "#1a1006" :height 0.1)
+  ;; Keep code blocks normal size (readable)
+  ;; (face-remap-add-relative 'markdown-code-face :height 1.4 :override t)
+  ;; (face-remap-add-relative 'markdown-pre-face :height 1.1 :override t)
+  (setq-local face-remapping-alist
+                (cons '(markdown-code-face . (:height 1.2 :background "#261707" :extend t))
+                      face-remapping-alist)))
+
 (define-minor-mode my/markdown-marks-mode
   "Minor mode for navigating marks in markdown view."
   :lighter " MdMarks"
   :keymap my/markdown-marks-mode-map
   (when my/markdown-marks-mode
     ;; Add buffer-local hook to position cursor on line 7 when focused
-    (add-hook 'window-selection-change-functions #'my/markdown-marks-focus-hook nil t)))
+    (add-hook 'window-selection-change-functions #'my/markdown-marks-focus-hook nil t)
+    ;; Apply custom styling for marks markdown
+    (my/apply-marks-markdown-styling)))
 
 (defun my/markdown-marks-focus-hook (window)
   "Position cursor on line 7 when markdown marks buffer gets focused.
