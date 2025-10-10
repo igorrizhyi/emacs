@@ -45,17 +45,26 @@
 (defun my-layout-show-in-left-sidebar (buffer)
   "Show BUFFER in the left sidebar split."
   (interactive)
-  (let ((original-buffer (current-buffer)))
-    ;; Split window to the right, making left window smaller
-    (let ((sidebar-window (split-window-horizontally (/ (window-width) 4))))
-      ;; Put the target buffer in the current (left) window
-      (switch-to-buffer buffer)
-      (my-layout--set-window 'left-sidebar (selected-window))
-      (my-layout--set-state 'left-sidebar 'visible)
-      ;; Move to right window and put original buffer there
-      (select-window sidebar-window)
-      (switch-to-buffer original-buffer)
-      (my-layout--set-window 'main-center (selected-window)))))
+  (let ((existing-window (my-layout--get-window 'left-sidebar)))
+    (if (and existing-window (window-live-p existing-window))
+        ;; Sidebar already exists, just switch buffer
+        (progn
+          (select-window existing-window)
+          (switch-to-buffer buffer))
+      ;; Create new sidebar
+      (let ((original-buffer (current-buffer))
+            (sidebar-width 60))
+        (let ((sidebar-window (split-window-horizontally sidebar-width)))
+          ;; Put the target buffer in the current (left) window
+          (switch-to-buffer buffer)
+          (my-layout--set-window 'left-sidebar (selected-window))
+          (my-layout--set-state 'left-sidebar 'visible)
+          ;; Set fixed width and prevent resizing
+          (window-preserve-size (selected-window) t nil)
+          ;; Move to right window and put original buffer there
+          (select-window sidebar-window)
+          (switch-to-buffer original-buffer)
+          (my-layout--set-window 'main-center (selected-window)))))))
 
 (defun my-layout-show-in-main-center (buffer)
   "Show BUFFER in the main center window."
@@ -70,22 +79,39 @@
 (defun my-layout-show-in-right-chat (buffer)
   "Show BUFFER in the right chat split."
   (interactive)
-  (let ((main-window (selected-window)))
-    (select-window (split-window-horizontally (/ (* (window-width) 2) 3)))
-    (switch-to-buffer buffer)
-    (my-layout--set-window 'right-chat (selected-window))
-    (my-layout--set-state 'right-chat 'visible)
-    (select-window main-window)))
+  (let ((existing-window (my-layout--get-window 'right-chat)))
+    (if (and existing-window (window-live-p existing-window))
+        ;; Right chat already exists, just switch buffer
+        (progn
+          (select-window existing-window)
+          (switch-to-buffer buffer))
+      ;; Create new right chat split
+      (let ((main-window (selected-window))
+            (chat-width 60))
+        (select-window (split-window-horizontally (- chat-width)))
+        (switch-to-buffer buffer)
+        (my-layout--set-window 'right-chat (selected-window))
+        (my-layout--set-state 'right-chat 'visible)
+        ;; Set fixed width and prevent resizing
+        (window-preserve-size (selected-window) t nil)
+        (select-window main-window)))))
 
 (defun my-layout-show-in-bottom-bar (buffer)
   "Show BUFFER in the bottom bar."
   (interactive)
-  (let ((main-window (selected-window)))
-    (select-window (split-window-vertically (- (/ (window-height) 4))))
-    (switch-to-buffer buffer)
-    (my-layout--set-window 'bottom-bar (selected-window))
-    (my-layout--set-state 'bottom-bar 'visible)
-    (select-window main-window)))
+  (let ((existing-window (my-layout--get-window 'bottom-bar)))
+    (if (and existing-window (window-live-p existing-window))
+        ;; Bottom bar already exists, just switch buffer
+        (progn
+          (select-window existing-window)
+          (switch-to-buffer buffer))
+      ;; Create new bottom bar
+      (let ((main-window (selected-window)))
+        (select-window (split-window-vertically (- (/ (window-height) 4))))
+        (switch-to-buffer buffer)
+        (my-layout--set-window 'bottom-bar (selected-window))
+        (my-layout--set-state 'bottom-bar 'visible)
+        (select-window main-window)))))
 
 (defun my-layout-hide-left-sidebar ()
   "Hide the left sidebar."

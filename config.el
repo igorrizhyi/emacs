@@ -682,17 +682,10 @@
   ;; Custom display function to use our window layout right sidebar
   (defun my-claude-display-right-sidebar (buffer)
     "Display Claude buffer in our window layout right sidebar."
-    ;; Ensure we have the main layout
-    (unless (eq (my-window-layout--get-state 'main-splits) 'visible)
-      (my-window-layout-setup))
-    ;; Show the right sidebar
-    (my-window-layout-show-right-sidebar)
-    ;; Get the right sidebar window and display the buffer there
-    (let ((right-sidebar-window (my-window-layout--get-window 'right-sidebar)))
-      (when right-sidebar-window
-        (set-window-buffer right-sidebar-window buffer)
-        (select-window right-sidebar-window)
-        right-sidebar-window)))
+    ;; Use the new layout system to show buffer in right chat
+    (my-layout-show-in-right-chat buffer)
+    ;; Return the right chat window
+    (my-layout--get-window 'right-chat))
 
   ;; Configure claude-code to use our custom display function
   (setq claude-code-display-window-fn #'my-claude-display-right-sidebar)

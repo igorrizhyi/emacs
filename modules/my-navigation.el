@@ -247,19 +247,33 @@ Value: plist with :buffer :position :line :preview :created-time :last-visited")
             
             (insert "---\n\n")))))))
 
+(defun my/cleanup-old-marks ()
+  "Keep only the 5 most recent marks, removing older ones."
+  (let ((marks-list '()))
+    ;; Collect all marks with their creation times
+    (maphash (lambda (name info)
+               (push (cons name (plist-get info :created-time)) marks-list))
+             my/global-marks)
+    
+    ;; If we have more than 5 marks, remove the oldest ones
+    (when (> (length marks-list) 5)
+      ;; Sort by creation time (newest first)
+      (setq marks-list (sort marks-list 
+                            (lambda (a b)
+                              (time-less-p (cdr b) (cdr a)))))
+      
+      ;; Remove marks beyond the first 5
+      (dolist (mark-entry (nthcdr 5 marks-list))
+        (let ((mark-name (car mark-entry)))
+          (remhash mark-name my/global-marks)
+          (message "Removed old mark: %s" mark-name))))))
+
 (defun my/create-mark (&optional name)
   "Create a global mark at current position.
-If NAME is provided, use it as mark name. Otherwise, prompt for name.
-If called with prefix arg, auto-generate a name."
+If NAME is provided, use it as mark name. Otherwise, auto-generate based on timestamp."
   (interactive)
-  (let* ((auto-name current-prefix-arg)
-         (mark-name (cond
-                     (auto-name 
-                      (setq my/marks-counter (1+ my/marks-counter))
-                      (format "auto-%d" my/marks-counter))
-                     (name name)
-                     (t (read-string "Mark name: " 
-                                     (format "mark-%d" (1+ my/marks-counter))))))
+  (let* ((mark-name (or name 
+                        (format-time-string "%H:%M:%S" (current-time))))
          (current-buffer (current-buffer))
          (current-pos (point))
          (line-num (line-number-at-pos))
@@ -290,8 +304,12 @@ If called with prefix arg, auto-generate a name."
                                   (buffer-name current-buffer)))
              my/global-marks)
     
+    ;; Maintain only 5 most recent marks
+    (my/cleanup-old-marks)
+    
     ;; Update markdown file with rich context
     (my/update-marks-markdown)
+    (my/refresh-markdown-buffer)
     
     (message "Created mark '%s' at %s:%d" mark-name (buffer-name) line-num)))
 
@@ -518,8 +536,8 @@ If called with prefix arg, auto-generate a name."
           (if (file-exists-p full-path)
               (progn
                 (message "DEBUG: Jumping to %s line %d" full-path line-num)
-                ;; Use smart-splits function to show file in main-right split
-                (my/show-file-main-right full-path line-num)
+                ;; Use layout function to show file in main center split
+                (my-layout-show-file-main-center full-path line-num)
                 ;; Force a recenter to make sure we're at the right position
                 (when (get-file-buffer full-path)
                   (with-current-buffer (get-file-buffer full-path)
@@ -580,8 +598,8 @@ If called with prefix arg, auto-generate a name."
             
             (if (file-exists-p full-path)
                 (progn
-                  ;; Use smart-splits function to show file in main-right split
-                  (my/show-file-main-right full-path line-num)
+                  ;; Use layout function to show file in main center split
+                  (my-layout-show-file-main-center full-path line-num)
                   ;; Find and update the timestamp of the corresponding mark
                   (let ((mark-name (my/find-mark-by-file-and-line (file-name-nondirectory filename) line-num)))
                     (when mark-name
