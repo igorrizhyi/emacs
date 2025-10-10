@@ -20,12 +20,13 @@
 (require 'my-font-management)
 (require 'my-navigation)
 (require 'my-goto-last-change)
-(require 'my-smart-splits)
+;; (require 'my-smart-splits)
 (require 'my-smart-autosave)
-(require 'my-window-layout)
+;; (require 'my-window-layout)
 (require 'my-external-file-indicator)
 (require 'my-jump-animation)
 (require 'my-spacious-padding)
+(require 'my-layout)
 (require' claude-code-emacs)
 
 ;; Optimize general Emacs responsiveness

@@ -277,13 +277,13 @@ Otherwise, finds the nearest test function and runs it with class context."
     (my/close-pytest-output-window)))
 
 (defun my/show-errors-in-split (error-buffer error-info test-spec project-root)
-  "Show errors in main-right split with clickable links using custom layout."
+  "Show errors in main split with clickable links using custom layout."
   (let ((current-window (selected-window)))
     ;; Create and populate error buffer with clickable links
     (my/populate-error-buffer-with-links error-buffer error-info test-spec project-root)
     
-    ;; Use our custom layout system to show errors in main-right split
-    (my-window-layout-show-with-layout 'main-right error-buffer)
+    ;; Use our custom layout system to show errors in main split
+    (my-window-layout-show-with-layout 'main error-buffer)
     
     ;; Return focus to the original window
     (select-window current-window)))

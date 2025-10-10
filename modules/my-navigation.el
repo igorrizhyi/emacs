@@ -7,7 +7,7 @@
 ;;; Code:
 
 ;; Require smart splits for advanced split management
-(require 'my-smart-splits)
+(require 'my-layout)
 
 (defun my/jump-up ()
   "Jump up 10 lines."
@@ -660,41 +660,53 @@ WINDOW is the window that was selected."
     (kbd "k") nil))
 
 (defun my/view-marks-markdown ()
-  "Open and view the markdown file with rich marks context."
+  "Open and view the markdown file with rich marks context in left sidebar."
   (interactive)
   ;; Store jump position from current buffer before switching to marks
   (evil-set-jump)
-  (let ((markdown-file (my/get-project-marks-file)))
+  (let ((markdown-file (my/get-project-marks-file))
+        (current-window (selected-window)))
     (if (file-exists-p markdown-file)
         (progn
           ;; Refresh the markdown file first
           (my/update-marks-markdown)
-          ;; Open the file
-          (find-file markdown-file)
-          ;; Enable navigation mode
-          (my/markdown-marks-mode 1)
-          ;; Move to first mark
-          (goto-char (point-min))
-          (when (re-search-forward "^### " nil t)
-            (beginning-of-line)
-            (recenter-top-bottom 5))
-          (message "Opened marks markdown (j/k: navigate, s/RET: jump, g: refresh, q: quit): %s" 
-                   (file-name-nondirectory markdown-file)))
+          ;; Open the file in left sidebar
+          (let ((markdown-buffer (find-file-noselect markdown-file)))
+            (my-layout-show-in-left-sidebar markdown-buffer)
+            ;; Switch to the sidebar window to configure the buffer
+            (select-window (my-layout--get-window 'left-sidebar))
+            ;; Enable navigation mode
+            (my/markdown-marks-mode 1)
+            ;; Move to first mark
+            (goto-char (point-min))
+            (when (re-search-forward "^### " nil t)
+              (beginning-of-line)
+              (recenter-top-bottom 5))
+            ;; Return to original window
+            (select-window current-window)
+            (message "Opened marks markdown in left sidebar (j/k: navigate, s/RET: jump, g: refresh, q: quit): %s" 
+                     (file-name-nondirectory markdown-file))))
       (if (= (hash-table-count my/global-marks) 0)
           (message "No marks found. Create some marks first with `my/create-mark'")
         (progn
           ;; Generate the markdown file
           (my/update-marks-markdown)
-          (find-file markdown-file)
-          ;; Enable navigation mode
-          (my/markdown-marks-mode 1)
-          ;; Move to first mark
-          (goto-char (point-min))
-          (when (re-search-forward "^### " nil t)
-            (beginning-of-line)
-            (recenter-top-bottom 5))
-          (message "Created marks markdown (j/k: navigate, s/RET: jump, g: refresh, q: quit): %s" 
-                   (file-name-nondirectory markdown-file)))))))
+          ;; Open the file in left sidebar
+          (let ((markdown-buffer (find-file-noselect markdown-file)))
+            (my-layout-show-in-left-sidebar markdown-buffer)
+            ;; Switch to the sidebar window to configure the buffer
+            (select-window (my-layout--get-window 'left-sidebar))
+            ;; Enable navigation mode
+            (my/markdown-marks-mode 1)
+            ;; Move to first mark
+            (goto-char (point-min))
+            (when (re-search-forward "^### " nil t)
+              (beginning-of-line)
+              (recenter-top-bottom 5))
+            ;; Return to original window
+            (select-window current-window)
+            (message "Created marks markdown in left sidebar (j/k: navigate, s/RET: jump, g: refresh, q: quit): %s" 
+                     (file-name-nondirectory markdown-file))))))))
 
 (defvar my/marks-buffer-marks-data nil
   "Store marks data for the marks buffer navigation.")

@@ -6,7 +6,7 @@
 
 ;;; Code:
 
-(require 'my-window-layout)
+(require 'my-layout)
 
 (defvar my/terminal-buffers (make-hash-table :test 'equal)
   "Hash table mapping workspace names to terminal buffers.")
