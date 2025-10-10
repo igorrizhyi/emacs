@@ -186,7 +186,7 @@ Value: plist with :buffer :position :line :preview :created-time :last-visited")
     (expand-file-name (format "marks-%s.md" safe-name) temporary-file-directory)))
 
 (defun my/generate-mark-context (position)
-  "Generate context around POSITION with 3 lines before and after."
+  "Generate context around POSITION with 3 lines before and after, removing common indentation."
   (save-excursion
     (goto-char position)
     (let* ((mark-line (line-number-at-pos))
@@ -194,7 +194,24 @@ Value: plist with :buffer :position :line :preview :created-time :last-visited")
            (end-line (+ mark-line 3))
            (start-pos (progn (goto-line start-line) (line-beginning-position)))
            (end-pos (progn (goto-line end-line) (line-end-position)))
-           (context (buffer-substring-no-properties start-pos end-pos))
+           (raw-context (buffer-substring-no-properties start-pos end-pos))
+           (lines (split-string raw-context "\n"))
+           ;; Find minimum indentation of non-empty lines
+           (min-indent (apply 'min 
+                             (mapcar (lambda (line)
+                                       (if (string-match "^[ \t]*$" line)
+                                           most-positive-fixnum  ; Ignore empty lines
+                                         (progn
+                                           (string-match "^[ \t]*" line)
+                                           (length (match-string 0 line)))))
+                                     lines)))
+           ;; Remove common indentation from all lines
+           (dedented-lines (mapcar (lambda (line)
+                                     (if (string-match "^[ \t]*$" line)
+                                         line  ; Keep empty lines as-is
+                                       (substring line (min min-indent (length line)))))
+                                   lines))
+           (context (string-join dedented-lines "\n"))
            (language (my/get-language-for-mode)))
       (list :context context :language language :start-line start-line :mark-line mark-line))))
 
@@ -231,10 +248,9 @@ Value: plist with :buffer :position :line :preview :created-time :last-visited")
                  (last-visited (plist-get mark-info :last-visited))
                  (buffer-exists (and buffer (buffer-live-p buffer))))
 
-            (insert "==============================================\n")
-            (insert (format "### %s:%d  \n"
+            (insert (format "### %s:%d\n"
                            (if file-path 
-                               (file-relative-name file-path project-root)
+                               (file-name-nondirectory file-path)
                              buffer-name) 
                            line-num))
 
@@ -649,7 +665,7 @@ If NAME is provided, use it as mark name. Otherwise, auto-generate based on time
   ;; Make all headers small
   (face-remap-add-relative 'markdown-header-face-1 :height 0.8)
   (face-remap-add-relative 'markdown-header-face-2 :height 0.7)
-  (face-remap-add-relative 'markdown-header-face-3 :height 0.8)
+  (face-remap-add-relative 'markdown-header-face-3 :height 0.9 :background "#130c04" :extend t)
   (face-remap-add-relative 'markdown-header-face-4 :height 0.7)
   ;; Make regular text small
   (face-remap-add-relative 'default :height 0.7)
