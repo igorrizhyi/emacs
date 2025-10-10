@@ -947,17 +947,18 @@ WINDOW is the window that was selected."
       (let* ((file-path (plist-get mark-info :file-path))
              (buffer (find-file-noselect file-path)))
         (with-current-buffer buffer
-          (goto-line new-line)
-          (let ((new-pos (point))
-                (new-preview (string-trim 
-                             (buffer-substring-no-properties 
-                              (line-beginning-position) 
-                              (line-end-position)))))
-            ;; Update mark info (don't update last-visited during auto-maintenance)
-            (plist-put mark-info :line new-line)
-            (plist-put mark-info :position new-pos)
-            (plist-put mark-info :preview new-preview)
-            (puthash mark-name mark-info my/global-marks)))))))
+          (save-excursion
+            (goto-line new-line)
+            (let ((new-pos (point))
+                  (new-preview (string-trim 
+                               (buffer-substring-no-properties 
+                                (line-beginning-position) 
+                                (line-end-position)))))
+              ;; Update mark info (don't update last-visited during auto-maintenance)
+              (plist-put mark-info :line new-line)
+              (plist-put mark-info :position new-pos)
+              (plist-put mark-info :preview new-preview)
+              (puthash mark-name mark-info my/global-marks))))))))
 
 (defun my/remove-obsolete-mark (mark-name)
   "Remove MARK-NAME that no longer has valid content."
