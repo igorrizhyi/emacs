@@ -577,6 +577,21 @@
       (:prefix ("q" . "quit")
        :desc "Kill buffer" "k" #'kill-current-buffer))
 
+;; Global C-v for paste (yank) functionality across all modes
+(global-set-key (kbd "C-v") #'yank)
+
+;; Also ensure C-v works in Evil states
+(after! evil
+  (define-key evil-insert-state-map (kbd "C-v") #'yank)
+  (define-key evil-emacs-state-map (kbd "C-v") #'yank)
+  ;; For normal state, we might want to enter insert mode and paste
+  (define-key evil-normal-state-map (kbd "C-v") 
+    (lambda () (interactive) (evil-insert-state) (yank)))
+  ;; Fix C-v in Evil search mode (/)
+  (define-key evil-ex-search-keymap (kbd "C-v") #'yank)
+  ;; Also fix for Evil ex command mode (:)
+  (define-key evil-ex-completion-map (kbd "C-v") #'yank))
+
 ;; Global keybinding for claude-code-terminal-create
 (map! "C-c c" #'claude-code-terminal-create)
 (map! "C-c r" #'lsp-workspace-restart)
