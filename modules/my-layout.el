@@ -19,6 +19,9 @@
   '(left-sidebar main-center right-chat bottom-bar)
   "Available window splits in the layout.")
 
+(defvar my-layout--claude-started nil
+  "Track whether Claude Code has been started.")
+
 (defun my-layout--init-state ()
   "Initialize window layout state tracking."
   (dolist (split my-layout--splits)
@@ -232,6 +235,43 @@
   (interactive)
   (let ((magit-buffer (magit-status-setup-buffer)))
     (my-layout-show-in-left-sidebar magit-buffer)))
+
+(defun my-layout-smart-claude-code ()
+  "Smart Claude Code handler: start, show, or focus based on current state."
+  (interactive)
+  (let* ((right-chat-window (my-layout--get-window 'right-chat))
+         (right-chat-visible (and right-chat-window (window-live-p right-chat-window))))
+    
+    (cond
+     ;; Case 1: Claude never started - start it
+     ((not my-layout--claude-started)
+      (claude-code)
+      (setq my-layout--claude-started t)
+      (message "Started Claude Code"))
+     
+     ;; Case 2: Claude started but right split is closed - open split and focus it
+     ((and my-layout--claude-started (not right-chat-visible))
+      (let ((claude-buffer (seq-find (lambda (buf)
+                                       (string-match-p "claude\\|Claude" (buffer-name buf)))
+                                     (buffer-list))))
+        (if claude-buffer
+            (progn
+              (my-layout-show-in-right-chat claude-buffer)
+              (select-window (my-layout--get-window 'right-chat))
+              (message "Opened Claude Code in right sidebar"))
+          (progn
+            (claude-code)
+            (message "Restarted Claude Code")))))
+     
+     ;; Case 3: Claude started and split is open - just focus it
+     ((and my-layout--claude-started right-chat-visible)
+      (select-window right-chat-window)
+      (message "Focused Claude Code"))
+     
+     ;; Fallback: start Claude Code
+     (t
+      (claude-code)
+      (setq my-layout--claude-started t)))))
 
 (defun my-layout-show-file-main-center (file-path &optional line-num)
   "Show FILE-PATH in main center window, optionally go to LINE-NUM."

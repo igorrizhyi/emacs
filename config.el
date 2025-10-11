@@ -496,7 +496,7 @@
 ;; Window navigation keybindings - move focus between splits
 (map! "C-h" #'my/smart-move-left   ; Smart left movement or Magit
       "C-l" #'windmove-right       ; Focus right window split
-      "C-k" #'claude-code) ; Open Claude Code in right sidebar
+      "C-k" #'my-layout-smart-claude-code) ; Smart Claude Code handler
 
 
 ;; Jump navigation keybindings - like browser back/forward
