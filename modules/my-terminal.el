@@ -2,7 +2,6 @@
 
 ;;; Commentary:
 ;; This module provides terminal toggle functionality with C-j to show
-;; and C-k to hide a terminal in the bottom bar using the custom layout system.
 
 ;;; Code:
 
@@ -132,8 +131,7 @@
   (message "All terminal buffers killed"))
 
 ;; Key bindings
-(map! "C-j" #'my/toggle-terminal-show
-      "C-k" #'my/toggle-terminal-hide)
+(map! "C-j" #'my/toggle-terminal-show)
 
 ;; Force C-b to be terminal toggle - override all other bindings
 (after! evil

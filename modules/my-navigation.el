@@ -248,11 +248,12 @@ Value: plist with :buffer :position :line :preview :created-time :last-visited")
                  (last-visited (plist-get mark-info :last-visited))
                  (buffer-exists (and buffer (buffer-live-p buffer))))
 
-            (insert (format "### %s:%d\n"
+            (insert (format "### %s:%d [%s]\n"
                            (if file-path 
                                (file-name-nondirectory file-path)
                              buffer-name) 
-                           line-num))
+                           line-num
+                           mark-name))
 
             ;; Add context if buffer exists
             (when buffer-exists
@@ -260,7 +261,7 @@ Value: plist with :buffer :position :line :preview :created-time :last-visited")
                                    (my/generate-mark-context (plist-get mark-info :position)))))
                 (insert (format "```%s\n" (plist-get context-info :language)))
                 (insert (plist-get context-info :context))
-                (insert "\n```\n")))
+                (insert "\n```\n\n")))
             ))))))
 
 (defun my/cleanup-old-marks ()
@@ -537,17 +538,14 @@ If NAME is provided, use it as mark name. Otherwise, auto-generate based on time
   (let ((stored-project-root (my/get-project-root-from-markdown)))
     (save-excursion
       (beginning-of-line)
-      ;; Look for heading pattern: ### filename:line
-      (when (re-search-forward "^### \\(.+\\):\\([0-9]+\\)" (line-end-position) t)
+      ;; Look for heading pattern: ### filename:line [mark-name]
+      (when (re-search-forward "^### \\(.+\\):\\([0-9]+\\) \\[\\(.+\\)\\]" (line-end-position) t)
         (let* ((filename (match-string 1))
                (line-num (string-to-number (match-string 2)))
-               (project-root (or stored-project-root
-                                (if (fboundp 'projectile-project-root)
-                                    (projectile-project-root)
-                                  (if (fboundp 'project-root)
-                                      (project-root (project-current))
-                                    default-directory))))
-               (full-path (expand-file-name filename project-root)))
+               (mark-name (match-string 3))
+               ;; Look up mark in hash table to get full path
+               (mark-info (gethash mark-name my/global-marks))
+               (full-path (when mark-info (plist-get mark-info :file-path))))
           
           (if (file-exists-p full-path)
               (progn
@@ -577,7 +575,11 @@ If NAME is provided, use it as mark name. Otherwise, auto-generate based on time
                           (my/update-marks-markdown)
                           (message "DEBUG: Refreshing markdown buffer only...")
                           ;; Use our dedicated refresh function
+
+                          ;; (my/update-marks-markdown)
                           (my/refresh-markdown-buffer)
+                          ;; (my/refresh-markdown-buffer)
+                          ;;
                           (with-current-buffer current-markdown-buffer
                             (when (string-match-p "\\.md$" (buffer-name))  ; Safety check - only modify .md files
                               (let ((inhibit-read-only t)
@@ -599,18 +601,15 @@ If NAME is provided, use it as mark name. Otherwise, auto-generate based on time
     ;; If we didn't find a heading on current line, look for the previous heading
     (unless (save-excursion
               (beginning-of-line)
-              (re-search-forward "^### \\(.+\\):\\([0-9]+\\)" (line-end-position) t))
+              (re-search-forward "^### \\(.+\\):\\([0-9]+\\) \\[\\(.+\\)\\]" (line-end-position) t))
       (save-excursion
-        (when (re-search-backward "^### \\(.+\\):\\([0-9]+\\)" nil t)
+        (when (re-search-backward "^### \\(.+\\):\\([0-9]+\\) \\[\\(.+\\)\\]" nil t)
           (let* ((filename (match-string 1))
                  (line-num (string-to-number (match-string 2)))
-                 (project-root (or stored-project-root
-                                  (if (fboundp 'projectile-project-root)
-                                      (projectile-project-root)
-                                    (if (fboundp 'project-root)
-                                        (project-root (project-current))
-                                      default-directory))))
-                 (full-path (expand-file-name filename project-root)))
+                 (mark-name (match-string 3))
+                 ;; Look up mark in hash table to get full path
+                 (mark-info (gethash mark-name my/global-marks))
+                 (full-path (when mark-info (plist-get mark-info :file-path))))
             
             (if (file-exists-p full-path)
                 (progn
@@ -665,7 +664,7 @@ If NAME is provided, use it as mark name. Otherwise, auto-generate based on time
   ;; Make all headers small
   (face-remap-add-relative 'markdown-header-face-1 :height 0.8)
   (face-remap-add-relative 'markdown-header-face-2 :height 0.7)
-  (face-remap-add-relative 'markdown-header-face-3 :height 0.9 :background "#130c04" :extend t)
+  (face-remap-add-relative 'markdown-header-face-3 :background "#372413" :extend t)
   (face-remap-add-relative 'markdown-header-face-4 :height 0.7)
   ;; Make regular text small
   (face-remap-add-relative 'default :height 0.7)
@@ -674,9 +673,10 @@ If NAME is provided, use it as mark name. Otherwise, auto-generate based on time
   ;; Hide language keywords (python, elisp, etc.) and brackets
   (face-remap-add-relative 'markdown-language-keyword-face :foreground "#1a1006" :height 0.1)
   (face-remap-add-relative 'markdown-markup-face :foreground "#1a1006" :height 0.1)
+  ;; Highlight current line in marks mode
+  (hl-line-mode 1)
+  (face-remap-add-relative 'hl-line :background "#5a3a15" :foreground "#ffc677" :extend t)
   ;; Keep code blocks normal size (readable)
-  ;; (face-remap-add-relative 'markdown-code-face :height 1.4 :override t)
-  ;; (face-remap-add-relative 'markdown-pre-face :height 1.1 :override t)
   (setq-local face-remapping-alist
                 (cons '(markdown-code-face . (:height 1.2 :background "#261707" :extend t))
                       face-remapping-alist)))

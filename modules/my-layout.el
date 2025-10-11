@@ -64,6 +64,8 @@
           ;; Move to right window and put original buffer there
           (select-window sidebar-window)
           (switch-to-buffer original-buffer)
+          ;; Also preserve main window size
+          (window-preserve-size (selected-window) t nil)
           (my-layout--set-window 'main-center (selected-window)))))))
 
 (defun my-layout-show-in-main-center (buffer)
@@ -94,7 +96,9 @@
         (my-layout--set-state 'right-chat 'visible)
         ;; Set fixed width and prevent resizing
         (window-preserve-size (selected-window) t nil)
-        (select-window main-window)))))
+        (select-window main-window)
+        ;; Also preserve main window size
+        (window-preserve-size (selected-window) t nil)))))
 
 (defun my-layout-show-in-bottom-bar (buffer)
   "Show BUFFER in the bottom bar."
@@ -111,7 +115,11 @@
         (switch-to-buffer buffer)
         (my-layout--set-window 'bottom-bar (selected-window))
         (my-layout--set-state 'bottom-bar 'visible)
-        (select-window main-window)))))
+        ;; Set fixed height and prevent resizing
+        (window-preserve-size (selected-window) nil t)
+        (select-window main-window)
+        ;; Also preserve main window size
+        (window-preserve-size (selected-window) nil t)))))
 
 (defun my-layout-hide-left-sidebar ()
   "Hide the left sidebar."
@@ -259,6 +267,48 @@
   "Show BUFFER in bottom bar."
   (my-layout-show-in-bottom-bar buffer))
 
+(defun my-layout--restore-window-sizes ()
+  "Restore fixed sizes for all layout windows after a window is deleted."
+  (when-let ((left-window (my-layout--get-window 'left-sidebar)))
+    (when (window-live-p left-window)
+      (with-selected-window left-window
+        (window-resize left-window (- 60 (window-width)) t))))
+  
+  (when-let ((right-window (my-layout--get-window 'right-chat)))
+    (when (window-live-p right-window)
+      (with-selected-window right-window
+        (window-resize right-window (- 60 (window-width)) t))))
+  
+  (when-let ((bottom-window (my-layout--get-window 'bottom-bar)))
+    (when (window-live-p bottom-window)
+      (with-selected-window bottom-window
+        (let ((target-height (/ (frame-height) 4)))
+          (window-resize bottom-window (- target-height (window-height)) nil))))))
+
+(defun my-layout--window-deleted-hook (window)
+  "Hook function called when a window is deleted."
+  (when (or (eq window (my-layout--get-window 'left-sidebar))
+            (eq window (my-layout--get-window 'right-chat))
+            (eq window (my-layout--get-window 'bottom-bar)))
+    ;; One of our layout windows was deleted, update state
+    (cond
+     ((eq window (my-layout--get-window 'left-sidebar))
+      (my-layout--set-state 'left-sidebar 'hidden)
+      (my-layout--set-window 'left-sidebar nil))
+     ((eq window (my-layout--get-window 'right-chat))
+      (my-layout--set-state 'right-chat 'hidden)
+      (my-layout--set-window 'right-chat nil))
+     ((eq window (my-layout--get-window 'bottom-bar))
+      (my-layout--set-state 'bottom-bar 'hidden)
+      (my-layout--set-window 'bottom-bar nil)))
+    ;; Restore sizes of remaining windows after a short delay
+    (run-with-idle-timer 0.1 nil #'my-layout--restore-window-sizes)))
+
+;; Install the window deletion hook
+(add-hook 'window-selection-change-functions 
+          (lambda (frame) 
+            (my-layout--restore-window-sizes)))
+
 (defun my-layout-reset ()
   "Reset the layout to a clean state."
   (interactive)
@@ -285,8 +335,7 @@
 ;; Key bindings for navigation
 (map! :n "C-h" #'my-layout-navigate-left
       :n "C-l" #'my-layout-navigate-right
-      :n "C-j" #'my-layout-navigate-down
-      :n "C-k" #'my-layout-navigate-up)
+      :n "C-j" #'my-layout-navigate-down)
 
 ;; Leader key bindings for layout management
 (map! :leader

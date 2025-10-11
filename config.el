@@ -33,6 +33,11 @@
 (setq gc-cons-threshold (* 100 1024 1024))  ; 100MB instead of 800KB
 (setq read-process-output-max (* 1024 1024))  ; 1MB instead of 4KB
 
+;; Prevent Emacs from automatically resizing windows
+(setq window-combination-resize nil)
+(setq even-window-sizes nil)
+(setq window-resize-pixelwise t)  ; Optional: more precise resizing
+
 ;; Enable smart auto-save that respects Evil mode states
 (setq my-smart-autosave-delay 2)  ; Wait 3 seconds after last change before saving
 (my-smart-autosave-global-mode 1) ; Enable globally for all file buffers
@@ -491,7 +496,7 @@
 ;; Window navigation keybindings - move focus between splits
 (map! "C-h" #'my/smart-move-left   ; Smart left movement or Magit
       "C-l" #'windmove-right       ; Focus right window split
-      "C-k" #'my-window-layout-show-claude-code-right) ; Open Claude Code in right sidebar
+      "C-k" #'claude-code) ; Open Claude Code in right sidebar
 
 
 ;; Jump navigation keybindings - like browser back/forward
@@ -673,7 +678,7 @@
 ;;   (ultra-scroll-mode 1)
 ;;   )
 
-(use-package claude-code :ensure t
+(use-package claude-code
   :config
   ;; optional IDE integration with Monet
   (add-hook 'claude-code-process-environment-functions #'monet-start-server-function)
