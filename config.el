@@ -592,6 +592,10 @@
   ;; Also fix for Evil ex command mode (:)
   (define-key evil-ex-completion-map (kbd "C-v") #'yank))
 
+;; Enable C-v paste in vterm buffers
+(with-eval-after-load 'vterm
+  (define-key vterm-mode-map (kbd "C-c v") 'vterm-yank))
+
 ;; Global keybinding for claude-code-terminal-create
 (map! "C-c c" #'claude-code-terminal-create)
 (map! "C-c r" #'lsp-workspace-restart)
@@ -736,6 +740,8 @@
 ;;   (ultra-scroll-mode 1)
 ;;   )
 
+(setq claude-code-terminal-backend 'eat)
+;; (use-package vterm :ensure t)
 (use-package claude-code
   :config
   ;; optional IDE integration with Monet

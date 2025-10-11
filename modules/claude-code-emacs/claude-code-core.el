@@ -69,10 +69,10 @@
 ;;; Buffer Management
 
 (defun claude-code-normalize-project-root (project-root)
-  "Normalize PROJECT-ROOT by removing trailing slash.
+  "Normalize PROJECT-ROOT by expanding tildes and removing trailing slash.
 Return nil if PROJECT-ROOT is nil."
   (when project-root
-    (directory-file-name project-root)))
+    (directory-file-name (expand-file-name project-root))))
 
 (defun claude-code-buffer-name ()
   "Return the buffer name for Claude Code session in current project.

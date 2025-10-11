@@ -189,6 +189,7 @@ Falls back to current context, last created, or any active terminal."
 (defun claude-code-terminal-execute-command (terminal-id command &optional project-root timeout)
   "Execute COMMAND in terminal buffer TERMINAL-ID in PROJECT-ROOT.
 Returns a plist with :success, :stdout, :stderr, :exit-code, :timeout, :working-directory."
+  (message "Executing command in terminal '%s' (%s): %s" terminal-id project-root command)
   (let ((buffer (claude-code-terminal-get-by-id terminal-id project-root))
         (timeout-seconds (or timeout 30)))
     (if (not buffer)
@@ -561,7 +562,7 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
   ;; (define-key vterm-mode-map (kbd "C-y") 'claude-code-send-emacs-terminal)
   (define-key vterm-mode-map (kbd "C-c 1") 'claude-code-send-1)
   (define-key vterm-mode-map (kbd "C-c v") 'vterm-yank)
-  (define-key vterm-mode-map (kbd "C-c k") 'my-window-layout-show-claude-code-right)
+  (define-key vterm-mode-map (kbd "C-c k") 'my-layout-smart-claude-code)
   (define-key vterm-mode-map (kbd "C-l") 'windmove-right)
   (define-key vterm-mode-map (kbd "C-u") 'claude-code-terminal-switch))
 

@@ -763,11 +763,14 @@ Shows confirmation popup before executing."
       (error "Command parameter is required"))
     
     ;; Always use last focused terminal ID, ignore the provided terminalId parameter
+    (message terminal-id)
     (setq terminal-id 
           (when (fboundp 'claude-code-terminal-get-last-focused)
             (claude-code-terminal-get-last-focused)))
-    
+
+    (message terminal-id)
     (unless terminal-id
+      (message "No focused terminal found, cannot execute command")
       (error "No focused terminal available"))
     
     ;; Show confirmation popup before executing
