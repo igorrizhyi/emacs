@@ -41,6 +41,7 @@
 (require 'ediff)
 (require 'alert nil t)  ;; Optional dependency
 (require 'claude-code-terminal)
+(require 'cl-lib)
 
 ;; LSP function declarations
 (declare-function lsp-diagnostics "lsp-mode" (&optional all-workspaces))
@@ -72,6 +73,7 @@
 (declare-function claude-code-terminal-execute-command "claude-code-terminal" (terminal-id command &optional project-root))
 (declare-function claude-code-terminal-list-active "claude-code-terminal" ())
 (declare-function claude-code-terminal-get-sessions "claude-code-terminal" (&optional project-root))
+(declare-function claude-code-terminal-get-by-id "claude-code-terminal" (terminal-id &optional project-root))
 
 ;;; MCP Tool Handlers
 
@@ -724,6 +726,88 @@ Returns t if user confirms (y), nil if user declines (n)."
     
     confirmation))
 
+;;; Terminal Output Size and State Tracking
+
+(defvar claude-code-mcp-output-size-limit 25000
+  "Maximum allowed output size before marking as large output interruption.")
+
+(defvar claude-code-mcp-command-states (make-hash-table :test 'equal)
+  "Hash table tracking command execution states by terminal ID.")
+
+(defvar claude-code-mcp-terminal-buffer-corrupted (make-hash-table :test 'equal)
+  "Hash table tracking buffer corruption state by terminal ID.")
+
+(cl-defstruct claude-code-mcp-command-state
+  "Command execution state structure."
+  start-time
+  output-size
+  interrupted
+  large-output-detected
+  timeout-detected)
+
+(defun claude-code-mcp-init-command-state (terminal-id)
+  "Initialize command state for TERMINAL-ID."
+  (puthash terminal-id
+           (make-claude-code-mcp-command-state
+            :start-time (current-time)
+            :output-size 0
+            :interrupted nil
+            :large-output-detected nil
+            :timeout-detected nil)
+           claude-code-mcp-command-states))
+
+(defun claude-code-mcp-update-output-size (terminal-id output)
+  "Update output size tracking for TERMINAL-ID with OUTPUT."
+  (when-let ((state (gethash terminal-id claude-code-mcp-command-states)))
+    (let ((new-size (+ (claude-code-mcp-command-state-output-size state) 
+                       (length output))))
+      (setf (claude-code-mcp-command-state-output-size state) new-size)
+      (when (> new-size claude-code-mcp-output-size-limit)
+        (setf (claude-code-mcp-command-state-large-output-detected state) t)
+        (setf (claude-code-mcp-command-state-interrupted state) t)))))
+
+(defun claude-code-mcp-check-timeout (terminal-id timeout-seconds)
+  "Check if command execution has timed out for TERMINAL-ID."
+  (when-let ((state (gethash terminal-id claude-code-mcp-command-states)))
+    (let ((elapsed (float-time (time-subtract (current-time) 
+                                             (claude-code-mcp-command-state-start-time state)))))
+      (when (> elapsed timeout-seconds)
+        (setf (claude-code-mcp-command-state-timeout-detected state) t)
+        (setf (claude-code-mcp-command-state-interrupted state) t)
+        t))))
+
+(defun claude-code-mcp-validate-buffer-state (buffer)
+  "Validate and recover buffer state for BUFFER."
+  (condition-case err
+      (with-current-buffer buffer
+        (let ((point-max (point-max))
+              (point-min (point-min))
+              (current-point (point)))
+          ;; Check for buffer position corruption
+          (when (or (> current-point point-max)
+                    (< current-point point-min))
+            (goto-char (min current-point point-max))
+            (message "Buffer position corrected: %s" (buffer-name))
+            t)))
+    (args-out-of-range
+     (message "Buffer corruption detected in %s, marking for reset" (buffer-name buffer))
+     (when (bound-and-true-p claude-code-terminal-id)
+       (puthash claude-code-terminal-id t claude-code-mcp-terminal-buffer-corrupted))
+     t)
+    (error
+     (message "Error validating buffer state: %s" (error-message-string err))
+     nil)))
+
+(defun claude-code-mcp-reset-buffer-state (terminal-id)
+  "Reset buffer state for TERMINAL-ID after corruption."
+  (remhash terminal-id claude-code-mcp-command-states)
+  (remhash terminal-id claude-code-mcp-terminal-buffer-corrupted)
+  (message "Buffer state reset for terminal: %s" terminal-id))
+
+(defun claude-code-mcp-is-buffer-corrupted (terminal-id)
+  "Check if buffer is marked as corrupted for TERMINAL-ID."
+  (gethash terminal-id claude-code-mcp-terminal-buffer-corrupted))
+
 ;;; Terminal Tool Handlers
 
 (defun claude-code-mcp-handle-getTerminalContent (params)
@@ -752,53 +836,119 @@ PARAMS should include 'terminalId' and optionally 'projectRoot'."
   "Handle executeTerminalCommand request with PARAMS.
 PARAMS should include 'command', and optionally 'terminalId', 'projectRoot', and 'timeout'.
 Note: terminalId parameter is ignored - always uses last focused terminal.
-Shows confirmation popup before executing."
+Shows confirmation popup before executing and includes buffer corruption detection."
   (let ((command (cdr (assoc 'command params)))
         (project-root (cdr (assoc 'projectRoot params)))
         (timeout-duration (or (cdr (assoc 'timeout params)) 30))
-        terminal-id)
+        terminal-id
+        buffer)
     
     ;; Validate required parameters
     (unless command
       (error "Command parameter is required"))
     
     ;; Always use last focused terminal ID, ignore the provided terminalId parameter
-    (message terminal-id)
     (setq terminal-id 
           (when (fboundp 'claude-code-terminal-get-last-focused)
             (claude-code-terminal-get-last-focused)))
 
-    (message terminal-id)
     (unless terminal-id
       (message "No focused terminal found, cannot execute command")
       (error "No focused terminal available"))
     
+    ;; Check if buffer is corrupted before proceeding
+    (when (claude-code-mcp-is-buffer-corrupted terminal-id)
+      (message "Terminal buffer %s is corrupted, resetting state" terminal-id)
+      (claude-code-mcp-reset-buffer-state terminal-id))
+    
+    ;; Get terminal buffer and validate its state
+    (setq buffer (claude-code-terminal-get-by-id terminal-id project-root))
+    (when buffer
+      (condition-case err
+          (claude-code-mcp-validate-buffer-state buffer)
+        (args-out-of-range
+         (message "Buffer corruption detected during validation for terminal %s" terminal-id)
+         (claude-code-mcp-reset-buffer-state terminal-id)
+         (error "Terminal buffer is corrupted and needs to be recreated"))))
+    
     ;; Show confirmation popup before executing
     (if (claude-code-show-command-confirmation-popup command project-root)
-        ;; User confirmed - execute the command
+        ;; User confirmed - execute the command with enhanced monitoring
         (progn
           (unless (fboundp 'claude-code-terminal-execute-command)
             (error "Terminal execute function not available"))
           
-          (let ((result (claude-code-terminal-execute-command terminal-id command project-root timeout-duration)))
-            (unless result
-              (error "Command execution returned no result"))
+          ;; Initialize command state tracking
+          (claude-code-mcp-init-command-state terminal-id)
+          
+          (condition-case exec-err
+              (let ((result (claude-code-terminal-execute-command terminal-id command project-root timeout-duration)))
+                (unless result
+                  (error "Command execution returned no result"))
+                
+                ;; Check if command was interrupted due to large output
+                (let* ((state (gethash terminal-id claude-code-mcp-command-states))
+                       (was-interrupted (and state (claude-code-mcp-command-state-interrupted state)))
+                       (large-output (and state (claude-code-mcp-command-state-large-output-detected state))))
+                  
+                  ;; Clean up command state
+                  (remhash terminal-id claude-code-mcp-command-states)
+                  
+                  ;; Return formatted result with interruption info
+                  `((success . ,(plist-get result :success))
+                    (message . ,(cond
+                                 (large-output "Command produced large output and was interrupted")
+                                 ((plist-get result :success) "Command executed successfully")
+                                 (t "Command execution failed")))
+                    (terminalId . ,terminal-id)
+                    (command . ,command)
+                    (stdout . ,(or (plist-get result :stdout) ""))
+                    (stderr . ,(or (plist-get result :stderr) ""))
+                    (exitCode . ,(or (plist-get result :exit-code) 1))
+                    (timeout . ,(if (plist-get result :timeout) t json-false))
+                    (interrupted . ,(if was-interrupted t json-false))
+                    (largeOutput . ,(if large-output t json-false))
+                    (workingDirectory . ,(or (plist-get result :working-directory) project-root default-directory))
+                    (error . ,(cond
+                               (large-output "Command output exceeded size limit")
+                               ((not (plist-get result :success))
+                                (or (plist-get result :stderr) "Command execution failed"))
+                               (t ""))))))
             
-            ;; Return formatted result
-            `((success . ,(plist-get result :success))
-              (message . ,(if (plist-get result :success) 
-                             "Command executed successfully" 
-                             "Command execution failed"))
-              (terminalId . ,terminal-id)
-              (command . ,command)
-              (stdout . ,(or (plist-get result :stdout) ""))
-              (stderr . ,(or (plist-get result :stderr) ""))
-              (exitCode . ,(or (plist-get result :exit-code) 1))
-              (timeout . ,(if (plist-get result :timeout) t json-false))
-              (workingDirectory . ,(or (plist-get result :working-directory) project-root default-directory))
-              (error . ,(if (not (plist-get result :success))
-                           (or (plist-get result :stderr) "Command execution failed")
-                         "")))))
+            (args-out-of-range
+             ;; Buffer corruption occurred during execution
+             (message "Buffer corruption during command execution for terminal %s" terminal-id)
+             (puthash terminal-id t claude-code-mcp-terminal-buffer-corrupted)
+             (remhash terminal-id claude-code-mcp-command-states)
+             `((success . nil)
+               (message . "Terminal buffer corrupted during command execution")
+               (terminalId . ,terminal-id)
+               (command . ,command)
+               (stdout . "")
+               (stderr . "Args out of range: Terminal buffer corrupted")
+               (exitCode . 1)
+               (timeout . ,json-false)
+               (interrupted . t)
+               (largeOutput . t)
+               (workingDirectory . ,(or project-root default-directory))
+               (error . "Args out of range: Terminal buffer corrupted")))
+            
+            (error
+             ;; Other execution errors
+             (remhash terminal-id claude-code-mcp-command-states)
+             `((success . nil)
+               (message . ,(format "Command execution error: %s" (error-message-string exec-err)))
+               (terminalId . ,terminal-id)
+               (command . ,command)
+               (stdout . "")
+               (stderr . ,(error-message-string exec-err))
+               (exitCode . 1)
+               (timeout . ,json-false)
+               (interrupted . nil)
+               (largeOutput . nil)
+               (workingDirectory . ,(or project-root default-directory))
+               (error . ,(error-message-string exec-err))))))
+      
       ;; User declined - return error indicating cancellation
       `((success . nil)
         (message . "Command execution was cancelled by user")
@@ -808,6 +958,8 @@ Shows confirmation popup before executing."
         (stderr . "KeyboardInterrupt: User cancelled command execution")
         (exitCode . 130)
         (timeout . ,json-false)
+        (interrupted . nil)
+        (largeOutput . nil)
         (workingDirectory . ,(or project-root default-directory))
         (error . "KeyboardInterrupt: User cancelled command execution")))))
 
