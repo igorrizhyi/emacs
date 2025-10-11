@@ -29,6 +29,47 @@
 (require 'my-layout)
 (require' claude-code-emacs)
 
+;; Disable automatic project switching when opening files
+(setq projectile-track-known-projects-automatically nil)
+(setq projectile-switch-project-action 'projectile-dired)
+(setq projectile-auto-discover nil)
+(setq projectile-require-project-root nil)
+
+;; Manual project control - completely disable automatic project detection
+(after! projectile
+  (remove-hook 'find-file-hook #'projectile-find-file-hook-function)
+  
+  ;; Store manually set project
+  (defvar my/manual-project-root nil "Manually set project root.")
+  
+  ;; Store the locked project root
+  (setq my/manual-project-root (when (projectile-project-p) (projectile-project-root)))
+  
+  ;; Simple override: return locked project for buffer-local queries
+  (advice-add 'projectile-project-root :around
+              (lambda (orig-fn &optional dir)
+                (if (and my/manual-project-root (not dir))
+                    my/manual-project-root
+                  (funcall orig-fn dir))))
+  
+  ;; Hook into project switching to update our locked project
+  (advice-add 'projectile-switch-project-by-name :after
+              (lambda (project-to-switch &optional arg)
+                (setq my/manual-project-root project-to-switch)
+                (message "Locked project to: %s" project-to-switch)))
+  
+  ;; Function to manually change project
+  (defun my/set-project-root (dir)
+    "Manually set the project root."
+    (interactive "DProject root: ")
+    (setq my/manual-project-root (expand-file-name dir))
+    (message "Project root set to: %s" my/manual-project-root)))
+
+;; Disable Doom's workspace switching on file open
+(after! persp-mode
+  (setq persp-auto-save-opt 0)
+  (setq persp-auto-resume-time -1))
+
 ;; Optimize general Emacs responsiveness
 (setq gc-cons-threshold (* 100 1024 1024))  ; 100MB instead of 800KB
 (setq read-process-output-max (* 1024 1024))  ; 1MB instead of 4KB
@@ -37,6 +78,8 @@
 (setq window-combination-resize nil)
 (setq even-window-sizes nil)
 (setq window-resize-pixelwise t)  ; Optional: more precise resizing
+
+(setq copilot-indent-offset-warning-disable 1)
 
 ;; Enable smart auto-save that respects Evil mode states
 (setq my-smart-autosave-delay 2)  ; Wait 3 seconds after last change before saving

@@ -167,7 +167,7 @@ resizing."
   :type 'boolean
   :group 'claude-code)
 
-(defcustom claude-code-terminal-backend 'eat
+(defcustom claude-code-terminal-backend 'vterm
   "Terminal backend to use for Claude Code.
 Choose between \\='eat (default) and \\='vterm terminal emulators."
   :type '(radio (const :tag "Eat terminal emulator" eat)
