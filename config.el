@@ -528,6 +528,8 @@
 (defun my/smart-move-left ()
   "Move to left window, or open Magit if already at leftmost window."
   (interactive)
+  ;; Always register current location in Evil jump list before moving
+  (evil-set-jump)
   (let ((current-window (selected-window))
         (left-window (windmove-find-other-window 'left)))
     (if left-window

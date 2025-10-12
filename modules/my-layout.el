@@ -200,6 +200,7 @@
 (defun my-layout-navigate-left ()
   "Navigate to the window on the left."
   (interactive)
+  (evil-set-jump)
   (let ((current-window (selected-window)))
     (condition-case nil
         (windmove-left)

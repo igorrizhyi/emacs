@@ -537,16 +537,24 @@ If NAME is provided, use it as mark name. Otherwise, auto-generate based on time
   (interactive)
   (let ((stored-project-root (my/get-project-root-from-markdown)))
     (save-excursion
+      ;; First try current line
       (beginning-of-line)
-      ;; Look for heading pattern: ### filename:line [mark-name]
-      (when (re-search-forward "^### \\(.+\\):\\([0-9]+\\) \\[\\(.+\\)\\]" (line-end-position) t)
+      (message "!!! Ready steady go...")
+      (let ((found-header (re-search-forward "^### \\(.+\\):\\([0-9]+\\) \\[\\(.+\\)\\]" (line-end-position) t)))
+        ;; If not found on current line, search backwards for nearest ### header
+        (unless found-header
+          (message "Trying to find header backwards...")
+          (beginning-of-line)
+          (setq found-header (re-search-backward "^### \\(.+\\):\\([0-9]+\\) \\[\\(.+\\)\\]" nil t)))
+
+        (when found-header
         (let* ((filename (match-string 1))
                (line-num (string-to-number (match-string 2)))
                (mark-name (match-string 3))
                ;; Look up mark in hash table to get full path
                (mark-info (gethash mark-name my/global-marks))
                (full-path (when mark-info (plist-get mark-info :file-path))))
-          
+
           (if (file-exists-p full-path)
               (progn
                 (message "DEBUG: Jumping to %s line %d" full-path line-num)
@@ -580,61 +588,25 @@ If NAME is provided, use it as mark name. Otherwise, auto-generate based on time
                           (my/refresh-markdown-buffer)
                           ;; (my/refresh-markdown-buffer)
                           ;;
-                          (with-current-buffer current-markdown-buffer
-                            (when (string-match-p "\\.md$" (buffer-name))  ; Safety check - only modify .md files
-                              (let ((inhibit-read-only t)
-                                    (current-pos (point)))
+                          ;; (with-current-buffer current-markdown-buffer
+                          ;;   (when (string-match-p "\\.md$" (buffer-name))  ; Safety check - only modify .md files
+                          ;;     (let ((inhibit-read-only t)
+                          ;;           (current-pos (point)))
 
-                                ;; Return to the same position
-                                (goto-char (point-min))
-                                (if (re-search-forward target-line nil t)
-                                    (progn
-                                      (beginning-of-line)
-                                      (recenter-top-bottom 5))
-                                  (goto-char current-pos))
-                                ;; Also force window update
-                                )))
+                          ;;       ;; Return to the same position
+                          ;;       (goto-char (point-min))
+                          ;;       (if (re-search-forward target-line nil t)
+                          ;;           (progn
+                          ;;             (beginning-of-line)
+                          ;;             (recenter-top-bottom 5))
+                          ;;         (goto-char current-pos))
+                          ;;       ;; Also force window update
+                          ;;       )))
                           (message "DEBUG: Markdown refresh complete"))))))
                 (message "Jumped to %s:%d in main-right split" filename line-num))
-            (message "File not found: %s" full-path)))))
+            (message "File not found: %s" full-path))))))
     
-    ;; If we didn't find a heading on current line, look for the previous heading
-    (unless (save-excursion
-              (beginning-of-line)
-              (re-search-forward "^### \\(.+\\):\\([0-9]+\\) \\[\\(.+\\)\\]" (line-end-position) t))
-      (save-excursion
-        (when (re-search-backward "^### \\(.+\\):\\([0-9]+\\) \\[\\(.+\\)\\]" nil t)
-          (let* ((filename (match-string 1))
-                 (line-num (string-to-number (match-string 2)))
-                 (mark-name (match-string 3))
-                 ;; Look up mark in hash table to get full path
-                 (mark-info (gethash mark-name my/global-marks))
-                 (full-path (when mark-info (plist-get mark-info :file-path))))
-            
-            (if (file-exists-p full-path)
-                (progn
-                  ;; Use layout function to show file in main center split
-                  (my-layout-show-file-main-center full-path line-num)
-                  ;; Find and update the timestamp of the corresponding mark
-                  (let ((mark-name (my/find-mark-by-file-and-line (file-name-nondirectory filename) line-num)))
-                    (when mark-name
-                      (let ((mark-info (gethash mark-name my/global-marks)))
-                        (when mark-info
-                          (plist-put mark-info :last-visited (current-time))
-                          (puthash mark-name mark-info my/global-marks)
-                          ;; Refresh the markdown file to reflect the new ordering
-                          (let ((current-markdown-buffer (current-buffer)))
-                            (my/update-marks-markdown)
-                            (with-current-buffer current-markdown-buffer
-                              (let ((inhibit-read-only t))
-                                (revert-buffer t t t))
-                              ;; Return to the same position in the markdown
-                              (goto-char (point-min))
-                              (when (re-search-forward (concat "^### " (regexp-quote filename) ":" (number-to-string line-num)) nil t)
-                                (beginning-of-line)
-                                (recenter-top-bottom 5))))))))
-                  (message "Jumped to %s:%d in main-right split" filename line-num))
-              (message "File not found: %s" full-path))))))))
+    ))
 
 (defun my/markdown-marks-refresh ()
   "Refresh the markdown file and reload it."
@@ -1155,6 +1127,15 @@ WINDOW is the window that was selected."
 
 ;; Also bind to convenient keys
 (map! :n "gm" #'my/create-mark)
+
+;; Global C-d binding for creating marks
+(global-set-key (kbd "C-d") #'my/create-mark)
+
+;; Also ensure C-d works in Evil states
+(after! evil
+  (define-key evil-insert-state-map (kbd "C-d") #'my/create-mark)
+  (define-key evil-normal-state-map (kbd "C-d") #'my/create-mark)
+  (define-key evil-visual-state-map (kbd "C-d") #'my/create-mark))
 
 (provide 'my-navigation)
 
