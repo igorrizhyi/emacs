@@ -623,10 +623,13 @@ If NAME is provided, use it as mark name. Otherwise, auto-generate based on time
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "j") #'my/markdown-marks-next-mark)
     (define-key map (kbd "k") #'my/markdown-marks-previous-mark)
-    (define-key map (kbd "s") #'my/markdown-marks-jump-to-mark)
-    (define-key map (kbd "RET") #'my/markdown-marks-jump-to-mark)
+    (define-key map (kbd "s") #'isearch-forward)  ; Execute search with "/"
     (define-key map (kbd "g") #'my/markdown-marks-refresh)
     (define-key map (kbd "q") #'quit-window)
+    ;; Arrow key navigation
+    (define-key map (kbd "<down>") #'my/markdown-marks-next-mark)
+    (define-key map (kbd "<up>") #'my/markdown-marks-previous-mark)
+    (define-key map (kbd "<right>") #'my/markdown-marks-jump-to-mark)
     map)
   "Keymap for markdown marks navigation.")
 
@@ -661,7 +664,13 @@ If NAME is provided, use it as mark name. Otherwise, auto-generate based on time
     ;; Add buffer-local hook to position cursor on line 7 when focused
     (add-hook 'window-selection-change-functions #'my/markdown-marks-focus-hook nil t)
     ;; Apply custom styling for marks markdown
-    (my/apply-marks-markdown-styling)))
+    (my/apply-marks-markdown-styling)
+    ;; Force override arrow keys for this buffer in Evil normal mode
+    (when (bound-and-true-p evil-mode)
+      (evil-local-set-key 'normal (kbd "<down>") #'my/markdown-marks-next-mark)
+      (evil-local-set-key 'normal (kbd "<up>") #'my/markdown-marks-previous-mark)
+      (evil-local-set-key 'normal (kbd "<right>") #'my/markdown-marks-jump-to-mark)
+      (evil-local-set-key 'normal "s" (lambda () (interactive) (execute-kbd-macro "/"))))))
 
 (defun my/markdown-marks-focus-hook (window)
   "Position cursor on line 7 when markdown marks buffer gets focused.
@@ -678,11 +687,13 @@ WINDOW is the window that was selected."
   (evil-define-key 'normal my/markdown-marks-mode-map
     "j" #'my/markdown-marks-next-mark
     "k" #'my/markdown-marks-previous-mark
-    "s" #'my/markdown-marks-jump-to-mark
-    "RET" #'my/markdown-marks-jump-to-mark
-    "\r" #'my/markdown-marks-jump-to-mark
+    "s" (lambda () (interactive) (execute-kbd-macro "/"))  ; Execute search with "/"
     "g" #'my/markdown-marks-refresh
-    "q" #'quit-window)
+    "q" #'quit-window
+    ;; Arrow key navigation - override global bindings
+    (kbd "<down>") #'my/markdown-marks-next-mark
+    (kbd "<up>") #'my/markdown-marks-previous-mark
+    (kbd "<right>") #'my/markdown-marks-jump-to-mark)
   
   ;; Make sure we don't override normal j/k movement in insert mode
   (evil-define-key 'insert my/markdown-marks-mode-map
@@ -714,8 +725,7 @@ WINDOW is the window that was selected."
               (recenter-top-bottom 5))
             ;; Return to original window
             (select-window current-window)
-            (message "Opened marks markdown in left sidebar (j/k: navigate, s/RET: jump, g: refresh, q: quit): %s" 
-                     (file-name-nondirectory markdown-file))))
+            ))
       (if (= (hash-table-count my/global-marks) 0)
           (message "No marks found. Create some marks first with `my/create-mark'")
         (progn
@@ -735,8 +745,7 @@ WINDOW is the window that was selected."
               (recenter-top-bottom 5))
             ;; Return to original window
             (select-window current-window)
-            (message "Created marks markdown in left sidebar (j/k: navigate, s/RET: jump, g: refresh, q: quit): %s" 
-                     (file-name-nondirectory markdown-file))))))))
+            ))))))
 
 (defvar my/marks-buffer-marks-data nil
   "Store marks data for the marks buffer navigation.")
@@ -862,31 +871,31 @@ WINDOW is the window that was selected."
              (t
               (message "Cannot preview mark: buffer/file not available")))))))))
 
-(defvar my/marks-buffer-mode-map
-  (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "s") #'my/marks-buffer-jump-to-mark)
-    (define-key map (kbd "j") #'my/marks-buffer-next-mark)
-    (define-key map (kbd "k") #'my/marks-buffer-previous-mark)
-    (define-key map (kbd "p") #'my/marks-buffer-preview-mark)
-    (define-key map (kbd "q") #'quit-window)
-    (define-key map (kbd "g") #'my/list-marks)  ; Refresh
-    map)
-  "Keymap for marks buffer navigation.")
+;; (defvar my/marks-buffer-mode-map
+;;   (let ((map (make-sparse-keymap)))
+;;     (define-key map (kbd "s") #'my/marks-buffer-jump-to-mark)
+;;     (define-key map (kbd "j") #'my/marks-buffer-next-mark)
+;;     (define-key map (kbd "k") #'my/marks-buffer-previous-mark)
+;;     (define-key map (kbd "p") #'my/marks-buffer-preview-mark)
+;;     (define-key map (kbd "q") #'quit-window)
+;;     (define-key map (kbd "g") #'my/list-marks)  ; Refresh
+;;     map)
+;;   "Keymap for marks buffer navigation.")
 
-(define-minor-mode my/marks-buffer-mode
-  "Minor mode for navigating marks buffer."
-  :lighter " Marks"
-  :keymap my/marks-buffer-mode-map)
+;; (define-minor-mode my/marks-buffer-mode
+;;   "Minor mode for navigating marks buffer."
+;;   :lighter " Marks"
+;;   :keymap my/marks-buffer-mode-map)
 
 ;; Evil mode integration for marks buffer
-(with-eval-after-load 'evil
-  (evil-define-key 'normal my/marks-buffer-mode-map
-    "s" #'my/marks-buffer-jump-to-mark
-    "j" #'my/marks-buffer-next-mark
-    "k" #'my/marks-buffer-previous-mark
-    "p" #'my/marks-buffer-preview-mark
-    "q" #'quit-window
-    "g" #'my/list-marks))
+;; (with-eval-after-load 'evil
+;;   (evil-define-key 'normal my/marks-buffer-mode-map
+;;     "s" #'my/marks-buffer-jump-to-mark
+;;     "j" #'my/marks-buffer-next-mark
+;;     "k" #'my/marks-buffer-previous-mark
+;;     "p" #'my/marks-buffer-preview-mark
+;;     "q" #'quit-window
+;;     "g" #'my/list-marks))
 
 (defun my/list-marks ()
   "List all global marks in a navigable buffer."
