@@ -27,7 +27,7 @@
 
 (defun my/is-claude-terminal-p (buffer)
   "Check if buffer is a Claude terminal buffer."
-  (when buffer
+  (when (and buffer (buffer-live-p buffer))
     (let ((name (buffer-name buffer)))
       (or (string-match-p "^\\*claude-terminal:" name)
           (and (bound-and-true-p claude-code-terminal-id)
@@ -73,7 +73,9 @@
         ;; Terminal buffer exists for this workspace, show it
         (progn
           (my-window-layout-show-with-layout 'bottom-bar terminal-buffer)
-          (my/set-terminal-window (my-window-layout--get-window 'bottom-bar)))
+          (my/set-terminal-window (my-window-layout--get-window 'bottom-bar))
+          ;; Focus the bottom bar window
+          (select-window (my-window-layout--get-window 'bottom-bar)))
       ;; Create new terminal for this workspace with unique naming
       (let* ((default-directory (or project-root default-directory))
              (buffer-name (format "*my-terminal:%s*" 
@@ -85,6 +87,7 @@
         (when (get-buffer buffer-name)
           (kill-buffer buffer-name))
         
+        ;; Create terminal buffer 
         (if (featurep 'vterm)
             (setq new-buffer (vterm buffer-name))
           (setq new-buffer (ansi-term (getenv "SHELL") buffer-name)))
@@ -92,9 +95,15 @@
         ;; Store the buffer for this workspace
         (my/set-terminal-buffer new-buffer)
         
-        ;; Show in bottom bar
+        ;; If terminal is currently displayed in main window, switch to previous buffer
+        (when (eq (current-buffer) new-buffer)
+          (switch-to-buffer (other-buffer new-buffer)))
+        
+        ;; Show in bottom bar only
         (my-window-layout-show-with-layout 'bottom-bar new-buffer)
-        (my/set-terminal-window (my-window-layout--get-window 'bottom-bar))))))
+        (my/set-terminal-window (my-window-layout--get-window 'bottom-bar))
+        ;; Focus the bottom bar window
+        (select-window (my-window-layout--get-window 'bottom-bar))))))
 
 (defun my/toggle-terminal-hide ()
   "Hide the toggle terminal using custom layout."

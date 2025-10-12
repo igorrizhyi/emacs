@@ -156,10 +156,22 @@
   (interactive)
   (if (eq (my-layout--get-state 'bottom-bar) 'visible)
       (my-layout-hide-bottom-bar)
-    (let ((terminal-buffer (get-buffer "*my-terminal*")))
-      (if terminal-buffer
-          (my-layout-show-in-bottom-bar terminal-buffer)
-        (message "No terminal buffer available")))))
+    ;; Use my-terminal's function to get the right terminal buffer for this workspace
+    (if (fboundp 'my/get-terminal-buffer)
+        (let ((terminal-buffer (my/get-terminal-buffer)))
+          (if terminal-buffer
+              (my-layout-show-in-bottom-bar terminal-buffer)
+            ;; No terminal exists, create one using my-terminal's show function
+            (if (fboundp 'my/toggle-terminal-show)
+                (my/toggle-terminal-show)
+              (message "No terminal buffer available"))))
+      ;; Fallback to looking for any my-terminal buffer
+      (let ((terminal-buffer (cl-find-if (lambda (buf)
+                                           (string-match-p "^\\*my-terminal:" (buffer-name buf)))
+                                         (buffer-list))))
+        (if terminal-buffer
+            (my-layout-show-in-bottom-bar terminal-buffer)
+          (message "No terminal buffer available"))))))
 
 (defun my-layout-toggle-left-sidebar ()
   "Toggle the left sidebar visibility."
