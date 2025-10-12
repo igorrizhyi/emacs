@@ -114,9 +114,15 @@
 (defun my/toggle-terminal ()
   "Toggle terminal visibility using custom layout, workspace-aware."
   (interactive)
-  (if (eq (my-window-layout--get-state 'bottom-bar) 'visible)
-      (my/toggle-terminal-hide)
-    (my/toggle-terminal-show)))
+  (let ((layout-state (my-window-layout--get-state 'bottom-bar))
+        (terminal-window (my/get-terminal-window)))
+    (message "DEBUG: layout-state=%s terminal-window=%s window-live=%s" 
+             layout-state terminal-window (and terminal-window (window-live-p terminal-window)))
+    (if (and (eq layout-state 'visible) 
+             terminal-window 
+             (window-live-p terminal-window))
+        (my/toggle-terminal-hide)
+      (my/toggle-terminal-show))))
 
 (defun my/terminal-kill ()
   "Kill the terminal buffer for current workspace and close window."
@@ -138,6 +144,17 @@
   (clrhash my/terminal-windows)
   (my/toggle-terminal-hide)
   (message "All terminal buffers killed"))
+
+;; Hook to track when terminal window is deleted
+(defun my/terminal-window-deletion-hook ()
+  "Hook to track when windows are deleted and update terminal state."
+  (let ((bottom-window (my/get-terminal-window)))
+    ;; If we think we have a bottom window but it's not live, clear our state
+    (when (and bottom-window (not (window-live-p bottom-window)))
+      (my/set-terminal-window nil))))
+
+;; Add the hook to track window changes
+(add-hook 'window-configuration-change-hook #'my/terminal-window-deletion-hook)
 
 ;; Key bindings
 (map! "C-j" #'my/toggle-terminal-show)
