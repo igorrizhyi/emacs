@@ -268,22 +268,22 @@ Otherwise, finds the nearest test function and runs it with class context."
     (select-window current-window)))
 
 (defun my/setup-error-window-and-show-results (output-text error-buffer test-spec project-root)
-  "Set up error window and show parsed results with clickable links."
+  "Set up error window and show parsed results with clickable links in right sidebar."
   ;; Parse errors first
   (let ((error-info (my/parse-pytest-errors output-text project-root)))
-    ;; Create second horizontal split if needed and show errors
+    ;; Show errors in right sidebar
     (my/show-errors-in-split error-buffer error-info test-spec project-root)
     ;; Close the pytest output window now that we have parsed results
     (my/close-pytest-output-window)))
 
 (defun my/show-errors-in-split (error-buffer error-info test-spec project-root)
-  "Show errors in main split with clickable links using custom layout."
+  "Show errors in right sidebar with clickable links using custom layout."
   (let ((current-window (selected-window)))
     ;; Create and populate error buffer with clickable links
     (my/populate-error-buffer-with-links error-buffer error-info test-spec project-root)
     
-    ;; Use our custom layout system to show errors in main split
-    (my-window-layout-show-with-layout 'main error-buffer)
+    ;; Use our custom layout system to show errors in right chat sidebar
+    (my-window-layout-show-with-layout 'right-chat error-buffer)
     
     ;; Return focus to the original window
     (select-window current-window)))
@@ -473,12 +473,24 @@ Otherwise, finds the nearest test function and runs it with class context."
     (setq buffer-read-only nil)))
 
 (defun my/create-error-buffer-keymap ()
-  "Create keymap for error buffer with TAB functionality."
+  "Create keymap for error buffer with TAB functionality and Enter to open file."
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "TAB") #'my/toggle-error-details)
     (define-key map (kbd "<tab>") #'my/toggle-error-details)
+    (define-key map (kbd "RET") #'my/open-error-file-at-point)
+    (define-key map (kbd "<return>") #'my/open-error-file-at-point)
     (define-key map (kbd "q") #'quit-window)
     map))
+
+(defun my/open-error-file-at-point ()
+  "Open the error file at the current line using stored text properties."
+  (interactive)
+  (let ((pos (point)))
+    (when (get-text-property pos 'collapsible-error)
+      (let ((file (get-text-property pos 'error-file))
+            (line (get-text-property pos 'error-line)))
+        (when (and file line)
+          (my/open-file-at-line file line))))))
 
 (defun my/toggle-error-details ()
   "Toggle detailed error information at point."
@@ -565,21 +577,15 @@ Otherwise, finds the nearest test function and runs it with class context."
   (my-window-layout-hide-bottom-bar))
 
 (defun my/open-file-at-line (file line)
-  "Open file at specific line in the left window (main code window)."
-  (let* ((windows (window-list))
-         ;; Find the leftmost window (should be the main code window)
-         (target-window (car (sort windows 
-                                  (lambda (w1 w2) 
-                                    (< (window-left-column w1) 
-                                       (window-left-column w2)))))))
-    
-    ;; Switch to target window and open file
-    (select-window target-window)
-    (find-file file)
-    (goto-line line)
-    
-    ;; Highlight the line briefly
-    (pulse-momentary-highlight-one-line (point))
+  "Open file at specific line in the main center window using layout system."
+  (let ((buffer (find-file-noselect file)))
+    ;; Use layout system to show the file in main center
+    (my-layout-show-in-main-center buffer)
+    ;; The layout function should handle window selection, but let's position cursor
+    (with-current-buffer buffer
+      (goto-line line)
+      ;; Highlight the line briefly
+      (pulse-momentary-highlight-one-line (point)))
     (message "Opened %s at line %d" (file-name-nondirectory file) line)))
 
 (defun my/test-detection-at-point ()
