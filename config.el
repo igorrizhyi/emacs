@@ -549,16 +549,13 @@
       "H" #'evil-jump-backward   ; Jump back (like C-o)
       "L" #'evil-jump-forward)   ; Jump forward (like C-i)
 
-;; Make Evil word movement behave like Vim - treat hyphens as word separators
+;; Make Evil word movement behave like Vim - custom word boundaries
 (with-eval-after-load 'evil
-  ;; Don't treat underscores as word separators anymore  
-  ;; (defalias #'forward-evil-word #'forward-evil-symbol)
-  ;; (setq-default evil-symbol-word-search t)
-  
-  ;; Treat hyphens as word separators (punctuation, not word constituent)
+  ;; Setup custom word boundaries: underscores = part of word, hyphens = separators
   (defun my/setup-word-boundaries ()
-    "Set up word boundaries to treat hyphens as separators."
-    (modify-syntax-entry ?- "." (syntax-table)))
+    "Set up word boundaries: underscores as word constituents, hyphens as separators."
+    (modify-syntax-entry ?_ "w" (syntax-table))  ; underscore = word constituent
+    (modify-syntax-entry ?- "." (syntax-table))) ; hyphen = punctuation (separator)
   
   ;; Apply to programming modes and text modes
   (add-hook 'prog-mode-hook #'my/setup-word-boundaries)
@@ -632,9 +629,9 @@
   ;; Also fix for Evil ex command mode (:)
   (define-key evil-ex-completion-map (kbd "C-v") #'yank))
 
-;; Enable C-v paste in vterm buffers
-(with-eval-after-load 'vterm
-  (define-key vterm-mode-map (kbd "C-c v") 'vterm-yank))
+;; Enable C-c v paste in eat buffers
+(with-eval-after-load 'eat
+  (define-key eat-mode-map (kbd "C-c v") 'eat-yank))
 
 ;; Global keybinding for claude-code-terminal-create
 (map! "C-c c" #'claude-code-terminal-create)
@@ -828,6 +825,23 @@
 
   ;; Configure claude-code to use our custom display function
   (setq claude-code-display-window-fn #'my-claude-display-right-sidebar)
+  
+  ;; Override find-file behavior when called from claude-code contexts
+  (defun my/claude-code-find-file-advice (orig-fun &rest args)
+    "Advice to show files opened by claude-code in main center split."
+    (let ((result (apply orig-fun args)))
+      ;; If we're in a claude-code context and opened a file buffer
+      (when (and result 
+                 (bufferp result)
+                 (buffer-file-name result)
+                 (or (string-match-p "claude" (buffer-name (current-buffer)))
+                     (string-match-p "claude" (format "%s" (car args)))))
+        ;; Show the file in main center split
+        (my-layout-show-in-main-center result))
+      result))
+  
+  (advice-add 'find-file :around #'my/claude-code-find-file-advice)
+  (advice-add 'find-file-noselect :around #'my/claude-code-find-file-advice)
 
   (claude-code-mode)
   ;; :bind-keymap ("C-c c" . claude-code-terminal-create)
