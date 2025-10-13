@@ -116,8 +116,6 @@
   (interactive)
   (let ((layout-state (my-window-layout--get-state 'bottom-bar))
         (terminal-window (my/get-terminal-window)))
-    (message "DEBUG: layout-state=%s terminal-window=%s window-live=%s" 
-             layout-state terminal-window (and terminal-window (window-live-p terminal-window)))
     (if (and (eq layout-state 'visible) 
              terminal-window 
              (window-live-p terminal-window))
