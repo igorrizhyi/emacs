@@ -555,10 +555,101 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
 (add-hook 'buffer-list-update-hook 'claude-code-terminal-update-last-focused)
 (add-hook 'window-configuration-change-hook 'claude-code-terminal-update-last-focused)
 
+;; Popup input for claude commands
+(defun claude-code-send-emacs-terminal-popup ()
+  "Show centered popup for claude command input with multi-line support."
+  (interactive)
+  (let* ((buffer-name "*Claude Command Input*")
+         (existing-buffer (get-buffer buffer-name)))
+    
+    ;; Kill existing buffer if it exists
+    (when existing-buffer
+      (kill-buffer existing-buffer))
+    
+    ;; Create and configure popup buffer
+    (with-current-buffer (get-buffer-create buffer-name)
+      (erase-buffer)
+      (insert "<!-- Enter Claude command (Enter to send, Shift+Enter for newlines, ESC to cancel) -->\n\n")
+      
+      ;; Set up the buffer
+      (markdown-mode)
+      (evil-insert-state)
+      (goto-char (point-max))
+      
+      ;; Local keybindings - Enter to send, Shift+Enter for newlines
+      (local-set-key (kbd "<return>") 
+                     (lambda () 
+                       (interactive)
+                       (claude-code-send-command-from-popup)))
+      (local-set-key (kbd "C-c C-c") 
+                     (lambda () 
+                       (interactive)
+                       (claude-code-send-command-from-popup)))
+      (local-set-key (kbd "S-<return>") 'newline)
+      (local-set-key (kbd "C-c C-k") 
+                     (lambda () 
+                       (interactive)
+                       (delete-frame)
+                       (message "Claude command cancelled")))
+      (local-set-key (kbd "<escape>") 
+                     (lambda () 
+                       (interactive)
+                       (delete-frame)
+                       (message "Claude command cancelled")))
+      (local-set-key (kbd "C-g") 
+                     (lambda () 
+                       (interactive)
+                       (delete-frame)
+                       (message "Claude command cancelled")))
+      
+      ;; Evil mode keybindings if available
+      (when (featurep 'evil)
+        (evil-local-set-key 'normal (kbd "q") 
+                           (lambda () 
+                             (interactive)
+                             (delete-frame))))
+      
+      ;; Show in centered popup
+      (pop-to-buffer (current-buffer)
+                     `((display-buffer-in-child-frame)
+                       (child-frame-parameters
+                        . ((width . 60)
+                           (height . 12)
+                           (left . 0.4)
+                           (top . 0.4)
+                           (tool-bar-lines . 0)
+                           (menu-bar-lines . 0)
+                           (tab-bar-lines . 0)
+                           (left-fringe . 4)
+                           (right-fringe . 4)
+                           (border-width . 1)
+                           (internal-border-width . 4)
+                           (unsplittable . t)
+                           (no-other-frame . t))))))))
+
+(defun claude-code-send-command-from-popup ()
+  "Send command from popup to claude and close popup."
+  (interactive)
+  (let ((content (buffer-string))
+        (buffer-to-kill (current-buffer)))
+    ;; Extract actual command (skip header lines)
+    (let ((lines (split-string content "\n"))
+          (command-lines '()))
+      (dolist (line lines)
+        (unless (or (string-prefix-p "#" line)
+                   (string-empty-p (string-trim line)))
+          (push line command-lines)))
+      (let ((command (string-join (reverse command-lines) "\n")))
+        (when (not (string-empty-p (string-trim command)))
+          ;; Send to claude using the same format as the original function
+          (claude-code--do-send-command (format "/emacs-terminal %s" command))
+          (delete-frame)
+          (message "Command sent to Claude"))))))
+
 ;; Configure vterm key bindings
 (with-eval-after-load 'vterm
   (define-key vterm-mode-map (kbd "C-c i") 'claude-code-send-emacs-terminal)
-  (define-key vterm-mode-map (kbd "C-c h") 'claude-code-send-emacs-terminal)
+  (define-key vterm-mode-map (kbd "C-c h") 'claude-code-send-emacs-terminal-popup)
   ;; (define-key vterm-mode-map (kbd "C-y") 'claude-code-send-emacs-terminal)
   (define-key vterm-mode-map (kbd "C-c 1") 'claude-code-send-1)
   (define-key vterm-mode-map (kbd "C-c v") 'vterm-yank)
