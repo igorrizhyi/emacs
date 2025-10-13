@@ -362,6 +362,44 @@
           (lambda (frame) 
             (my-layout--restore-window-sizes)))
 
+;; Visual focus indication for right sidebar
+(defface my-layout-focused-window-face
+  '((t (:background "#261707" :extend t)))
+  "Face for focused window indication.")
+
+(defvar my-layout-focused-window-overlay nil
+  "Overlay for focused window indication.")
+
+(defun my-layout-highlight-right-sidebar ()
+  "Add visual highlight to right sidebar when focused."
+  (when (and (my-layout--get-window 'right-chat)
+             (eq (selected-window) (my-layout--get-window 'right-chat)))
+    (let ((window (my-layout--get-window 'right-chat)))
+      (when (window-live-p window)
+        (with-selected-window window
+          (when my-layout-focused-window-overlay
+            (delete-overlay my-layout-focused-window-overlay))
+          (setq my-layout-focused-window-overlay 
+                (make-overlay (window-start) (window-end)))
+          (overlay-put my-layout-focused-window-overlay 'face 'my-layout-focused-window-face)
+          (overlay-put my-layout-focused-window-overlay 'window window))))))
+
+(defun my-layout-remove-sidebar-highlight ()
+  "Remove visual highlight from sidebar."
+  (when my-layout-focused-window-overlay
+    (delete-overlay my-layout-focused-window-overlay)
+    (setq my-layout-focused-window-overlay nil)))
+
+(defun my-layout-update-sidebar-focus ()
+  "Update sidebar focus indication."
+  (my-layout-remove-sidebar-highlight)
+  (my-layout-highlight-right-sidebar))
+
+;; Hook to update focus indication
+(add-hook 'window-selection-change-functions 
+          (lambda (frame) (my-layout-update-sidebar-focus)))
+(add-hook 'buffer-list-update-hook #'my-layout-update-sidebar-focus)
+
 (defun my-layout-reset ()
   "Reset the layout to a clean state."
   (interactive)
