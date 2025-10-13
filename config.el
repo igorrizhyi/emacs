@@ -606,7 +606,7 @@
 ;; Map SPC-o to open file (same as SPC-SPC)
 (map! :leader
       "o" #'projectile-find-file   ; Open file with SPC-o
-      "n" (lambda () (interactive) (+lookup/references (read-string "Find references for: ")))     ; Go to symbol in workspace (like VSCode) - fallback option
+      "n" (lambda () (interactive) (+lookup/definition (read-string "Find references for: ")))     ; Go to symbol in workspace (like VSCode) - fallback option
       ;; "f" #'consult-ripgrep ; Search in project with preview
       "f" #'project-find-regexp ; Search in project with preview
       "e" #'treemacs               ; Toggle treemacs with SPC-e
@@ -672,18 +672,9 @@
 (map! :map evil-normal-state-map
       "Q" #'my/smart-q)
 
-;; Force override s key in evil normal mode - nuclear option
+;; Override s key to perform search instead of substitute
 (after! evil
-  ;; Remove existing s binding first
-  (define-key evil-normal-state-map (kbd "s") nil)
-  (define-key evil-motion-state-map (kbd "s") nil)
-  ;; Then add our binding
-  (define-key evil-normal-state-map (kbd "s") #'evil-ex-search-forward)
-  (define-key evil-motion-state-map (kbd "s") #'evil-ex-search-forward))
-
-;; Also use map! after evil is loaded
-(after! evil
-  (map! :n "s" #'evil-ex-search-forward))
+  (define-key evil-normal-state-map (kbd "s") #'evil-ex-search-forward))
 
 ;; Window layout key bindings with SPC-w prefix (window management)
 (map! :leader
