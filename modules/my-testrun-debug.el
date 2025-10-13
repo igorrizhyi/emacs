@@ -577,15 +577,14 @@ Otherwise, finds the nearest test function and runs it with class context."
   (my-window-layout-hide-bottom-bar))
 
 (defun my/open-file-at-line (file line)
-  "Open file at specific line in the main center window using layout system."
+  "Open file at specific line in a split to the left of the error buffer."
   (let ((buffer (find-file-noselect file)))
-    ;; Use layout system to show the file in main center
-    (my-layout-show-in-main-center buffer)
-    ;; The layout function should handle window selection, but let's position cursor
-    (with-current-buffer buffer
-      (goto-line line)
-      ;; Highlight the line briefly
-      (pulse-momentary-highlight-one-line (point)))
+    ;; Move to the window to the left and open the file there
+    (windmove-left)
+    (switch-to-buffer buffer)
+    (goto-line line)
+    ;; Highlight the line briefly
+    (pulse-momentary-highlight-one-line (point))
     (message "Opened %s at line %d" (file-name-nondirectory file) line)))
 
 (defun my/test-detection-at-point ()
