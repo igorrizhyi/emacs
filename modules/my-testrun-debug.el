@@ -468,19 +468,72 @@ Otherwise, finds the nearest test function and runs it with class context."
     
     ;; Set up the error buffer keymap
     (use-local-map (my/create-error-buffer-keymap))
+    
+    ;; Add Evil mode bindings for normal mode
+    (when (bound-and-true-p evil-mode)
+      (evil-local-set-key 'normal (kbd "<up>") #'my/error-buffer-previous-error)
+      (evil-local-set-key 'normal (kbd "<down>") #'my/error-buffer-next-error)
+      (evil-local-set-key 'normal (kbd "<right>") #'my/open-error-file-at-point)
+      (evil-local-set-key 'normal (kbd "RET") #'my/open-error-file-at-point)
+      (evil-local-set-key 'normal (kbd "<return>") #'my/open-error-file-at-point)
+      (evil-local-set-key 'normal (kbd "TAB") #'my/toggle-error-details)
+      (evil-local-set-key 'normal (kbd "<tab>") #'my/toggle-error-details)
+      (evil-local-set-key 'normal "q" #'quit-window))
+    
     (goto-char (point-min))
     ;; Don't make it read-only so TAB functionality works
     (setq buffer-read-only nil)))
 
 (defun my/create-error-buffer-keymap ()
-  "Create keymap for error buffer with TAB functionality and Enter to open file."
+  "Create keymap for error buffer with TAB functionality, Enter to open file, and arrow navigation."
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "TAB") #'my/toggle-error-details)
     (define-key map (kbd "<tab>") #'my/toggle-error-details)
     (define-key map (kbd "RET") #'my/open-error-file-at-point)
     (define-key map (kbd "<return>") #'my/open-error-file-at-point)
+    (define-key map (kbd "<up>") #'my/error-buffer-previous-error)
+    (define-key map (kbd "<down>") #'my/error-buffer-next-error)
+    (define-key map (kbd "<right>") #'my/open-error-file-at-point)
     (define-key map (kbd "q") #'quit-window)
     map))
+
+(defun my/error-buffer-next-error ()
+  "Navigate to the next error line in the error buffer."
+  (interactive)
+  (let ((start-pos (point)))
+    ;; Move forward to find the next error line
+    (forward-line 1)
+    (while (and (not (eobp))
+                (not (get-text-property (point) 'collapsible-error)))
+      (forward-line 1))
+    ;; If we reached end of buffer, wrap to first error
+    (when (eobp)
+      (goto-char (point-min))
+      (while (and (not (eobp))
+                  (not (get-text-property (point) 'collapsible-error)))
+        (forward-line 1)))
+    ;; If no error found, go back to start
+    (unless (get-text-property (point) 'collapsible-error)
+      (goto-char start-pos))))
+
+(defun my/error-buffer-previous-error ()
+  "Navigate to the previous error line in the error buffer."
+  (interactive)
+  (let ((start-pos (point)))
+    ;; Move backward to find the previous error line
+    (forward-line -1)
+    (while (and (not (bobp))
+                (not (get-text-property (point) 'collapsible-error)))
+      (forward-line -1))
+    ;; If we reached beginning of buffer, wrap to last error
+    (when (bobp)
+      (goto-char (point-max))
+      (while (and (not (bobp))
+                  (not (get-text-property (point) 'collapsible-error)))
+        (forward-line -1)))
+    ;; If no error found, go back to start
+    (unless (get-text-property (point) 'collapsible-error)
+      (goto-char start-pos))))
 
 (defun my/open-error-file-at-point ()
   "Open the error file at the current line using stored text properties."
