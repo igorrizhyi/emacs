@@ -549,10 +549,21 @@
       "H" #'evil-jump-backward   ; Jump back (like C-o)
       "L" #'evil-jump-forward)   ; Jump forward (like C-i)
 
-;; Make Evil word movement behave like Vim - treat underscores as part of words
+;; Make Evil word movement behave like Vim - treat hyphens as word separators
 (with-eval-after-load 'evil
-  (defalias #'forward-evil-word #'forward-evil-symbol)
-  (setq-default evil-symbol-word-search t))
+  ;; Don't treat underscores as word separators anymore  
+  ;; (defalias #'forward-evil-word #'forward-evil-symbol)
+  ;; (setq-default evil-symbol-word-search t)
+  
+  ;; Treat hyphens as word separators (punctuation, not word constituent)
+  (defun my/setup-word-boundaries ()
+    "Set up word boundaries to treat hyphens as separators."
+    (modify-syntax-entry ?- "." (syntax-table)))
+  
+  ;; Apply to programming modes and text modes
+  (add-hook 'prog-mode-hook #'my/setup-word-boundaries)
+  (add-hook 'text-mode-hook #'my/setup-word-boundaries)
+  (add-hook 'conf-mode-hook #'my/setup-word-boundaries))
 
 ;; Smart Enter function with context-aware behavior
 (defun my/smart-enter ()
@@ -581,8 +592,10 @@
 
 ;; Remap go to definition from gd to ge, and Enter to smart behavior
 (map! :map evil-normal-state-map
-      "ge" #'+lookup/definition   ; Go to definition with ge instead of gd
+      "ge" #'+lookup/references   ; Go to definition with ge instead of gd
       "<return>" #'my/smart-enter  ; Smart Enter behavior
+      "<tab>" #'evilem-motion-find-char  ; Find char forward
+      "<backtab>" #'evilem-motion-find-char-backward  ; Find char backward
       "C-w" #'kill-current-buffer)  ; Kill buffer with C-w
 
 ;; Configure treemacs to open files in existing splits (most recent window)
@@ -651,7 +664,7 @@
    
    ;; In special buffers (start with *), quit window
    ((string-match-p "^\\*" (buffer-name))
-    (quit-window))
+    (delete-window))
    
    ;; Default: delete window (like :q in Vim)
    (t
