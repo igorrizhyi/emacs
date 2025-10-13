@@ -602,9 +602,40 @@
 (map! "C-c c" #'claude-code-terminal-create)
 (map! "C-c r" #'lsp-workspace-restart)
 
-;; Global keybinding for Q to close window (like :q in Vim)
+;; Smart Q function with context-aware behavior
+(defun my/smart-q ()
+  "Context-aware Q behavior: different actions based on current buffer/mode."
+  (interactive)
+  (cond
+   ;; In magit commit buffer, save and exit
+   ((and (string-match-p "COMMIT_EDITMSG" (buffer-name)))
+    (progn
+      (save-buffer)
+      (server-edit)))
+   
+   ;; In magit log buffer, quit magit
+   ((derived-mode-p 'magit-log-mode 'magit-status-mode 'magit-diff-mode)
+    (magit-mode-bury-buffer))
+   
+   ;; In help buffers, quit window
+   ((derived-mode-p 'help-mode 'helpful-mode)
+    (quit-window))
+   
+   ;; In compilation buffers, quit window
+   ((derived-mode-p 'compilation-mode)
+    (quit-window))
+   
+   ;; In special buffers (start with *), quit window
+   ((string-match-p "^\\*" (buffer-name))
+    (quit-window))
+   
+   ;; Default: delete window (like :q in Vim)
+   (t
+    (delete-window))))
+
+;; Global keybinding for smart Q
 (map! :map evil-normal-state-map
-      "Q" #'delete-window)
+      "Q" #'my/smart-q)
 
 ;; Window layout key bindings with SPC-w prefix (window management)
 (map! :leader
