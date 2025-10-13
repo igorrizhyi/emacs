@@ -608,6 +608,7 @@
   (interactive)
   (cond
    ;; In magit commit buffer, save and exit
+   ;; In magit commit buffer, save and exit
    ((and (string-match-p "COMMIT_EDITMSG" (buffer-name)))
     (progn
       (save-buffer)
