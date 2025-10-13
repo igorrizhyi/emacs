@@ -554,10 +554,35 @@
   (defalias #'forward-evil-word #'forward-evil-symbol)
   (setq-default evil-symbol-word-search t))
 
-;; Remap go to definition from gd to ge
+;; Smart Enter function with context-aware behavior
+(defun my/smart-enter ()
+  "Context-aware Enter behavior: go to definition except in special buffers."
+  (interactive)
+  (cond
+   ;; In magit buffers, use magit's default Enter behavior
+   ((derived-mode-p 'magit-mode 'magit-status-mode 'magit-log-mode 'magit-diff-mode)
+    (call-interactively (key-binding (kbd "RET"))))
+   
+   ;; In help buffers, follow links
+   ((derived-mode-p 'help-mode 'helpful-mode)
+    (call-interactively (key-binding (kbd "RET"))))
+   
+   ;; In compilation buffers, follow errors
+   ((derived-mode-p 'compilation-mode)
+    (call-interactively (key-binding (kbd "RET"))))
+   
+   ;; In org mode, use org's default behavior
+   ((derived-mode-p 'org-mode)
+    (call-interactively (key-binding (kbd "RET"))))
+   
+   ;; Default: go to definition
+   (t
+    (call-interactively #'+lookup/definition))))
+
+;; Remap go to definition from gd to ge, and Enter to smart behavior
 (map! :map evil-normal-state-map
       "ge" #'+lookup/definition   ; Go to definition with ge instead of gd
-      "<return>" #'+lookup/definition  ; Go to definition with Return key
+      "<return>" #'my/smart-enter  ; Smart Enter behavior
       "C-w" #'kill-current-buffer)  ; Kill buffer with C-w
 
 ;; Configure treemacs to open files in existing splits (most recent window)
