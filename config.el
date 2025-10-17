@@ -27,6 +27,8 @@
 (require 'my-jump-animation)
 (require 'my-spacious-padding)
 (require 'my-layout)
+(require 'my-jumps)
+(require 'my-super-jumps)
 (require' claude-code-emacs)
 
 ;; Disable automatic project switching when opening files
@@ -90,6 +92,15 @@
 
 ;; Enable jump animations with overlay integration
 (my-jump-animation-mode 1)
+
+;; Enable smart jumps with 5-line threshold (after Evil loads)
+(after! evil
+  (my-smart-jumps-mode 1))
+
+;; Enable super jumps (project-specific) with 10-line threshold
+(after! evil
+  (setq my-super-jumps-line-threshold 10)
+  (my-super-jumps-mode 1))
 
 ;; Optional: Disable built-in auto-save to avoid conflicts
 (setq auto-save-default nil)
@@ -549,6 +560,20 @@
       "H" #'evil-jump-backward   ; Jump back (like C-o)
       "L" #'evil-jump-forward)   ; Jump forward (like C-i)
 
+;; Super jumps keybindings - project-specific jumps
+(map! :map evil-normal-state-map
+      "C-o" #'my-super-jumps-backward   ; Project jump back
+      "C-i" #'my-super-jumps-forward)   ; Project jump forward
+
+;; Leader keybindings for super jumps
+(map! :leader
+      (:prefix ("j" . "jumps")
+       :desc "Jump backward" "b" #'my-super-jumps-backward
+       :desc "Jump forward" "f" #'my-super-jumps-forward
+       :desc "List jumps" "l" #'my-super-jumps-list
+       :desc "Clear jumps" "c" #'my-super-jumps-clear
+       :desc "Register jump" "r" #'my-super-jumps-register))
+
 ;; Make Evil word movement behave like Vim - custom word boundaries
 (with-eval-after-load 'evil
   ;; Setup custom word boundaries: underscores = part of word, hyphens = separators
@@ -557,10 +582,8 @@
     (modify-syntax-entry ?_ "w" (syntax-table))  ; underscore = word constituent
     (modify-syntax-entry ?- "." (syntax-table))) ; hyphen = punctuation (separator)
   
-  ;; Apply to programming modes and text modes
-  (add-hook 'prog-mode-hook #'my/setup-word-boundaries)
-  (add-hook 'text-mode-hook #'my/setup-word-boundaries)
-  (add-hook 'conf-mode-hook #'my/setup-word-boundaries))
+  ;; Apply only to Python mode
+  (add-hook 'python-mode-hook #'my/setup-word-boundaries))
 
 ;; Smart Enter function with context-aware behavior
 (defun my/smart-enter ()
