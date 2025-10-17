@@ -10,20 +10,33 @@
 (require 'my-layout)
 
 (defun my/jump-up ()
-  "Jump up 10 lines."
+  "Jump up 10 lines and postpone jump registration."
   (interactive)
-  (forward-line -10))
+  (forward-line -10)
+  (when (fboundp 'my-super-jumps-postpone-async)
+    (my-super-jumps-postpone-async "half-page-up")))
 
 (defun my/jump-down ()
-  "Jump down 10 lines."
+  "Jump down 10 lines and postpone jump registration."
   (interactive)
-  (forward-line 10))
+  (forward-line 10)
+  (when (fboundp 'my-super-jumps-postpone-async)
+    (my-super-jumps-postpone-async "half-page-down")))
 
 (defun my/next-defun ()
-  "Move to the beginning of the next function definition.
+  "Move to the beginning of the next function definition and postpone jump registration.
 Uses `beginning-of-defun' with a negative argument to move forward."
   (interactive)
-  (beginning-of-defun -1))
+  (beginning-of-defun -1)
+  (when (fboundp 'my-super-jumps-postpone-async)
+    (my-super-jumps-postpone-async "next-function")))
+
+(defun my/prev-defun ()
+  "Move to the beginning of the previous function definition and postpone jump registration."
+  (interactive)
+  (beginning-of-defun 1)
+  (when (fboundp 'my-super-jumps-postpone-async)
+    (my-super-jumps-postpone-async "prev-function")))
 
 ;; Bind arrow keys for normal and visual modes
 (map! :n "<up>" #'my/jump-up
@@ -31,7 +44,7 @@ Uses `beginning-of-defun' with a negative argument to move forward."
       :v "<up>" #'my/jump-up
       :v "<down>" #'my/jump-down
       ;; Function navigation with left/right arrows
-      :n "<left>" #'beginning-of-defun    ; Previous function
+      :n "<left>" #'my/prev-defun         ; Previous function
       :n "<right>" #'my/next-defun)       ; Next function
 
 ;; Aggressively override Ctrl-Tab from yasnippet

@@ -27,7 +27,7 @@
 (require 'my-jump-animation)
 (require 'my-spacious-padding)
 (require 'my-layout)
-(require 'my-jumps)
+;; (require 'my-jumps)
 (require 'my-super-jumps)
 (require' claude-code-emacs)
 
@@ -94,8 +94,8 @@
 (my-jump-animation-mode 1)
 
 ;; Enable smart jumps with 5-line threshold (after Evil loads)
-(after! evil
-  (my-smart-jumps-mode 1))
+;; (after! evil
+;;   (my-smart-jumps-mode 1))
 
 ;; Enable super jumps (project-specific) with 10-line threshold
 (after! evil
@@ -572,18 +572,20 @@
        :desc "Jump forward" "f" #'my-super-jumps-forward
        :desc "List jumps" "l" #'my-super-jumps-list
        :desc "Clear jumps" "c" #'my-super-jumps-clear
-       :desc "Register jump" "r" #'my-super-jumps-register))
+       :desc "Register jump" "r" #'my-super-jumps-register
+       :desc "Mark intention" "m" #'my-super-jumps-mark-intention))
 
 ;; Make Evil word movement behave like Vim - custom word boundaries
 (with-eval-after-load 'evil
   ;; Setup custom word boundaries: underscores = part of word, hyphens = separators
   (defun my/setup-word-boundaries ()
     "Set up word boundaries: underscores as word constituents, hyphens as separators."
-    (modify-syntax-entry ?_ "w" (syntax-table))  ; underscore = word constituent
-    (modify-syntax-entry ?- "." (syntax-table))) ; hyphen = punctuation (separator)
+    (modify-syntax-entry ?_ "w")  ; underscore = word constituent
+    (modify-syntax-entry ?- ".")) ; hyphen = punctuation (separator)
   
-  ;; Apply only to Python mode
-  (add-hook 'python-mode-hook #'my/setup-word-boundaries))
+  ;; Apply to both Python modes - runs for every Python buffer
+  (add-hook 'python-mode-hook #'my/setup-word-boundaries)
+  (add-hook 'python-ts-mode-hook #'my/setup-word-boundaries))
 
 ;; Smart Enter function with context-aware behavior
 (defun my/smart-enter ()

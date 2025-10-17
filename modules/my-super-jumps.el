@@ -42,6 +42,11 @@
   :type 'float
   :group 'my-super-jumps)
 
+(defcustom my-super-jumps-async-settle-delay 2.0
+  "Delay in seconds before registering async buffer jumps after they stop updating."
+  :type 'float
+  :group 'my-super-jumps)
+
 ;;; Internal variables
 
 (defvar my-super-jumps--project-rings (make-hash-table :test 'equal)
@@ -55,6 +60,15 @@
 
 (defvar my-super-jumps--last-jump-time nil
   "Time of last jump navigation.")
+
+(defvar my-super-jumps--jump-intention nil
+  "Flag indicating that we intend to perform a jump and should register current position.")
+
+(defvar my-super-jumps--async-buffers (make-hash-table :test 'equal)
+  "Hash table mapping buffer IDs to their tracking data.")
+
+(defvar my-super-jumps--async-timers (make-hash-table :test 'equal)
+  "Hash table mapping buffer IDs to their settle timers.")
 
 ;;; Core data structures
 
@@ -85,12 +99,13 @@
 
 (defun my-super-jumps--create-entry ()
   "Create a jump entry for the current position."
-  (make-my-super-jumps-entry
-   :file (buffer-file-name)
-   :position (point-marker)
-   :line (line-number-at-pos)
-   :column (current-column)
-   :timestamp (float-time)))
+  (when-let ((file (buffer-file-name)))
+    (make-my-super-jumps-entry
+     :file (expand-file-name file)  ; Use full absolute path
+     :position (point-marker)
+     :line (line-number-at-pos)
+     :column (current-column)
+     :timestamp (float-time))))
 
 (defun my-super-jumps--entry-equal-p (entry1 entry2)
   "Check if two jump entries represent the same location."
@@ -102,33 +117,35 @@
 
 (defun my-super-jumps--should-register-jump-p ()
   "Determine if current position should be registered as a jump."
-  (let* ((ring (my-super-jumps--get-project-ring))
-         (current-file (buffer-file-name))
-         (current-line (line-number-at-pos)))
-    
-    (cond
-     ;; Always register if ring is empty
-     ((ring-empty-p ring) t)
-     
-     ;; Don't register if we're in a buffer without a file
-     ((not current-file) nil)
-     
-     ;; Check against the most recent jump
-     (t
-      (let* ((last-entry (ring-ref ring 0))
-             (last-file (my-super-jumps-entry-file last-entry))
-             (last-line (my-super-jumps-entry-line last-entry)))
-        
-        (cond
-         ;; Different file - always register
-         ((not (equal current-file last-file)) t)
+  (and my-super-jumps--jump-intention  ; Only register if we intended to jump
+       (let* ((ring (my-super-jumps--get-project-ring))
+              (current-file (buffer-file-name))
+              (current-line (line-number-at-pos)))
          
-         ;; Same file - check line distance
-         ((>= (abs (- current-line last-line)) 
-              my-super-jumps-line-threshold) t)
-         
-         ;; Too close - don't register
-         (t nil)))))))
+         (cond
+          ;; Always register if ring is empty
+          ((ring-empty-p ring) t)
+          
+          ;; Don't register if we're in a buffer without a file
+          ((not current-file) nil)
+          
+          ;; Check against the most recent jump
+          (t
+           (let* ((last-entry (ring-ref ring 0))
+                  (last-file (my-super-jumps-entry-file last-entry))
+                  (last-line (my-super-jumps-entry-line last-entry))
+                  (current-file-full (expand-file-name current-file)))
+             
+             (cond
+              ;; Different file (using full paths) - always register
+              ((not (equal current-file-full last-file)) t)
+              
+              ;; Same file - check line distance
+              ((>= (abs (- current-line last-line)) 
+                   my-super-jumps-line-threshold) t)
+              
+              ;; Too close - don't register
+              (t nil))))))))
 
 ;;; Ring management
 
@@ -136,10 +153,14 @@
   "Add ENTRY to the current project's jump ring."
   (let ((ring (my-super-jumps--get-project-ring)))
     ;; Remove any existing entry for the same location
-    (dotimes (i (ring-length ring))
-      (when (my-super-jumps--entry-equal-p entry (ring-ref ring i))
-        (ring-remove ring i)
-        (return)))
+    (let ((found nil)
+          (i 0))
+      (while (and (< i (ring-length ring)) (not found))
+        (when (my-super-jumps--entry-equal-p entry (ring-ref ring i))
+          (ring-remove ring i)
+          (setq found t))
+        (unless found
+          (setq i (1+ i)))))
     
     ;; Add new entry at the front
     (ring-insert ring entry)
@@ -162,16 +183,25 @@
   "Navigate to the location specified by ENTRY."
   (when entry
     (let ((file (my-super-jumps-entry-file entry))
-          (position (my-super-jumps-entry-position entry)))
+          (position (my-super-jumps-entry-position entry))
+          (line (my-super-jumps-entry-line entry)))
       
       ;; Open file if different from current
       (unless (equal file (buffer-file-name))
         (find-file file))
       
-      ;; Go to position
-      (goto-char (if (markerp position)
-                     (marker-position position)
-                   position))
+      ;; Go to position - prefer marker, fallback to line number if position is just a line number
+      (cond
+       ((markerp position)
+        (goto-char (marker-position position)))
+       ((and (numberp position) (> position (point-max)))
+        ;; Position seems invalid (larger than buffer), use line number
+        (goto-line line))
+       ((numberp position)
+        (goto-char position))
+       (t
+        ;; Fallback to line number
+        (goto-line line)))
       
       ;; Update timestamp
       (setf (my-super-jumps-entry-timestamp entry) (float-time)))))
@@ -189,18 +219,97 @@
                             (message "Moved jump to front of ring"))
                           (setq my-super-jumps--reorder-timer nil)))))
 
+;;; Async buffer tracking
+
+(defun my-super-jumps--cancel-async-timer (buffer-id)
+  "Cancel the async timer for BUFFER-ID if it exists."
+  (when-let ((timer (gethash buffer-id my-super-jumps--async-timers)))
+    (cancel-timer timer)
+    (remhash buffer-id my-super-jumps--async-timers)))
+
+(defun my-super-jumps--schedule-async-register (buffer-id)
+  "Schedule async jump registration for BUFFER-ID after settle delay."
+  ;; Cancel any existing timer for this buffer
+  (my-super-jumps--cancel-async-timer buffer-id)
+  
+  ;; Create new timer
+  (let ((timer (run-with-timer my-super-jumps-async-settle-delay nil
+                               (lambda ()
+                                 (my-super-jumps--process-async-buffer buffer-id)))))
+    (puthash buffer-id timer my-super-jumps--async-timers)))
+
+(defun my-super-jumps--process-async-buffer (buffer-id)
+  "Process the async buffer for BUFFER-ID and register the jump."
+  (when-let ((buffer-data (gethash buffer-id my-super-jumps--async-buffers)))
+    (let ((file (plist-get buffer-data :file))
+          (line (plist-get buffer-data :line))
+          (column (plist-get buffer-data :column)))
+      
+      ;; Set intention and register the jump with explicit position
+      (setq my-super-jumps--jump-intention t)
+      (my-super-jumps-register file line column)
+      
+      ;; Cleanup
+      (remhash buffer-id my-super-jumps--async-buffers)
+      (remhash buffer-id my-super-jumps--async-timers)
+      
+      (message "Async jump registered: %s:%d (ID: %s)" 
+               (file-name-nondirectory file) line buffer-id))))
+
+(defun my-super-jumps--update-async-buffer (buffer-id file line column)
+  "Update the async buffer BUFFER-ID with current position data."
+  (puthash buffer-id 
+           (list :file file 
+                 :line line 
+                 :column column 
+                 :timestamp (float-time))
+           my-super-jumps--async-buffers)
+  
+  ;; Reschedule the timer
+  (my-super-jumps--schedule-async-register buffer-id))
+
 ;;; Public API
 
 ;;;###autoload
-(defun my-super-jumps-register ()
-  "Register current position as a jump if it meets the criteria."
+(defun my-super-jumps-mark-intention ()
+  "Mark that we intend to perform a jump, enabling jump registration."
+  (interactive)
+  (setq my-super-jumps--jump-intention t))
+
+;;;###autoload
+(defun my-super-jumps-clear-intention ()
+  "Clear jump intention flag."
+  (interactive)
+  (setq my-super-jumps--jump-intention nil))
+
+;;;###autoload
+(defun my-super-jumps-register (&optional file line column)
+  "Register position as a jump if it meets the criteria.
+If FILE, LINE, and COLUMN are provided, register that position.
+Otherwise, register current position."
   (interactive)
   (when (my-super-jumps--should-register-jump-p)
-    (let ((entry (my-super-jumps--create-entry)))
-      (my-super-jumps--add-jump entry)
-      (message "Registered jump: %s:%d"
-               (file-name-nondirectory (my-super-jumps-entry-file entry))
-               (my-super-jumps-entry-line entry)))))
+    (let ((entry (if file
+                     ;; For remote positions, calculate actual buffer position
+                     (let ((buffer (find-file-noselect file)))
+                       (with-current-buffer buffer
+                         (save-excursion
+                           (goto-line line)
+                           (when column (move-to-column column))
+                           (make-my-super-jumps-entry
+                            :file (expand-file-name file)
+                            :position (point-marker)  ; Use actual position, not line number
+                            :line line
+                            :column (or column (current-column))
+                            :timestamp (float-time)))))
+                   (my-super-jumps--create-entry))))
+      (when entry
+        (my-super-jumps--add-jump entry)
+        (message "Registered jump: %s:%d"
+                 (file-name-nondirectory (my-super-jumps-entry-file entry))
+                 (my-super-jumps-entry-line entry)))))
+  ;; Clear intention after attempting to register
+  (setq my-super-jumps--jump-intention nil))
 
 ;;;###autoload
 (defun my-super-jumps-backward ()
@@ -299,6 +408,37 @@
     (setq my-super-jumps--current-index nil)
     (message "Cleared jumps for project: %s" project-root)))
 
+;;;###autoload
+(defun my-super-jumps-postpone-async (buffer-id)
+  "Update async buffer BUFFER-ID with current position.
+This will register a jump after 2 seconds of no updates to this buffer ID.
+Perfect for rapid navigation where you want only the final position registered."
+  (interactive "sBuffer ID: ")
+  (when (buffer-file-name)
+    ;; For async operations, we always set intention since they're deliberate
+    (setq my-super-jumps--jump-intention t)
+    (my-super-jumps--update-async-buffer buffer-id 
+                                         (buffer-file-name)
+                                         (line-number-at-pos)
+                                         (current-column))))
+
+;;;###autoload
+(defun my-super-jumps-cancel-async (buffer-id)
+  "Cancel async jump registration for BUFFER-ID."
+  (interactive "sBuffer ID: ")
+  (my-super-jumps--cancel-async-timer buffer-id)
+  (remhash buffer-id my-super-jumps--async-buffers)
+  (message "Cancelled async jump for buffer ID: %s" buffer-id))
+
+;;;###autoload
+(defun my-super-jumps-list-async ()
+  "Show all pending async buffers."
+  (interactive)
+  (let ((buffers (hash-table-keys my-super-jumps--async-buffers)))
+    (if buffers
+        (message "Pending async buffers: %s" (string-join buffers ", "))
+      (message "No pending async buffers"))))
+
 ;;; Mode definition
 
 ;;;###autoload
@@ -311,37 +451,126 @@
   (if my-super-jumps-mode
       (progn
         ;; Hook into various movement commands to register jumps
+        (advice-add 'find-file :before #'my-super-jumps--before-find-file)
         (advice-add 'find-file :after #'my-super-jumps--after-find-file)
+        (advice-add 'switch-to-buffer :before #'my-super-jumps--before-switch-buffer)
         (advice-add 'switch-to-buffer :after #'my-super-jumps--after-switch-buffer)
+        (advice-add 'goto-line :before #'my-super-jumps--before-goto-line)
         (advice-add 'goto-line :after #'my-super-jumps--after-goto-line)
-        (advice-add '+lookup/definition :before #'my-super-jumps-register)
-        (advice-add '+lookup/references :before #'my-super-jumps-register)
+        (advice-add '+lookup/definition :before #'my-super-jumps--before-lookup)
+        (advice-add '+lookup/references :before #'my-super-jumps--before-lookup)
+        ;; Setup completion framework hooks
+        (my-super-jumps--setup-completion-hooks)
         (message "Super jumps mode enabled"))
     
     ;; Cleanup
+    (advice-remove 'find-file #'my-super-jumps--before-find-file)
     (advice-remove 'find-file #'my-super-jumps--after-find-file)
+    (advice-remove 'switch-to-buffer #'my-super-jumps--before-switch-buffer)
     (advice-remove 'switch-to-buffer #'my-super-jumps--after-switch-buffer)
+    (advice-remove 'goto-line #'my-super-jumps--before-goto-line)
     (advice-remove 'goto-line #'my-super-jumps--after-goto-line)
-    (advice-remove '+lookup/definition #'my-super-jumps-register)
-    (advice-remove '+lookup/references #'my-super-jumps-register)
+    (advice-remove '+lookup/definition #'my-super-jumps--before-lookup)
+    (advice-remove '+lookup/references #'my-super-jumps--before-lookup)
+    ;; Remove completion framework hooks
+    (my-super-jumps--remove-completion-hooks)
     (message "Super jumps mode disabled")))
 
-;;; Advice functions
+;;; Selection-based jump registration
+
+(defvar my-super-jumps--pre-selection-position nil
+  "Store position before starting selection process.")
+
+(defvar my-super-jumps--pre-selection-file nil
+  "Store file before starting selection process.")
+
+(defun my-super-jumps--store-pre-selection-position ()
+  "Store current position before starting a selection process."
+  (setq my-super-jumps--pre-selection-position (when (buffer-file-name) (point-marker)))
+  (setq my-super-jumps--pre-selection-file (buffer-file-name)))
+
+(defun my-super-jumps--register-on-selection ()
+  "Register jump to current position when user makes a selection."
+  (when (and my-super-jumps--pre-selection-position 
+             my-super-jumps--pre-selection-file
+             my-super-jumps-mode)
+    (let ((current-file (buffer-file-name))
+          (current-pos (point)))
+      ;; Only register if we actually moved to a different location
+      (when (or (not (equal current-file my-super-jumps--pre-selection-file))
+                (and (equal current-file my-super-jumps--pre-selection-file)
+                     (>= (abs (- (line-number-at-pos current-pos)
+                                (line-number-at-pos my-super-jumps--pre-selection-position)))
+                         my-super-jumps-line-threshold)))
+        ;; Register the CURRENT position (where we landed) as a jump
+        (setq my-super-jumps--jump-intention t)
+        (my-super-jumps-register)))
+    ;; Clear stored position
+    (setq my-super-jumps--pre-selection-position nil)
+    (setq my-super-jumps--pre-selection-file nil)))
+
+;;; Advice functions for selection detection
+
+(defun my-super-jumps--before-find-file (&rest _args)
+  "Store position before file selection starts."
+  (when my-super-jumps-mode
+    (my-super-jumps--store-pre-selection-position)))
 
 (defun my-super-jumps--after-find-file (&rest _args)
-  "Register jump after opening a file."
+  "Register jump after file selection is made."
   (when my-super-jumps-mode
-    (my-super-jumps-register)))
+    (my-super-jumps--register-on-selection)))
+
+(defun my-super-jumps--before-switch-buffer (&rest _args)
+  "Store position before buffer selection starts."
+  (when my-super-jumps-mode
+    (my-super-jumps--store-pre-selection-position)))
 
 (defun my-super-jumps--after-switch-buffer (&rest _args)
-  "Register jump after switching to a buffer with a file."
-  (when (and my-super-jumps-mode (buffer-file-name))
-    (my-super-jumps-register)))
+  "Register jump after buffer selection is made."
+  (when my-super-jumps-mode
+    (my-super-jumps--register-on-selection)))
+
+(defun my-super-jumps--before-goto-line (&rest _args)
+  "Store position before goto-line."
+  (when my-super-jumps-mode
+    (my-super-jumps--store-pre-selection-position)))
 
 (defun my-super-jumps--after-goto-line (&rest _args)
-  "Register jump after goto-line command."
+  "Register jump after goto-line."
   (when my-super-jumps-mode
-    (my-super-jumps-register)))
+    (my-super-jumps--register-on-selection)))
+
+(defun my-super-jumps--before-lookup (&rest _args)
+  "Store position before lookup commands."
+  (when my-super-jumps-mode
+    (my-super-jumps--store-pre-selection-position)))
+
+;;; Universal Enter key integration
+
+(defun my-super-jumps--minibuffer-setup ()
+  "Store position when entering minibuffer for selection."
+  (when my-super-jumps-mode
+    (with-current-buffer (window-buffer (minibuffer-selected-window))
+      (my-super-jumps--store-pre-selection-position))))
+
+(defun my-super-jumps--minibuffer-exit ()
+  "Register jump when exiting minibuffer after selection."
+  (when my-super-jumps-mode
+    ;; Small delay to ensure the selection has taken effect
+    (run-with-timer 0.1 nil #'my-super-jumps--register-on-selection)))
+
+;;; Setup completion framework hooks
+(defun my-super-jumps--setup-completion-hooks ()
+  "Set up hooks for minibuffer-based completions."
+  ;; Universal minibuffer hooks
+  (add-hook 'minibuffer-setup-hook #'my-super-jumps--minibuffer-setup)
+  (add-hook 'minibuffer-exit-hook #'my-super-jumps--minibuffer-exit))
+
+(defun my-super-jumps--remove-completion-hooks ()
+  "Remove minibuffer hooks."
+  (remove-hook 'minibuffer-setup-hook #'my-super-jumps--minibuffer-setup)
+  (remove-hook 'minibuffer-exit-hook #'my-super-jumps--minibuffer-exit))
 
 (provide 'my-super-jumps)
 ;;; my-super-jumps.el ends here
