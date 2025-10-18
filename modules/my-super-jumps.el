@@ -562,6 +562,15 @@ Perfect for rapid navigation where you want only the final position registered."
 (defvar my-super-jumps--last-command nil
   "Track the last command executed.")
 
+(defvar my-super-jumps--pre-command-position nil
+  "Position before the command.")
+
+(defvar my-super-jumps--pre-command-file nil
+  "File before the command.")
+
+(defvar my-super-jumps--pre-command-line nil
+  "Line number before the command.")
+
 (defun my-super-jumps--pre-command-hook ()
   "Track commands and save position before navigation commands."
   (when my-super-jumps-mode
@@ -575,24 +584,50 @@ Perfect for rapid navigation where you want only the final position registered."
                 (string-match-p "evil-goto-line" cmd-name)
                 (string-match-p "smart-enter" cmd-name)
                 (string-match-p "projectile" cmd-name))
-        (message "LETS GO")
+        (message "LETS GO - saving prior position")
+        ;; Save current position before command executes
+        (setq my-super-jumps--pre-command-position (point))
+        (setq my-super-jumps--pre-command-file (buffer-file-name))
+        (setq my-super-jumps--pre-command-line (line-number-at-pos))
         (setq my-super-jumps--jump-intention t)
         (my-super-jumps-register)))))
 
 (defun my-super-jumps--post-command-hook ()
-  "Register jump after certain commands complete."
+  "Register jump after certain commands complete, but only if movement is significant."
   (when (and my-super-jumps-mode 
-             my-super-jumps--last-command
-             (buffer-file-name))
+             my-super-jumps--last-command)
     (let ((cmd-name (symbol-name my-super-jumps--last-command)))
-      ;; Register jumps for navigation commands
+      ;; Check for navigation commands that might need position validation
       (when (or (string-match-p "find-file\\|switch-to-buffer\\|projectile\\|evil-goto-first-line\\|evil-goto-line" cmd-name)
                 (string-match-p "consult\\|vertico\\|ivy" cmd-name)
                 (get my-super-jumps--last-command :jump)) ; Use evil's jump property
-        (setq my-super-jumps--jump-intention t)
-        (my-super-jumps-register)
-        (message "Registered jump after command: %s" cmd-name)))
-    (setq my-super-jumps--last-command nil)))
+        
+        (let ((current-file (buffer-file-name))
+              (current-line (line-number-at-pos)))
+          
+          ;; Only register if we have a valid movement
+          (when (and current-file
+                     (or 
+                      ;; Different file - always register
+                      (not (equal current-file my-super-jumps--pre-command-file))
+                      ;; Same file but significant line difference
+                      (and (equal current-file my-super-jumps--pre-command-file)
+                           my-super-jumps--pre-command-line
+                           (>= (abs (- current-line my-super-jumps--pre-command-line))
+                               my-super-jumps-line-threshold))))
+            (setq my-super-jumps--jump-intention t)
+            (my-super-jumps-register)
+            (message "Registered jump after command: %s (moved %d lines)" 
+                     cmd-name 
+                     (if my-super-jumps--pre-command-line
+                         (abs (- current-line my-super-jumps--pre-command-line))
+                       0))))))
+    
+    ;; Clear all tracking variables
+    (setq my-super-jumps--last-command nil)
+    (setq my-super-jumps--pre-command-position nil)
+    (setq my-super-jumps--pre-command-file nil)
+    (setq my-super-jumps--pre-command-line nil)))
 
 ;; Named advice functions
 (defun my-super-jumps--on-vertico-exit (&rest _)
