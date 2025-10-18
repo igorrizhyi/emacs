@@ -509,27 +509,23 @@ Perfect for rapid navigation where you want only the final position registered."
     (setq my-super-jumps--pre-selection-position nil)
     (setq my-super-jumps--pre-selection-file nil)))
 
-;;; Advice functions for selection detection
+;;; Simplified approach - just use manual registration
 
 (defun my-super-jumps--before-find-file (&rest _args)
-  "Store position before file selection starts."
-  (when my-super-jumps-mode
-    (my-super-jumps--store-pre-selection-position)))
+  "No-op."
+  nil)
 
 (defun my-super-jumps--after-find-file (&rest _args)
-  "Register jump after file selection is made."
-  (when my-super-jumps-mode
-    (my-super-jumps--register-on-selection)))
+  "No-op."
+  nil)
 
 (defun my-super-jumps--before-switch-buffer (&rest _args)
-  "Store position before buffer selection starts."
-  (when my-super-jumps-mode
-    (my-super-jumps--store-pre-selection-position)))
+  "No-op."
+  nil)
 
 (defun my-super-jumps--after-switch-buffer (&rest _args)
-  "Register jump after buffer selection is made."
-  (when my-super-jumps-mode
-    (my-super-jumps--register-on-selection)))
+  "No-op."
+  nil)
 
 (defun my-super-jumps--before-goto-line (&rest _args)
   "Store position before goto-line."
@@ -546,31 +542,90 @@ Perfect for rapid navigation where you want only the final position registered."
   (when my-super-jumps-mode
     (my-super-jumps--store-pre-selection-position)))
 
-;;; Universal Enter key integration
+;;; Enter key detection
 
-(defun my-super-jumps--minibuffer-setup ()
-  "Store position when entering minibuffer for selection."
-  (when my-super-jumps-mode
-    (with-current-buffer (window-buffer (minibuffer-selected-window))
-      (my-super-jumps--store-pre-selection-position))))
+(defvar my-super-jumps--enter-pressed nil
+  "Flag to track if Enter was pressed in minibuffer.")
+
+(defun my-super-jumps--track-enter-advice (&rest _)
+  "Track when Enter is pressed in minibuffer."
+  (when (and (minibufferp) my-super-jumps-mode)
+    (setq my-super-jumps--enter-pressed t)))
 
 (defun my-super-jumps--minibuffer-exit ()
-  "Register jump when exiting minibuffer after selection."
-  (when my-super-jumps-mode
+  "Register jump only if Enter was pressed."
+  (when (and my-super-jumps-mode my-super-jumps--enter-pressed)
     ;; Small delay to ensure the selection has taken effect
-    (run-with-timer 0.1 nil #'my-super-jumps--register-on-selection)))
+    (run-with-timer 0.1 nil #'my-super-jumps--register-on-selection))
+  ;; Reset flag
+  (setq my-super-jumps--enter-pressed nil))
 
-;;; Setup completion framework hooks
+;;;###autoload
+(defun my-super-jumps-mark-and-register ()
+  "Manually mark intention and register current position as jump."
+  (interactive)
+  (when my-super-jumps-mode
+    (setq my-super-jumps--jump-intention t)
+    (my-super-jumps-register)))
+
+;;; Evil-style command tracking
+(defvar my-super-jumps--last-command nil
+  "Track the last command executed.")
+
+(defun my-super-jumps--pre-command-hook ()
+  "Track commands that should register jumps."
+  (when my-super-jumps-mode
+    (setq my-super-jumps--last-command this-command)))
+
+(defun my-super-jumps--post-command-hook ()
+  "Register jump after certain commands complete."
+  (when (and my-super-jumps-mode 
+             my-super-jumps--last-command
+             (buffer-file-name))
+    (let ((cmd-name (symbol-name my-super-jumps--last-command)))
+      ;; Register jumps for navigation commands
+      (when (or (string-match-p "find-file\\|switch-to-buffer\\|projectile" cmd-name)
+                (string-match-p "consult\\|vertico\\|ivy" cmd-name)
+                (get my-super-jumps--last-command :jump)) ; Use evil's jump property
+        (setq my-super-jumps--jump-intention t)
+        (my-super-jumps-register)
+        (message "Registered jump after command: %s" cmd-name)))
+    (setq my-super-jumps--last-command nil)))
+
+;; Named advice functions
+(defun my-super-jumps--on-vertico-exit (&rest _)
+  "Register jump after vertico selection."
+  (message "DEBUG: vertico-exit called!")
+  (when my-super-jumps-mode
+    (message "DEBUG: super-jumps-mode is active, registering jump")
+    (run-with-timer 0.1 nil #'my-super-jumps-mark-and-register)))
+
+(defun my-super-jumps--on-consult-read (&rest _)
+  "Register jump after consult selection."
+  (when my-super-jumps-mode
+    (run-with-timer 0.1 nil #'my-super-jumps-mark-and-register)))
+
+(defun my-super-jumps--on-ivy-done (&rest _)
+  "Register jump after ivy selection."
+  (when my-super-jumps-mode
+    (run-with-timer 0.1 nil #'my-super-jumps-mark-and-register)))
+
+(defun my-super-jumps--on-helm-exit (&rest _)
+  "Register jump after helm selection."
+  (when my-super-jumps-mode
+    (run-with-timer 0.1 nil #'my-super-jumps-mark-and-register)))
+
+;;; Evil-style command hooks setup
 (defun my-super-jumps--setup-completion-hooks ()
-  "Set up hooks for minibuffer-based completions."
-  ;; Universal minibuffer hooks
-  (add-hook 'minibuffer-setup-hook #'my-super-jumps--minibuffer-setup)
-  (add-hook 'minibuffer-exit-hook #'my-super-jumps--minibuffer-exit))
+  "Set up command hooks like Evil does."
+  (add-hook 'pre-command-hook #'my-super-jumps--pre-command-hook)
+  (add-hook 'post-command-hook #'my-super-jumps--post-command-hook)
+  (message "DEBUG: Added command hooks for jump tracking"))
 
 (defun my-super-jumps--remove-completion-hooks ()
-  "Remove minibuffer hooks."
-  (remove-hook 'minibuffer-setup-hook #'my-super-jumps--minibuffer-setup)
-  (remove-hook 'minibuffer-exit-hook #'my-super-jumps--minibuffer-exit))
+  "Remove command hooks."
+  (remove-hook 'pre-command-hook #'my-super-jumps--pre-command-hook)
+  (remove-hook 'post-command-hook #'my-super-jumps--post-command-hook))
 
 (provide 'my-super-jumps)
 ;;; my-super-jumps.el ends here
