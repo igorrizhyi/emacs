@@ -557,11 +557,13 @@ Perfect for rapid navigation where you want only the final position registered."
 (defun my-super-jumps--pre-command-hook ()
   "Track commands and save position before navigation commands."
   (when my-super-jumps-mode
+    (message (symbol-name this-command))
     (setq my-super-jumps--last-command this-command)
     ;; Save position if this is a navigation command
     (let ((cmd-name (symbol-name this-command)))
       (when (or (string-match-p "consult-buffer" cmd-name)
                 (string-match-p "find-file" cmd-name)
+                (string-match-p "smart-enter" cmd-name)
                 (string-match-p "projectile" cmd-name))
         (message "LETS GO")
         (setq my-super-jumps--jump-intention t)
