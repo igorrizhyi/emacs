@@ -59,7 +59,7 @@ Uses `beginning-of-defun' with a negative argument to move forward."
 
 ;; No manual advice needed - using command hooks approach
 
-;; Keep the original bindings - they'll now automatically register jumps
+;; Keep the original bindings - they'll automatically register jumps via command hooks
 (map! :g "C-<tab>" #'switch-to-buffer
       :n "C-<tab>" #'switch-to-buffer
       :i "C-<tab>" #'switch-to-buffer
@@ -74,7 +74,7 @@ Uses `beginning-of-defun' with a negative argument to move forward."
 
 ;; Force override with global-set-key as backup
 (with-eval-after-load 'yasnippet
-  (global-set-key (kbd "C-<tab>") #'my/smart-switch-buffer))
+  (global-set-key (kbd "C-<tab>") #'switch-to-buffer))
 
 ;; Python structural navigation with { and }
 (with-eval-after-load 'python
