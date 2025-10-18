@@ -37,12 +37,12 @@
   :type 'integer
   :group 'my-super-jumps)
 
-(defcustom my-super-jumps-reorder-delay 1.0
+(defcustom my-super-jumps-reorder-delay 0.2
   "Delay in seconds before reordering jump after navigation."
   :type 'float
   :group 'my-super-jumps)
 
-(defcustom my-super-jumps-async-settle-delay 2.0
+(defcustom my-super-jumps-async-settle-delay 1.5
   "Delay in seconds before registering async buffer jumps after they stop updating."
   :type 'float
   :group 'my-super-jumps)
@@ -239,22 +239,30 @@
     (puthash buffer-id timer my-super-jumps--async-timers)))
 
 (defun my-super-jumps--process-async-buffer (buffer-id)
-  "Process the async buffer for BUFFER-ID and register the jump."
+  "Process the async buffer for BUFFER-ID and register the jump.
+Only registers if the async buffer file matches current file."
   (when-let ((buffer-data (gethash buffer-id my-super-jumps--async-buffers)))
-    (let ((file (plist-get buffer-data :file))
+    (let ((async-file (plist-get buffer-data :file))
           (line (plist-get buffer-data :line))
-          (column (plist-get buffer-data :column)))
+          (column (plist-get buffer-data :column))
+          (current-file (buffer-file-name)))
       
-      ;; Set intention and register the jump with explicit position
-      (setq my-super-jumps--jump-intention t)
-      (my-super-jumps-register file line column)
+      ;; Only register if current file matches the async buffer file
+      (if (and current-file (string-equal async-file current-file))
+          (progn
+            ;; Set intention and register the jump with explicit position
+            (setq my-super-jumps--jump-intention t)
+            (my-super-jumps-register async-file line column)
+            (message "Async jump registered: %s:%d (ID: %s)" 
+                     (file-name-nondirectory async-file) line buffer-id))
+        (message "Skipped async jump: file mismatch (current: %s, async: %s, ID: %s)"
+                 (if current-file (file-name-nondirectory current-file) "none")
+                 (file-name-nondirectory async-file) 
+                 buffer-id))
       
-      ;; Cleanup
+      ;; Cleanup regardless of whether we registered
       (remhash buffer-id my-super-jumps--async-buffers)
-      (remhash buffer-id my-super-jumps--async-timers)
-      
-      (message "Async jump registered: %s:%d (ID: %s)" 
-               (file-name-nondirectory file) line buffer-id))))
+      (remhash buffer-id my-super-jumps--async-timers))))
 
 (defun my-super-jumps--update-async-buffer (buffer-id file line column)
   "Update the async buffer BUFFER-ID with current position data."
@@ -563,6 +571,8 @@ Perfect for rapid navigation where you want only the final position registered."
     (let ((cmd-name (symbol-name this-command)))
       (when (or (string-match-p "consult-buffer" cmd-name)
                 (string-match-p "find-file" cmd-name)
+                (string-match-p "evil-goto-first-line" cmd-name)
+                (string-match-p "evil-goto-line" cmd-name)
                 (string-match-p "smart-enter" cmd-name)
                 (string-match-p "projectile" cmd-name))
         (message "LETS GO")
@@ -576,7 +586,7 @@ Perfect for rapid navigation where you want only the final position registered."
              (buffer-file-name))
     (let ((cmd-name (symbol-name my-super-jumps--last-command)))
       ;; Register jumps for navigation commands
-      (when (or (string-match-p "find-file\\|switch-to-buffer\\|projectile" cmd-name)
+      (when (or (string-match-p "find-file\\|switch-to-buffer\\|projectile\\|evil-goto-first-line\\|evil-goto-line" cmd-name)
                 (string-match-p "consult\\|vertico\\|ivy" cmd-name)
                 (get my-super-jumps--last-command :jump)) ; Use evil's jump property
         (setq my-super-jumps--jump-intention t)
