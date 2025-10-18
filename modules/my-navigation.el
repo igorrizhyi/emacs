@@ -57,14 +57,7 @@ Uses `beginning-of-defun' with a negative argument to move forward."
   ;; Unbind from insert mode specifically
   (map! :i "C-<tab>" nil))
 
-;; Advice to register jump before buffer switching
-(defun my/register-jump-before-switch-buffer (&rest _)
-  "Register current position as jump before switching buffers."
-  (when (fboundp 'my-super-jumps-mark-and-register)
-    (my-super-jumps-mark-and-register)))
-
-;; Add advice to switch-to-buffer
-(advice-add 'switch-to-buffer :before #'my/register-jump-before-switch-buffer)
+;; No manual advice needed - using command hooks approach
 
 ;; Keep the original bindings - they'll now automatically register jumps
 (map! :g "C-<tab>" #'switch-to-buffer

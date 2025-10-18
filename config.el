@@ -628,14 +628,7 @@
   (setq treemacs-show-cursor nil
         treemacs-is-never-other-window t))
 
-;; Advice to register jump before file finding
-(defun my/register-jump-before-find-file (&rest _)
-  "Register current position as jump before finding files."
-  (when (fboundp 'my-super-jumps-mark-and-register)
-    (my-super-jumps-mark-and-register)))
-
-;; Add advice to projectile-find-file
-(advice-add 'projectile-find-file :before #'my/register-jump-before-find-file)
+;; No manual advice needed - using command hooks approach
 
 ;; Keep original bindings - they'll now automatically register jumps
 (map! :leader

@@ -450,29 +450,11 @@ Perfect for rapid navigation where you want only the final position registered."
   
   (if my-super-jumps-mode
       (progn
-        ;; Hook into various movement commands to register jumps
-        (advice-add 'find-file :before #'my-super-jumps--before-find-file)
-        (advice-add 'find-file :after #'my-super-jumps--after-find-file)
-        (advice-add 'switch-to-buffer :before #'my-super-jumps--before-switch-buffer)
-        (advice-add 'switch-to-buffer :after #'my-super-jumps--after-switch-buffer)
-        (advice-add 'goto-line :before #'my-super-jumps--before-goto-line)
-        (advice-add 'goto-line :after #'my-super-jumps--after-goto-line)
-        (advice-add '+lookup/definition :before #'my-super-jumps--before-lookup)
-        (advice-add '+lookup/references :before #'my-super-jumps--before-lookup)
-        ;; Setup completion framework hooks
+        ;; Only use command hooks (Evil-style approach)
         (my-super-jumps--setup-completion-hooks)
         (message "Super jumps mode enabled"))
     
     ;; Cleanup
-    (advice-remove 'find-file #'my-super-jumps--before-find-file)
-    (advice-remove 'find-file #'my-super-jumps--after-find-file)
-    (advice-remove 'switch-to-buffer #'my-super-jumps--before-switch-buffer)
-    (advice-remove 'switch-to-buffer #'my-super-jumps--after-switch-buffer)
-    (advice-remove 'goto-line #'my-super-jumps--before-goto-line)
-    (advice-remove 'goto-line #'my-super-jumps--after-goto-line)
-    (advice-remove '+lookup/definition #'my-super-jumps--before-lookup)
-    (advice-remove '+lookup/references #'my-super-jumps--before-lookup)
-    ;; Remove completion framework hooks
     (my-super-jumps--remove-completion-hooks)
     (message "Super jumps mode disabled")))
 
