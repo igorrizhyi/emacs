@@ -57,7 +57,16 @@ Uses `beginning-of-defun' with a negative argument to move forward."
   ;; Unbind from insert mode specifically
   (map! :i "C-<tab>" nil))
 
-;; Then bind our function globally
+;; Advice to register jump before buffer switching
+(defun my/register-jump-before-switch-buffer (&rest _)
+  "Register current position as jump before switching buffers."
+  (when (fboundp 'my-super-jumps-mark-and-register)
+    (my-super-jumps-mark-and-register)))
+
+;; Add advice to switch-to-buffer
+(advice-add 'switch-to-buffer :before #'my/register-jump-before-switch-buffer)
+
+;; Keep the original bindings - they'll now automatically register jumps
 (map! :g "C-<tab>" #'switch-to-buffer
       :n "C-<tab>" #'switch-to-buffer
       :i "C-<tab>" #'switch-to-buffer
@@ -72,7 +81,7 @@ Uses `beginning-of-defun' with a negative argument to move forward."
 
 ;; Force override with global-set-key as backup
 (with-eval-after-load 'yasnippet
-  (global-set-key (kbd "C-<tab>") #'switch-to-buffer))
+  (global-set-key (kbd "C-<tab>") #'my/smart-switch-buffer))
 
 ;; Python structural navigation with { and }
 (with-eval-after-load 'python

@@ -628,9 +628,19 @@
   (setq treemacs-show-cursor nil
         treemacs-is-never-other-window t))
 
-;; Map SPC-o to open file (same as SPC-SPC)
+;; Advice to register jump before file finding
+(defun my/register-jump-before-find-file (&rest _)
+  "Register current position as jump before finding files."
+  (when (fboundp 'my-super-jumps-mark-and-register)
+    (my-super-jumps-mark-and-register)))
+
+;; Add advice to projectile-find-file
+(advice-add 'projectile-find-file :before #'my/register-jump-before-find-file)
+
+;; Keep original bindings - they'll now automatically register jumps
 (map! :leader
-      "o" #'projectile-find-file   ; Open file with SPC-o
+      "SPC" #'projectile-find-file   ; SPC SPC
+      "o" #'projectile-find-file     ; SPC o
       "n" (lambda () (interactive) (+lookup/definition (read-string "Find references for: ")))     ; Go to symbol in workspace (like VSCode) - fallback option
       ;; "f" #'consult-ripgrep ; Search in project with preview
       "f" #'project-find-regexp ; Search in project with preview
