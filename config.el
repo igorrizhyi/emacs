@@ -892,38 +892,6 @@
 
 (spacious-padding-mode)
 
-;; Highlight cursor line with grey color in normal mode
-(defface my/normal-mode-hl-line
-  '((t (:background "#3c3c3c")))
-  "Face for highlighting the current line in Evil normal mode."
-  :group 'evil)
-
-(defun my/toggle-hl-line-on-evil-state ()
-  "Toggle hl-line-mode based on Evil state in vterm buffers only."
-  (when (eq major-mode 'vterm-mode)
-    (cond
-     ;; Enable hl-line in normal and visual modes
-     ((or (evil-normal-state-p) (evil-visual-state-p))
-      (hl-line-mode 1)
-      (setq-local hl-line-face 'my/normal-mode-hl-line))
-     ;; Disable hl-line in insert mode
-     ((evil-insert-state-p)
-      (hl-line-mode -1))
-     ;; Keep enabled for other modes (motion, operator, etc.)
-     (t
-      (hl-line-mode 1)
-      (setq-local hl-line-face 'my/normal-mode-hl-line)))))
-
-;; Hook into Evil state changes
-(add-hook 'evil-normal-state-entry-hook #'my/toggle-hl-line-on-evil-state)
-(add-hook 'evil-insert-state-entry-hook #'my/toggle-hl-line-on-evil-state)
-(add-hook 'evil-visual-state-entry-hook #'my/toggle-hl-line-on-evil-state)
-(add-hook 'evil-motion-state-entry-hook #'my/toggle-hl-line-on-evil-state)
-(add-hook 'evil-operator-state-entry-hook #'my/toggle-hl-line-on-evil-state)
-
-
-(global-set-key (kbd "C-v") 'yank)
-
 ;; Initial setup - enable for normal mode by default
 (add-hook 'evil-mode-hook
           (lambda ()

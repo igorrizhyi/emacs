@@ -154,6 +154,30 @@
 ;; Add the hook to track window changes
 (add-hook 'window-configuration-change-hook #'my/terminal-window-deletion-hook)
 
+;; Configure vterm to stay in insert mode and disable ESC switching
+(after! vterm
+  ;; Disable evil mode state switching in vterm
+  (when (featurep 'evil)
+
+    ;; Hook to ensure we stay in insert mode and disable ESC
+    (defun my/vterm-evil-setup ()
+      "Setup evil keybindings for vterm to disable ESC switching."
+      ;; Force insert state
+      (evil-insert-state)
+      ;; Disable ESC in this buffer
+      (evil-local-set-key 'insert (kbd "<escape>") #'vterm-send-escape)
+      ;; Add C-t as normal mode switcher
+      (evil-local-set-key 'insert (kbd "C-t") #'evil-normal-state)
+      (evil-local-set-key 'emacs (kbd "<escape>") #'vterm-send-escape))
+    
+    (add-hook 'vterm-mode-hook #'my/vterm-evil-setup)))
+
+;; Alternative approach using evil-collection if available
+(after! evil-collection
+  (when (and (featurep 'vterm) (featurep 'evil-collection-vterm))
+    ;; Override evil-collection vterm settings
+    (setq evil-collection-vterm-send-escape-to-vterm-p t)))
+
 ;; Key bindings
 (map! "C-j" #'my/toggle-terminal-show)
 
