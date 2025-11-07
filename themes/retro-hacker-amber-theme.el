@@ -40,7 +40,8 @@
       (amber-muted   "#8d7c6a")  ; Comments
       
       ;; UI colors
-      (border        "#ff9d00")  ; Borders, focus
+      ;; (border        "#ff9d00")  ; Borders, focus
+      (border        "#1a1006")  ; Borders, focus
       (cursor        "#ffb000")  ; Cursor
       (error         "#ff0000")  ; Errors
       (warning       "#e99f17")  ; Warnings
@@ -108,7 +109,7 @@
    `(line-number-current-line ((,class (:foreground ,fg-main :background ,bg-active :weight bold))))
    
    ;; Mode line
-   `(mode-line ((,class (:background ,bg-alt :foreground ,fg-main :box (:line-width 1 :color ,border)))))
+   `(mode-line ((,class (:background ,bg-main :foreground ,fg-main :box (:line-width 1 :color ,border)))))
    `(mode-line-inactive ((,class (:background ,bg-inactive :foreground ,fg-dim))))
    `(mode-line-buffer-id ((,class (:foreground ,amber-bright :weight bold))))
    

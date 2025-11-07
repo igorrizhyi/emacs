@@ -172,6 +172,24 @@
     
     (add-hook 'vterm-mode-hook #'my/vterm-evil-setup)))
 
+;; Configure eat terminal to stay in insert mode and disable ESC switching
+(after! eat
+  ;; Disable evil mode state switching in eat
+  (when (featurep 'evil)
+
+    ;; Hook to ensure we stay in insert mode and disable ESC
+    (defun my/eat-evil-setup ()
+      "Setup evil keybindings for eat to disable ESC switching."
+      ;; Force insert state
+      (evil-insert-state)
+      ;; Disable ESC in this buffer
+      (evil-local-set-key 'insert (kbd "<escape>") #'eat-self-input)
+      ;; Add C-t as normal mode switcher
+      (evil-local-set-key 'insert (kbd "C-t") #'evil-normal-state)
+      (evil-local-set-key 'emacs (kbd "<escape>") #'eat-self-input))
+    
+    (add-hook 'eat-mode-hook #'my/eat-evil-setup)))
+
 ;; Alternative approach using evil-collection if available
 (after! evil-collection
   (when (and (featurep 'vterm) (featurep 'evil-collection-vterm))

@@ -444,6 +444,36 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
              claude-code-terminal-access-times)
     (message "Access times: %s" times)))
 
+(defun claude-code-terminal-debug-mode-line-faces ()
+  "Debug current mode-line face properties."
+  (interactive)
+  (let ((faces '(mode-line mode-line-inactive mode-line-buffer-id 
+                 mode-line-emphasis mode-line-highlight)))
+    (with-output-to-temp-buffer "*Mode-Line Face Debug*"
+      (princ "=== Current Mode-Line Face Properties ===\n\n")
+      (dolist (face faces)
+        (princ (format "Face: %s\n" face))
+        (princ (format "  Defined: %s\n" (facep face)))
+        (when (facep face)
+          (let ((attrs (face-all-attributes face)))
+            (dolist (attr attrs)
+              (let ((key (car attr))
+                    (val (cdr attr)))
+                (unless (eq val 'unspecified)
+                  (princ (format "  %s: %s\n" key val))))))
+          ;; Also show effective face at point
+          (when (eq face 'mode-line)
+            (princ (format "  Effective at point: %s\n" 
+                          (get-text-property (point-min) 'face))))
+        (princ "\n")))
+      
+      ;; Show window properties
+      (princ "=== Window Properties ===\n")
+      (princ (format "Window divider mode: %s\n" 
+                     (if (bound-and-true-p window-divider-mode) "enabled" "disabled")))
+      (princ (format "Mode-line format: %s\n" mode-line-format))
+      (princ (format "Header-line format: %s\n" header-line-format)))))
+
 (defun claude-code-terminal-rename (new-terminal-id)
   "Rename current terminal buffer to NEW-TERMINAL-ID."
   (interactive "sNew terminal ID: ")
@@ -503,6 +533,46 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
     (propertize (format " [Terminal: %s]" claude-code-terminal-id)
                 'face 'mode-line-emphasis)))
 
+(defun claude-code-terminal-get-evil-state-background ()
+  "Get background color for current evil state."
+  (if (and (bound-and-true-p evil-mode) (bound-and-true-p evil-state))
+      (cond
+       ((eq evil-state 'normal) "#666666")
+       ((eq evil-state 'visual) "#666666")
+       ((eq evil-state 'insert) "#f5a623")
+       ((eq evil-state 'emacs) "#7ed321")
+       (t "#d0021b"))
+    "#999999"))
+
+(defun claude-code-terminal-get-evil-state-foreground ()
+  "Get foreground color for current evil state."
+  (if (and (bound-and-true-p evil-mode) (bound-and-true-p evil-state))
+      (cond
+       ((eq evil-state 'normal) "#ffffff")
+       ((eq evil-state 'visual) "#ffffff")
+       ((eq evil-state 'insert) "#000000")
+       ((eq evil-state 'emacs) "#000000")
+       (t "#ffffff"))
+    "#ffffff"))
+
+(defun claude-code-terminal-get-evil-state-name ()
+  "Get current evil state name."
+  (if (and (bound-and-true-p evil-mode) (bound-and-true-p evil-state))
+      (upcase (symbol-name evil-state))
+    "EMACS"))
+
+(defun claude-code-terminal-header-line-with-state ()
+  "Generate header line with terminal ID and current state background."
+  (let* ((terminal-id claude-code-terminal-id)
+         (state-name (claude-code-terminal-get-evil-state-name))
+         (bg-color (claude-code-terminal-get-evil-state-background))
+         (fg-color (claude-code-terminal-get-evil-state-foreground))
+         (text (format " :: %s " terminal-id))
+         (width (window-width))
+         (remaining-width (max 0 (- width (length text))))
+         (full-line (concat text (make-string remaining-width ?\s))))
+    (propertize full-line 'face `(:background ,bg-color :foreground ,fg-color :weight bold :height 1.5))))
+
 (define-minor-mode claude-code-terminal-mode
   "Minor mode for Claude Code terminal buffers."
   :lighter " CC-Term"
@@ -513,18 +583,26 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
         ;; (setq-local mode-line-format mode-line-format)
         ;; (when (eq mode-line-format nil)
         ;;   (setq-local mode-line-format (default-value 'mode-line-format)))
-        ;; Add terminal ID as centered header bar with bold font
-        (setq-local header-line-format
+        ;;
+        ;; Add terminal ID as centered header bar with bold font and state indicator
+        ;; (setq-local header-line-format
+        ;;             '(:eval (when (bound-and-true-p claude-code-terminal-id)
+        ;;                       (claude-code-terminal-header-line-with-state))))
+        ;; Add terminal ID as bottom bar (mode line) with same styling
+        (setq-local mode-line-format
                     '(:eval (when (bound-and-true-p claude-code-terminal-id)
-                              (let* ((text claude-code-terminal-id)
-                                     (width (window-width))
-                                     (padding (max 0 (/ (- width (length text)) 2))))
-                                (concat (make-string padding ?\s)
-                                        (propertize text 'face '(:weight bold)))))))
-        ;; Also set a custom face for the header line itself to ensure border wraps
-        ;; (face-remap-add-relative 'header-line
-        ;;                         '(:box (:line-width 2 :color "#666666" :style released-button)
-        ;;                           :background "#2d2d2d"))
+                              (claude-code-terminal-header-line-with-state))))
+        ;; Remove default header line and mode line background to let our custom colors show cleanly
+        ;; (face-remap-add-relative 'header-line '(:background unspecified :box nil))
+        ;; Completely override mode-line faces to remove all styling
+        (face-remap-add-relative 'mode-line '(:background nil :foreground nil :box nil :underline nil :overline nil :strike-through nil :inherit nil))
+        (face-remap-add-relative 'mode-line-inactive '(:background nil :foreground nil :box nil :underline nil :overline nil :strike-through nil :inherit nil))
+        (face-remap-add-relative 'mode-line-buffer-id '(:background nil :foreground nil :box nil :inherit nil))
+        (face-remap-add-relative 'mode-line-emphasis '(:background nil :foreground nil :box nil :inherit nil))
+        (face-remap-add-relative 'mode-line-highlight '(:background nil :foreground nil :box nil :inherit nil))
+        ;; Also disable window dividers and borders
+        (setq-local window-divider-mode nil)
+        (setq-local mode-line-format-separator nil)
         ;; Force display update
         (force-mode-line-update))
     ;; Reset mode line when mode is disabled
@@ -554,6 +632,21 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
 ;; Track last focused terminal buffer
 (add-hook 'buffer-list-update-hook 'claude-code-terminal-update-last-focused)
 (add-hook 'window-configuration-change-hook 'claude-code-terminal-update-last-focused)
+
+;; Update header line when evil state changes
+(with-eval-after-load 'evil
+  (defun claude-code-terminal-update-header-line ()
+    "Update header line in terminal buffers when state changes."
+    (when (and (bound-and-true-p claude-code-terminal-mode)
+               (bound-and-true-p claude-code-terminal-id))
+      (force-mode-line-update)))
+  
+  ;; Add hooks for evil state changes
+  (add-hook 'evil-insert-state-entry-hook 'claude-code-terminal-update-header-line)
+  (add-hook 'evil-insert-state-exit-hook 'claude-code-terminal-update-header-line)
+  (add-hook 'evil-normal-state-entry-hook 'claude-code-terminal-update-header-line)
+  (add-hook 'evil-visual-state-entry-hook 'claude-code-terminal-update-header-line)
+  (add-hook 'evil-emacs-state-entry-hook 'claude-code-terminal-update-header-line))
 
 ;; Popup input for claude commands
 (defun claude-code-send-emacs-terminal-popup ()

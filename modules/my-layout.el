@@ -426,7 +426,15 @@
 ;; Key bindings for navigation
 (map! :n "C-h" #'my-layout-navigate-left
       :n "C-l" #'my-layout-navigate-right
+      :n "s-<right>" #'my-layout-navigate-right
       :n "C-j" #'my-layout-navigate-down)
+
+;; Specific vterm keybindings using M-arrow keys that work reliably
+(after! vterm
+  (define-key vterm-mode-map (kbd "s-<left>") #'my-layout-navigate-left)
+  (define-key vterm-mode-map (kbd "s-<right>") #'my-layout-navigate-right)
+  (define-key vterm-mode-map (kbd "s-<down>") #'my-layout-navigate-down)
+  (define-key vterm-mode-map (kbd "s-<up>") #'my-layout-navigate-up))
 
 ;; Leader key bindings for layout management
 (map! :leader
