@@ -29,6 +29,7 @@
 (require 'my-layout)
 ;; (require 'my-jumps)
 (require 'my-super-jumps)
+(require 'my-search)
 (require' claude-code-emacs)
 
 ;; Disable automatic project switching when opening files
@@ -575,6 +576,13 @@
        :desc "Register jump" "r" #'my-super-jumps-register
        :desc "Mark intention" "m" #'my-super-jumps-mark-intention))
 
+;; Leader keybindings for search
+(map! :leader
+      (:prefix ("s" . "search")
+       :desc "Find class" "c" #'my-search-find-class
+       :desc "Find function" "f" #'my-search-find-function
+       :desc "Find symbol" "s" #'my-search-find-symbol))
+
 ;; Make Evil word movement behave like Vim - custom word boundaries
 (with-eval-after-load 'evil
   ;; Setup custom word boundaries: underscores = part of word, hyphens = separators
@@ -634,7 +642,7 @@
 (map! :leader
       "SPC" #'projectile-find-file   ; SPC SPC
       "o" #'projectile-find-file     ; SPC o
-      "n" (lambda () (interactive) (+lookup/definition (read-string "Find references for: ")))     ; Go to symbol in workspace (like VSCode) - fallback option
+      "n" (lambda () (interactive) (+lookup/definition (read-string "Find definition for: ")))     ; Go to symbol in workspace (like VSCode) - fallback option
       ;; "f" #'consult-ripgrep ; Search in project with preview
       "f" #'project-find-regexp ; Search in project with preview
       "e" #'treemacs               ; Toggle treemacs with SPC-e
@@ -883,3 +891,41 @@
   (:repeat-map my-claude-code-map ("M" . claude-code-cycle-mode)))
 
 (spacious-padding-mode)
+
+;; Highlight cursor line with grey color in normal mode
+(defface my/normal-mode-hl-line
+  '((t (:background "#3c3c3c")))
+  "Face for highlighting the current line in Evil normal mode."
+  :group 'evil)
+
+(defun my/toggle-hl-line-on-evil-state ()
+  "Toggle hl-line-mode based on Evil state in vterm buffers only."
+  (when (eq major-mode 'vterm-mode)
+    (cond
+     ;; Enable hl-line in normal and visual modes
+     ((or (evil-normal-state-p) (evil-visual-state-p))
+      (hl-line-mode 1)
+      (setq-local hl-line-face 'my/normal-mode-hl-line))
+     ;; Disable hl-line in insert mode
+     ((evil-insert-state-p)
+      (hl-line-mode -1))
+     ;; Keep enabled for other modes (motion, operator, etc.)
+     (t
+      (hl-line-mode 1)
+      (setq-local hl-line-face 'my/normal-mode-hl-line)))))
+
+;; Hook into Evil state changes
+(add-hook 'evil-normal-state-entry-hook #'my/toggle-hl-line-on-evil-state)
+(add-hook 'evil-insert-state-entry-hook #'my/toggle-hl-line-on-evil-state)
+(add-hook 'evil-visual-state-entry-hook #'my/toggle-hl-line-on-evil-state)
+(add-hook 'evil-motion-state-entry-hook #'my/toggle-hl-line-on-evil-state)
+(add-hook 'evil-operator-state-entry-hook #'my/toggle-hl-line-on-evil-state)
+
+
+(global-set-key (kbd "C-v") 'yank)
+
+;; Initial setup - enable for normal mode by default
+(add-hook 'evil-mode-hook
+          (lambda ()
+            (when (evil-normal-state-p)
+              (my/toggle-hl-line-on-evil-state))))

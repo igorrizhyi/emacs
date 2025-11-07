@@ -577,14 +577,21 @@ Perfect for rapid navigation where you want only the final position registered."
     (message (symbol-name this-command))
     (setq my-super-jumps--last-command this-command)
     ;; Save position if this is a navigation command
-    (let ((cmd-name (symbol-name this-command)))
+    (let ((cmd-name (symbol-name this-command))
+          (prefix-arg (or current-prefix-arg 
+                          (and (boundp 'evil-this-motion-count) evil-this-motion-count)
+                          1)))
       (when (or (string-match-p "consult-buffer" cmd-name)
                 (string-match-p "find-file" cmd-name)
                 (string-match-p "evil-goto-first-line" cmd-name)
                 (string-match-p "evil-goto-line" cmd-name)
                 (string-match-p "smart-enter" cmd-name)
-                (string-match-p "projectile" cmd-name))
-        (message "LETS GO - saving prior position")
+                (string-match-p "projectile" cmd-name)
+                ;; Evil line movements with significant digit arguments
+                (and (or (string-match-p "evil-next-line" cmd-name)
+                         (string-match-p "evil-previous-line" cmd-name))
+                     (>= prefix-arg my-super-jumps-line-threshold)))
+        (message "LETS GO - saving prior position (prefix: %s)" prefix-arg)
         ;; Save current position before command executes
         (setq my-super-jumps--pre-command-position (point))
         (setq my-super-jumps--pre-command-file (buffer-file-name))
@@ -598,7 +605,7 @@ Perfect for rapid navigation where you want only the final position registered."
              my-super-jumps--last-command)
     (let ((cmd-name (symbol-name my-super-jumps--last-command)))
       ;; Check for navigation commands that might need position validation
-      (when (or (string-match-p "find-file\\|switch-to-buffer\\|projectile\\|evil-goto-first-line\\|evil-goto-line" cmd-name)
+      (when (or (string-match-p "find-file\\|switch-to-buffer\\|projectile\\|evil-goto-first-line\\|evil-goto-line\\|evil-next-line\\|evil-previous-line" cmd-name)
                 (string-match-p "consult\\|vertico\\|ivy" cmd-name)
                 (get my-super-jumps--last-command :jump)) ; Use evil's jump property
         

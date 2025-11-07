@@ -35,11 +35,23 @@
 ;; Using customizable font family (JetBrains Mono by default)
 (setq doom-font (font-spec :family my/font-family :size my/small-font-size))
 
+(defun my/is-main-center-window-p ()
+  "Check if current window is the main center split."
+  (let ((main-window (when (fboundp 'my-layout--get-window) 
+                       (my-layout--get-window 'main-center)))
+        (current-window (selected-window)))
+    ;; If main window is registered, use it
+    (if main-window
+        (eq current-window main-window)
+      ;; Otherwise, assume current window is main center and register it
+      (progn
+        (when (fboundp 'my-layout--set-window)
+          (my-layout--set-window 'main-center current-window))
+        t))))
+
 (defun my/is-main-code-buffer-p ()
-  "Check if current buffer is a main code editing buffer."
-  (and buffer-file-name  ; Has an actual file
-       (derived-mode-p 'prog-mode 'text-mode 'conf-mode 'markdown-mode)
-       (not (string-match-p "^\\*" (buffer-name)))))  ; Not a special buffer
+  "Check if current buffer should use large font (main center window)."
+  (my/is-main-center-window-p))
 
 (defun my/apply-code-buffer-font ()
   "Apply large font to main code buffers and topsy headers."
@@ -72,6 +84,11 @@
 (add-hook 'text-mode-hook #'my/apply-code-buffer-font)
 (add-hook 'conf-mode-hook #'my/apply-code-buffer-font)
 (add-hook 'markdown-mode-hook #'my/apply-code-buffer-font)
+
+;; Apply font when switching windows or buffers
+(add-hook 'window-selection-change-functions 
+          (lambda (_frame) (my/apply-code-buffer-font)))
+(add-hook 'buffer-list-update-hook #'my/apply-code-buffer-font)
 
 ;; Apply font to topsy header when topsy-mode is enabled
 (with-eval-after-load 'topsy
