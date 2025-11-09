@@ -58,6 +58,29 @@ Updated when a terminal buffer becomes active.")
 (defvar claude-code-terminal-access-times (make-hash-table :test 'equal)
   "Hash table tracking last access time for each terminal ID.")
 
+(defvar claude-code-terminal-shell-stack (make-hash-table :test 'equal)
+  "Hash table tracking shell nesting stack for each terminal ID.
+Each value is a list of shell contexts: ((command prompt) ...), newest first.")
+
+(defvar claude-code-terminal-last-command-line (make-hash-table :test 'equal)
+  "Hash table storing the command line when Enter was pressed for each terminal.")
+
+(defvar claude-code-terminal-pending-check (make-hash-table :test 'equal)
+  "Hash table tracking pending prompt checks after Enter for each terminal.")
+
+(defvar claude-code-terminal-embedded-shells (make-hash-table :test 'equal)
+  "Hash table tracking active embedded shell commands for headline display.")
+
+(defvar claude-code-terminal-check-delay 0.8
+  "Delay in seconds before checking prompt after Enter key press.")
+
+(defvar claude-code-terminal-ignored-commands
+  '("cd" "ls" "pwd" "echo" "export" "set" "unset" "history" "clear" "exit")
+  "Commands that commonly change prompts temporarily but don't create embedded contexts.")
+
+(defvar claude-code-terminal-debug-mode nil
+  "Enable debug messages for shell nesting detection.")
+
 ;;; Terminal Buffer Management
 
 (defun claude-code-terminal-generate-id ()
@@ -276,6 +299,306 @@ Returns a plist with :success, :stdout, :stderr, :exit-code, :timeout, :working-
           (claude-code-run))
       (user-error "Not in a Claude terminal buffer"))))
 
+;;; Shell Nesting Detection
+
+(defun claude-code-terminal-extract-prompt-prefix (line)
+  "Extract prompt prefix from LINE, ignoring common prompt suffixes and commands."
+  (when line
+    (let ((trimmed (string-trim line)))
+      (cond
+       ;; Git-style prompts - extract everything before the last command (if there is one)
+       ((string-match "^\\(.*[✗✓⚡➜].*?\\)\\s-+\\([^[:space:]]+\\)\\s*$" trimmed)
+        (string-trim (match-string 1 trimmed)))
+       ;; Standard prompts ending with $ # > followed by command
+       ((string-match "^\\(.*?[$#>]+\\)\\s-+\\([^[:space:]]+\\)" trimmed)
+        (string-trim (match-string 1 trimmed)))
+       ;; If line ends with just prompt characters, return as-is
+       ((string-match "[$#>✗✓⚡➜]\\s-*$" trimmed)
+        (string-trim trimmed))
+       ;; Fallback: try to remove what looks like a command at the end
+       ((string-match "^\\(.*?\\)\\s-+[^[:space:]]+\\s*$" trimmed)
+        (string-trim (match-string 1 trimmed)))
+       ;; If nothing matches, return the whole line
+       (t (string-trim trimmed))))))
+
+(defun claude-code-terminal-extract-command (line)
+  "Extract the command (first word) from command LINE."
+  (when line
+    (let ((trimmed (string-trim line)))
+      ;; Try multiple patterns to extract command
+      (cond
+       ;; Standard prompts ending with $ # > 
+       ((string-match "^[^$#>]*[$#>]+\\s-*\\([^[:space:]]+\\)" trimmed)
+        (match-string 1 trimmed))
+       ;; Git-style prompts with symbols like ✗ ✓ etc.
+       ((string-match "^.*[✗✓⚡➜][[:space:]]+\\([^[:space:]]+\\)" trimmed)
+        (match-string 1 trimmed))
+       ;; Fallback: look for last token that looks like a prompt separator followed by command
+       ((string-match "\\s-\\([^[:space:]]+\\)\\s-+\\([^[:space:]]+\\)\\s*$" trimmed)
+        (match-string 2 trimmed))
+       ;; Last resort: take the last word if line seems like a command
+       ((string-match "\\([^[:space:]]+\\)\\s*$" trimmed)
+        (let ((last-word (match-string 1 trimmed)))
+          ;; Only return if it looks like a command (not a path or complex string)
+          (when (and last-word
+                     (not (string-match-p "/" last-word))
+                     (< (length last-word) 50))
+            last-word)))))))
+
+(defun claude-code-terminal-extract-full-command (line)
+  "Extract the full command (everything after the prompt) from command LINE."
+  (when line
+    (let ((trimmed (string-trim line)))
+      (cond
+       ;; Git-style prompts - extract everything after the prompt symbols
+       ((string-match "^.*[✗✓⚡➜][[:space:]]+\\(.*\\)$" trimmed)
+        (string-trim (match-string 1 trimmed)))
+       ;; Standard prompts ending with $ # >
+       ((string-match "^[^$#>]*[$#>]+\\s-*\\(.*\\)$" trimmed)
+        (string-trim (match-string 1 trimmed)))
+       ;; Fallback: try to extract everything after what looks like a prompt
+       ((string-match "^.*?\\s-+\\(.*\\)$" trimmed)
+        (string-trim (match-string 1 trimmed)))
+       ;; If nothing matches, return empty string
+       (t "")))))
+
+(defun claude-code-terminal-extract-prompt-only (line)
+  "Extract just the prompt part from LINE, excluding any command."
+  (when line
+    (let ((trimmed (string-trim line)))
+      (cond
+       ;; Git-style prompts - extract everything up to and including the symbol, then remove command
+       ((string-match "^\\(.*[✗✓⚡➜]\\)" trimmed)
+        (string-trim (match-string 1 trimmed)))
+       ;; Standard prompts ending with $ # > - extract up to the prompt symbol
+       ((string-match "^\\(.*[$#>]\\)" trimmed)
+        (string-trim (match-string 1 trimmed)))
+       ;; Fallback - try to find the prompt by removing what looks like a command
+       ((string-match "^\\(.*?\\)\\s-+[^[:space:]]+.*$" trimmed)
+        (string-trim (match-string 1 trimmed)))
+       ;; If nothing matches, return the whole line
+       (t trimmed)))))
+
+(defun claude-code-terminal-should-ignore-command-p (command)
+  "Return t if COMMAND should be ignored for nesting detection."
+  (or (not command)
+      (member command claude-code-terminal-ignored-commands)
+      (string-match-p "^\\s-*$" command)))
+
+(defun claude-code-terminal-get-current-line ()
+  "Get the current line content in the terminal."
+  (save-excursion
+    (end-of-line)
+    (let ((end (point)))
+      (beginning-of-line)
+      (buffer-substring-no-properties (point) end))))
+
+(defun claude-code-terminal-start-monitoring (terminal-id original-prefix)
+  "Start monitoring for prompt changes to detect when we exit the embedded shell."
+  (when claude-code-terminal-debug-mode
+    (message "[DEBUG] Starting monitoring for terminal %s, watching for return to prefix: %s" 
+             terminal-id original-prefix))
+  
+  ;; Start a timer that periodically checks if we've returned to the original prompt
+  (let ((timer (run-at-time 1.0 1.0 'claude-code-terminal-check-exit terminal-id original-prefix)))
+    (puthash terminal-id timer claude-code-terminal-pending-check)))
+
+(defun claude-code-terminal-check-exit (terminal-id original-prefix)
+  "Check if we've exited back to any known shell prompt in our stack."
+  (let* ((terminal-buffer (claude-code-terminal-get-by-id terminal-id))
+         (current-line (when terminal-buffer
+                        (with-current-buffer terminal-buffer
+                          (claude-code-terminal-get-current-line))))
+         (current-prefix (when current-line
+                          (claude-code-terminal-extract-prompt-prefix current-line)))
+         (stack (gethash terminal-id claude-code-terminal-shell-stack)))
+    
+    ;; If terminal buffer is gone, stop monitoring
+    (unless terminal-buffer
+      (when claude-code-terminal-debug-mode
+        (message "[DEBUG] Terminal %s buffer no longer exists, stopping monitoring" terminal-id))
+      (let ((timer (gethash terminal-id claude-code-terminal-pending-check)))
+        (when timer
+          (cancel-timer timer)
+          (remhash terminal-id claude-code-terminal-pending-check)))
+      (cl-return-from claude-code-terminal-check-exit nil))
+    
+    (when claude-code-terminal-debug-mode
+      (message "[DEBUG] Monitoring check for terminal %s:" terminal-id)
+      (message "[DEBUG]   Current line: %s" current-line)
+      (message "[DEBUG]   Current prefix: %s" current-prefix)
+      (message "[DEBUG]   Looking for original prefix: %s" original-prefix)
+      (message "[DEBUG]   Stack: %s" stack))
+    
+    ;; Check if we've returned to ANY known prefix in our stack (including original)
+    (when (and current-prefix stack)
+      (let ((found-context nil)
+            (context-index 0))
+        
+        ;; First check if current prefix matches any context in the stack
+        (let ((index 0))
+          (dolist (context stack)
+            (let ((context-prefix (cadr context)))
+              (when (and context-prefix 
+                         (string= current-prefix context-prefix)
+                         (not found-context)) ; Take the first match
+                (setq found-context index)))
+            (setq index (1+ index))))
+        
+        ;; Only check for original prefix if we didn't find it in the stack
+        (when (and (not found-context) original-prefix (string= current-prefix original-prefix))
+          (setq found-context 'original))
+        
+        (when found-context
+          (when claude-code-terminal-debug-mode
+            (message "[DEBUG] Detected return to context: %s" found-context))
+          
+          ;; Cancel current monitoring
+          (let ((timer (gethash terminal-id claude-code-terminal-pending-check)))
+            (when timer
+              (cancel-timer timer)
+              (remhash terminal-id claude-code-terminal-pending-check)))
+          
+          (cond
+           ;; Returned to original shell - clear everything
+           ((eq found-context 'original)
+            (remhash terminal-id claude-code-terminal-shell-stack)
+            (remhash terminal-id claude-code-terminal-embedded-shells)
+            (when claude-code-terminal-debug-mode
+              (message "[DEBUG] Cleared all embedded contexts")))
+           
+           ;; Returned to a previous context in stack - pop to that level
+           ((numberp found-context)
+            (let* ((new-stack (nthcdr (1+ found-context) stack))
+                   (current-command (if new-stack 
+                                      (caar new-stack)
+                                    nil)))
+              (if new-stack
+                  (progn
+                    (puthash terminal-id new-stack claude-code-terminal-shell-stack)
+                    (puthash terminal-id current-command claude-code-terminal-embedded-shells)
+                    (when claude-code-terminal-debug-mode
+                      (message "[DEBUG] Popped to previous context: %s" current-command))
+                    ;; Start monitoring for the next level up
+                    (claude-code-terminal-start-monitoring terminal-id (cadar new-stack)))
+                ;; Stack is empty, clear everything
+                (remhash terminal-id claude-code-terminal-shell-stack)
+                (remhash terminal-id claude-code-terminal-embedded-shells)
+                (when claude-code-terminal-debug-mode
+                  (message "[DEBUG] Cleared all embedded contexts"))))))
+          
+          ;; Update display
+          (when (and (bound-and-true-p claude-code-terminal-mode)
+                     (bound-and-true-p claude-code-terminal-id)
+                     (string= claude-code-terminal-id terminal-id))
+            (force-mode-line-update))
+          
+          (message "Context changed"))))))
+
+(defun claude-code-terminal-check-context-exit (terminal-id current-prefix)
+  "Check if we've exited from an embedded shell context."
+  (let ((stack (gethash terminal-id claude-code-terminal-shell-stack)))
+    (when stack
+      ;; Check if current prefix matches any previous context in the stack
+      (let ((found-context nil)
+            (new-stack '()))
+        
+        ;; Look through stack from newest to oldest
+        (dolist (context stack)
+          (let ((context-prefix (cadr context)))
+            (if (and context-prefix 
+                     (string= current-prefix context-prefix)
+                     (not found-context))
+                ;; Found the context we returned to
+                (setq found-context context)
+              ;; Keep contexts that are older than the one we returned to
+              (when found-context
+                (push context new-stack)))))
+        
+        (when found-context
+          ;; We've exited one or more embedded shells
+          (if new-stack
+              (progn
+                ;; Still in nested context, update stack
+                (puthash terminal-id new-stack claude-code-terminal-shell-stack)
+                (let ((current-command (caar new-stack)))
+                  (puthash terminal-id current-command claude-code-terminal-embedded-shells)))
+            ;; Returned to base context, clear everything
+            (remhash terminal-id claude-code-terminal-shell-stack)
+            (remhash terminal-id claude-code-terminal-embedded-shells))
+          
+          ;; Force header line update
+          (when (and (bound-and-true-p claude-code-terminal-mode)
+                     (bound-and-true-p claude-code-terminal-id)
+                     (string= claude-code-terminal-id terminal-id))
+            (force-mode-line-update))
+          
+          (message "Exited embedded shell context"))))))
+
+(defun claude-code-terminal-on-return-pressed ()
+  "Handle Return key press to detect context changes."
+  (when (and (bound-and-true-p claude-code-terminal-id)
+             (derived-mode-p 'vterm-mode))
+    (let* ((terminal-id claude-code-terminal-id)
+           (current-line (claude-code-terminal-get-current-line))
+           (command (claude-code-terminal-extract-command current-line))
+           (current-prefix (claude-code-terminal-extract-prompt-prefix current-line))
+           (existing-timer (gethash terminal-id claude-code-terminal-pending-check)))
+      
+      (when claude-code-terminal-debug-mode
+        (message "[DEBUG] Return pressed in terminal %s" terminal-id)
+        (message "[DEBUG]   Command line: %s" current-line)
+        (message "[DEBUG]   Extracted command: %s" command)
+        (message "[DEBUG]   Current prefix: %s" current-prefix)
+        (message "[DEBUG]   Should ignore: %s" (claude-code-terminal-should-ignore-command-p command)))
+      
+      ;; Cancel any existing timer
+      (when existing-timer
+        (cancel-timer existing-timer)
+        (when claude-code-terminal-debug-mode
+          (message "[DEBUG]   Cancelled existing timer")))
+      
+      ;; Store command info for later comparison
+      (puthash terminal-id (list current-line current-prefix command) claude-code-terminal-last-command-line)
+      
+      ;; If command is not ignored, immediately set header and start monitoring
+      (when (and command (not (claude-code-terminal-should-ignore-command-p command)))
+        (when claude-code-terminal-debug-mode
+          (message "[DEBUG] Command not ignored - setting header immediately"))
+        
+        ;; Extract full command for display (everything after the prompt)
+        (let* ((full-command (claude-code-terminal-extract-full-command current-line))
+               ;; Extract just the prompt part (remove the command from current-prefix)
+               (clean-prefix (claude-code-terminal-extract-prompt-only current-line))
+               (stack (gethash terminal-id claude-code-terminal-shell-stack '())))
+          (when claude-code-terminal-debug-mode
+            (message "[DEBUG] Full command for display: %s" full-command)
+            (message "[DEBUG] Clean prefix to monitor: %s" clean-prefix))
+          
+          ;; Set header immediately with full command
+          (push (list full-command clean-prefix) stack)
+          (puthash terminal-id stack claude-code-terminal-shell-stack)
+          (puthash terminal-id full-command claude-code-terminal-embedded-shells)
+          (force-mode-line-update)
+          
+          ;; Start monitoring for the clean prefix (without command)
+          (claude-code-terminal-start-monitoring terminal-id clean-prefix))))))
+
+(defun claude-code-terminal-reset-context (terminal-id)
+  "Reset shell nesting context for TERMINAL-ID."
+  (when claude-code-terminal-debug-mode
+    (message "[DEBUG] Resetting context for terminal %s" terminal-id))
+  
+  (remhash terminal-id claude-code-terminal-shell-stack)
+  (remhash terminal-id claude-code-terminal-embedded-shells)
+  (remhash terminal-id claude-code-terminal-last-command-line)
+  (let ((timer (gethash terminal-id claude-code-terminal-pending-check)))
+    (when timer
+      (cancel-timer timer)
+      (remhash terminal-id claude-code-terminal-pending-check)
+      (when claude-code-terminal-debug-mode
+        (message "[DEBUG] Cancelled monitoring timer")))))
+
 ;;; Cleanup
 
 (defun claude-code-terminal-cleanup-dead-buffers ()
@@ -295,7 +618,9 @@ Returns a plist with :success, :stdout, :stderr, :exit-code, :timeout, :working-
             (when (bound-and-true-p claude-code-terminal-id)
               (claude-code-terminal-unregister 
                claude-code-terminal-project-root 
-               (buffer-name)))))
+               (buffer-name))
+              ;; Clean up shell nesting context
+              (claude-code-terminal-reset-context claude-code-terminal-id))))
 
 ;;; Interactive Commands
 
@@ -512,6 +837,93 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
       
       (message "Terminal renamed from '%s' to '%s'" current-id new-terminal-id))))
 
+(defun claude-code-terminal-mark-embedded (command)
+  "Manually mark current terminal as being in an embedded shell with COMMAND."
+  (interactive "sEmbedded shell command: ")
+  (let ((terminal-id (claude-code-terminal-get-current-id)))
+    (unless terminal-id
+      (user-error "Not in a Claude terminal buffer"))
+    
+    (when (string-empty-p command)
+      (user-error "Command cannot be empty"))
+    
+    ;; Add to embedded shells tracking
+    (puthash terminal-id command claude-code-terminal-embedded-shells)
+    
+    ;; Force header line update
+    (force-mode-line-update)
+    
+    (message "Marked terminal as embedded shell: %s" command)))
+
+(defun claude-code-terminal-unmark-embedded ()
+  "Manually remove embedded shell marking from current terminal."
+  (interactive)
+  (let ((terminal-id (claude-code-terminal-get-current-id)))
+    (unless terminal-id
+      (user-error "Not in a Claude terminal buffer"))
+    
+    ;; Reset the context completely
+    (claude-code-terminal-reset-context terminal-id)
+    
+    ;; Force header line update
+    (force-mode-line-update)
+    
+    (message "Removed embedded shell marking")))
+
+(defun claude-code-terminal-show-context ()
+  "Show current shell nesting context for debugging."
+  (interactive)
+  (let* ((terminal-id (claude-code-terminal-get-current-id))
+         (stack (when terminal-id (gethash terminal-id claude-code-terminal-shell-stack)))
+         (embedded (when terminal-id (gethash terminal-id claude-code-terminal-embedded-shells))))
+    
+    (unless terminal-id
+      (user-error "Not in a Claude terminal buffer"))
+    
+    (with-output-to-temp-buffer "*Terminal Context*"
+      (princ (format "=== Terminal Context for %s ===\n\n" terminal-id))
+      
+      (princ (format "Current embedded shell: %s\n\n" 
+                     (or embedded "None")))
+      
+      (if stack
+          (progn
+            (princ "Shell stack (newest first):\n")
+            (let ((index 1))
+              (dolist (context stack)
+                (princ (format "  %d. Command: %s\n" index (car context)))
+                (princ (format "     Prompt:  %s\n" (cadr context)))
+                (setq index (1+ index)))))
+        (princ "No shell stack\n"))
+      
+      (princ "\n=== Variables ===\n")
+      (princ (format "Check delay: %s seconds\n" claude-code-terminal-check-delay))
+      (princ (format "Ignored commands: %s\n" claude-code-terminal-ignored-commands))
+      (princ (format "Debug mode: %s\n" claude-code-terminal-debug-mode)))))
+
+(defun claude-code-terminal-toggle-debug ()
+  "Toggle debug mode for shell nesting detection."
+  (interactive)
+  (setq claude-code-terminal-debug-mode (not claude-code-terminal-debug-mode))
+  (message "Terminal debug mode: %s" 
+           (if claude-code-terminal-debug-mode "ENABLED" "DISABLED")))
+
+(defun claude-code-terminal-test-regexes ()
+  "Test the prompt extraction regexes with sample lines."
+  (interactive)
+  (let ((test-lines '("user@host:~/project $ kubectl exec -it pod -- bash"
+                     "root@pod:/code# ls"
+                     ">>> print('hello')"
+                     "mysql> SELECT * FROM users;"
+                     "➜  terminal git:(master) ✗ kbash webpush-directory-responses-develop-8695574569-qdxcd"
+                     "root@webpush-directory-responses-develop-8695574569-qdxcd:/code# pwd")))
+    (with-output-to-temp-buffer "*Regex Test*"
+      (princ "=== Prompt Extraction Test ===\n\n")
+      (dolist (line test-lines)
+        (princ (format "Line: %s\n" line))
+        (princ (format "  Prefix: %s\n" (claude-code-terminal-extract-prompt-prefix line)))
+        (princ (format "  Command: %s\n\n" (claude-code-terminal-extract-command line)))))))
+
 ;;; Mode Definition
 
 (defvar claude-code-terminal-mode-map
@@ -520,6 +932,11 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
     (define-key map (kbd "C-c C-k") #'claude-code-terminal-kill)
     (define-key map (kbd "C-c C-s") #'claude-code-terminal-switch)
     (define-key map (kbd "C-c C-t") #'claude-code-terminal-cycle-prefix)
+    ;; Shell nesting commands
+    (define-key map (kbd "C-c C-m") #'claude-code-terminal-mark-embedded)
+    (define-key map (kbd "C-c C-u") #'claude-code-terminal-unmark-embedded)
+    (define-key map (kbd "C-c C-d") #'claude-code-terminal-show-context)
+    (define-key map (kbd "C-c C-g") #'claude-code-terminal-toggle-debug)
     ;; Override C-u for terminal switching (takes precedence over universal-argument)
     (define-key map (kbd "C-u") #'claude-code-terminal-switch)
     ;; Override C-f for terminal prefix cycling (only in terminal buffers)
@@ -562,12 +979,15 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
     "EMACS"))
 
 (defun claude-code-terminal-header-line-with-state ()
-  "Generate header line with terminal ID and current state background."
+  "Generate header line with terminal ID, embedded shell status, and current state background."
   (let* ((terminal-id claude-code-terminal-id)
+         (embedded-shell (gethash terminal-id claude-code-terminal-embedded-shells))
          (state-name (claude-code-terminal-get-evil-state-name))
          (bg-color (claude-code-terminal-get-evil-state-background))
          (fg-color (claude-code-terminal-get-evil-state-foreground))
-         (text (format " :: %s " terminal-id))
+         (text (if embedded-shell
+                   (format " :: %s :: %s " terminal-id embedded-shell)
+                 (format " :: %s " terminal-id)))
          (width (window-width))
          (remaining-width (max 0 (- width (length text))))
          (full-line (concat text (make-string remaining-width ?\s))))
@@ -748,7 +1168,11 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
   (define-key vterm-mode-map (kbd "C-c v") 'vterm-yank)
   (define-key vterm-mode-map (kbd "C-c k") 'my-layout-smart-claude-code)
   (define-key vterm-mode-map (kbd "C-l") 'windmove-right)
-  (define-key vterm-mode-map (kbd "C-u") 'claude-code-terminal-switch))
+  (define-key vterm-mode-map (kbd "C-u") 'claude-code-terminal-switch)
+  
+  ;; Hook into Return key for shell nesting detection
+  (advice-add 'vterm-send-return :before 'claude-code-terminal-on-return-pressed)
+  (message "[DEBUG] Added advice to vterm-send-return"))
 
 ;; Evil mode bindings for terminal switching - ensures C-u works in all evil states
 (with-eval-after-load 'evil
@@ -760,6 +1184,19 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
   (evil-define-key 'insert claude-code-terminal-mode-map (kbd "C-f") 'claude-code-terminal-cycle-prefix)
   (evil-define-key 'normal claude-code-terminal-mode-map (kbd "C-f") 'claude-code-terminal-cycle-prefix)
   (evil-define-key 'emacs claude-code-terminal-mode-map (kbd "C-f") 'claude-code-terminal-cycle-prefix)
+  
+  ;; Evil mode bindings for shell nesting commands
+  (evil-define-key 'insert claude-code-terminal-mode-map (kbd "C-c C-m") 'claude-code-terminal-mark-embedded)
+  (evil-define-key 'normal claude-code-terminal-mode-map (kbd "C-c C-m") 'claude-code-terminal-mark-embedded)
+  (evil-define-key 'emacs claude-code-terminal-mode-map (kbd "C-c C-m") 'claude-code-terminal-mark-embedded)
+  
+  (evil-define-key 'insert claude-code-terminal-mode-map (kbd "C-c C-u") 'claude-code-terminal-unmark-embedded)
+  (evil-define-key 'normal claude-code-terminal-mode-map (kbd "C-c C-u") 'claude-code-terminal-unmark-embedded)
+  (evil-define-key 'emacs claude-code-terminal-mode-map (kbd "C-c C-u") 'claude-code-terminal-unmark-embedded)
+  
+  (evil-define-key 'insert claude-code-terminal-mode-map (kbd "C-c C-d") 'claude-code-terminal-show-context)
+  (evil-define-key 'normal claude-code-terminal-mode-map (kbd "C-c C-d") 'claude-code-terminal-show-context)
+  (evil-define-key 'emacs claude-code-terminal-mode-map (kbd "C-c C-d") 'claude-code-terminal-show-context)
   
   ;; Global evil bindings - override C-u everywhere to do terminal switching
   (evil-global-set-key 'normal (kbd "C-u") 'claude-code-terminal-switch)
