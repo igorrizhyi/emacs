@@ -364,7 +364,8 @@
 
 ;; Visual focus indication for right sidebar
 (defface my-layout-focused-window-face
-  '((t (:background "#261707" :extend t)))
+  '((t (:background "#361707" :extend t)))
+  ;; '((t (:background "#261707" :extend t)))
   "Face for focused window indication.")
 
 (defvar my-layout-focused-window-overlay nil
@@ -381,7 +382,7 @@
             (delete-overlay my-layout-focused-window-overlay))
           (setq my-layout-focused-window-overlay 
                 (make-overlay (window-start) (window-end)))
-          (overlay-put my-layout-focused-window-overlay 'face 'my-layout-focused-window-face)
+          ;; (overlay-put my-layout-focused-window-overlay 'face 'my-layout-focused-window-face)
           (overlay-put my-layout-focused-window-overlay 'window window))))))
 
 (defun my-layout-remove-sidebar-highlight ()

@@ -1192,6 +1192,83 @@ Returns the selected Claude buffer or nil."
     nil))
 
 
+;;;; Custom Modeline for Focus Detection
+
+(defvar claude-code--focused-window nil
+  "The currently focused window for tracking focus changes.")
+
+(defun claude-code--update-focused-window ()
+  "Update the focused window variable."
+  (setq claude-code--focused-window (selected-window)))
+
+(defun claude-code--is-window-focused-p (window)
+  "Check if WINDOW is the focused window."
+  (eq window claude-code--focused-window))
+
+(defun claude-code--custom-modeline ()
+  "Generate custom modeline with bright colors when focused."
+  (let* ((current-window (selected-window))
+         (is-focused (claude-code--is-window-focused-p current-window))
+         (bg-color (if is-focused "#ff6600" "#1a1006"))
+         (fg-color "#ffffff")
+         (text " ")
+         (width (window-width current-window))
+         (remaining-width (max 0 (- width (length text))))
+         (full-line (concat text (make-string remaining-width ?\s))))
+    (propertize full-line
+                'face `(:background ,bg-color :foreground ,fg-color :weight bold :height 1.2))))
+
+(defun claude-code--setup-custom-modeline (buffer)
+  "Set up custom modeline for Claude BUFFER."
+  (with-current-buffer buffer
+    ;; Set custom modeline format
+    (setq-local mode-line-format '(:eval (claude-code--custom-modeline)))
+    
+    ;; Override modeline faces to remove default styling
+    (face-remap-add-relative 'mode-line 
+                             '(:background nil :foreground nil :box nil 
+                               :underline nil :overline nil :strike-through nil :inherit nil))
+    (face-remap-add-relative 'mode-line-inactive 
+                             '(:background nil :foreground nil :box nil 
+                               :underline nil :overline nil :strike-through nil :inherit nil))
+    
+    ;; Force initial update
+    (force-mode-line-update)))
+
+;; Initialize focused window tracking
+(claude-code--update-focused-window)
+
+;; Hook to update focused window and modeline when window selection changes
+(add-hook 'window-selection-change-functions
+          (lambda (frame)
+            (claude-code--update-focused-window)
+            (dolist (window (window-list frame))
+              (with-current-buffer (window-buffer window)
+                (when (claude-code--buffer-p (current-buffer))
+                  (force-mode-line-update))))))
+
+;; Additional hooks to catch all focus changes
+(add-hook 'window-state-change-hook
+          (lambda ()
+            (claude-code--update-focused-window)
+            (dolist (window (window-list))
+              (with-current-buffer (window-buffer window)
+                (when (claude-code--buffer-p (current-buffer))
+                  (force-mode-line-update))))))
+
+(add-hook 'buffer-list-update-hook
+          (lambda ()
+            (claude-code--update-focused-window)
+            (when (claude-code--buffer-p (current-buffer))
+              (force-mode-line-update))))
+
+;; Force update when switching windows
+(advice-add 'select-window :after
+            (lambda (&rest _)
+              (claude-code--update-focused-window)
+              (when (claude-code--buffer-p (current-buffer))
+                (force-mode-line-update))))
+
 (defun claude-code-display-buffer-below (buffer)
   "Displays the claude code BUFFER below the currently selected one."
   (display-buffer buffer '((display-buffer-below-selected))))
@@ -1277,6 +1354,9 @@ With double prefix ARG (\\[universal-argument] \\[universal-argument]), prompt f
 
       ;; set buffer face
       (buffer-face-set :inherit 'claude-code-repl-face)
+
+      ;; Setup custom modeline with right window focus detection
+      (claude-code--setup-custom-modeline buffer)
 
       ;; disable scroll bar, fringes
       (setq-local vertical-scroll-bar nil)

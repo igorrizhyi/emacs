@@ -983,15 +983,32 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
   (let* ((terminal-id claude-code-terminal-id)
          (embedded-shell (gethash terminal-id claude-code-terminal-embedded-shells))
          (state-name (claude-code-terminal-get-evil-state-name))
-         (bg-color (claude-code-terminal-get-evil-state-background))
-         (fg-color (claude-code-terminal-get-evil-state-foreground))
+         ;; Check if this window is focused in the right chat layout position
+         (is-focused-right (claude-code-terminal-is-in-focused-right-window))
+         (bg-color (if is-focused-right
+                       "#ff0000"  ; BRIGHT RED for testing - very obvious
+                     (claude-code-terminal-get-evil-state-background)))
+         (fg-color (if is-focused-right
+                       "#ffffff"  ; White text for focused right window
+                     (claude-code-terminal-get-evil-state-foreground)))
+         ;; Add very obvious text when focused
+         (focus-indicator (if is-focused-right " ★★★ FOCUSED RIGHT WINDOW ★★★ " ""))
          (text (if embedded-shell
-                   (format " :: %s :: %s " terminal-id embedded-shell)
-                 (format " :: %s " terminal-id)))
+                   (format " :: %s :: %s %s" terminal-id embedded-shell focus-indicator)
+                 (format " :: %s %s" terminal-id focus-indicator)))
          (width (window-width))
          (remaining-width (max 0 (- width (length text))))
          (full-line (concat text (make-string remaining-width ?\s))))
     (propertize full-line 'face `(:background ,bg-color :foreground ,fg-color :weight bold :height 1.5))))
+
+(defun claude-code-terminal-is-in-focused-right-window ()
+  "Check if current Claude terminal window is the focused right window in my-layout system."
+  (let ((terminal-id (bound-and-true-p claude-code-terminal-id))
+        (focus-flag (bound-and-true-p my-layout--is-focused-right-window))
+        (buffer-name (buffer-name)))
+    (message "DEBUG focus check: buffer=%s terminal-id=%s focus-flag=%s" buffer-name terminal-id focus-flag)
+    ;; Just check the basic focus flag for now - remove complex window checking
+    (and terminal-id focus-flag)))
 
 (define-minor-mode claude-code-terminal-mode
   "Minor mode for Claude Code terminal buffers."
@@ -1052,6 +1069,14 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
 ;; Track last focused terminal buffer
 (add-hook 'buffer-list-update-hook 'claude-code-terminal-update-last-focused)
 (add-hook 'window-configuration-change-hook 'claude-code-terminal-update-last-focused)
+
+;; Force modeline update when window selection changes
+(add-hook 'window-selection-change-functions
+          (lambda (frame)
+            (dolist (window (window-list frame))
+              (with-current-buffer (window-buffer window)
+                (when (bound-and-true-p claude-code-terminal-mode)
+                  (force-mode-line-update))))))
 
 ;; Update header line when evil state changes
 (with-eval-after-load 'evil
