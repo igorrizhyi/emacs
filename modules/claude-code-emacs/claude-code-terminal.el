@@ -1006,7 +1006,6 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
   (let ((terminal-id (bound-and-true-p claude-code-terminal-id))
         (focus-flag (bound-and-true-p my-layout--is-focused-right-window))
         (buffer-name (buffer-name)))
-    (message "DEBUG focus check: buffer=%s terminal-id=%s focus-flag=%s" buffer-name terminal-id focus-flag)
     ;; Just check the basic focus flag for now - remove complex window checking
     (and terminal-id focus-flag)))
 
@@ -1204,6 +1203,9 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
   (evil-define-key 'insert claude-code-terminal-mode-map (kbd "C-u") 'claude-code-terminal-switch)
   (evil-define-key 'normal claude-code-terminal-mode-map (kbd "C-u") 'claude-code-terminal-switch)
   (evil-define-key 'emacs claude-code-terminal-mode-map (kbd "C-u") 'claude-code-terminal-switch)
+  (evil-define-key 'emacs claude-code-terminal-mode-map (kbd "s-k") 'my-layout-smart-claude-code)
+  (evil-define-key 'insert claude-code-terminal-mode-map (kbd "s-k") 'my-layout-smart-claude-code)
+  (evil-define-key 'normal claude-code-terminal-mode-map (kbd "s-k") 'my-layout-smart-claude-code)
   
   ;; Evil mode bindings for terminal prefix cycling - only in terminal buffers
   (evil-define-key 'insert claude-code-terminal-mode-map (kbd "C-f") 'claude-code-terminal-cycle-prefix)

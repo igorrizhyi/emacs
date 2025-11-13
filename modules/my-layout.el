@@ -2,9 +2,9 @@
 
 ;;; Commentary:
 ;; Window layout management for navigation between splits.
+;; - Top split: AI assistant chat (30% height)
 ;; - Left sidebar: marks list or magit window
 ;; - Center window: main code window
-;; - Right split: AI assistant chat
 ;; - Bottom bar: terminal
 
 ;;; Code:
@@ -16,7 +16,7 @@
   "Hash table storing window handles for each split.")
 
 (defconst my-layout--splits
-  '(left-sidebar main-center right-chat bottom-bar)
+  '(left-sidebar main-center top-chat bottom-bar)
   "Available window splits in the layout.")
 
 (defvar my-layout--claude-started nil
@@ -81,27 +81,34 @@
     (my-layout--set-window 'main-center (selected-window))
     (my-layout--set-state 'main-center 'visible)))
 
-(defun my-layout-show-in-right-chat (buffer)
-  "Show BUFFER in the right chat split."
+(defun my-layout-show-in-top-chat (buffer)
+  "Show BUFFER in the top chat split (30% of frame height)."
   (interactive)
-  (let ((existing-window (my-layout--get-window 'right-chat)))
+  (let ((existing-window (my-layout--get-window 'top-chat)))
     (if (and existing-window (window-live-p existing-window))
-        ;; Right chat already exists, just switch buffer
+        ;; Top chat already exists, just switch buffer
         (progn
           (select-window existing-window)
           (switch-to-buffer buffer))
-      ;; Create new right chat split
-      (let ((main-window (selected-window))
-            (chat-width 60))
-        (select-window (split-window-horizontally (- chat-width)))
+      ;; Create new top chat split
+      (let* ((main-window (selected-window))
+             (frame-height (frame-height))
+             (chat-height (floor (* frame-height 0.3))))
+        ;; Split and put chat in the top window (original window becomes top)
+        (split-window-vertically chat-height)
+        ;; Current window is now the top window (what we want for chat)
         (switch-to-buffer buffer)
-        (my-layout--set-window 'right-chat (selected-window))
-        (my-layout--set-state 'right-chat 'visible)
-        ;; Set fixed width and prevent resizing
-        (window-preserve-size (selected-window) t nil)
-        (select-window main-window)
+        (my-layout--set-window 'top-chat (selected-window))
+        (my-layout--set-state 'top-chat 'visible)
+        ;; Set fixed height and prevent resizing
+        (window-preserve-size (selected-window) nil t)
+        ;; Move to the bottom window (main content area)
+        (other-window 1)
+        ;; Set this as the main-center window
+        (my-layout--set-window 'main-center (selected-window))
+        (my-layout--set-state 'main-center 'visible)
         ;; Also preserve main window size
-        (window-preserve-size (selected-window) t nil)))))
+        (window-preserve-size (selected-window) nil t)))))
 
 (defun my-layout-show-in-bottom-bar (buffer)
   "Show BUFFER in the bottom bar."
@@ -133,14 +140,14 @@
       (my-layout--set-state 'left-sidebar 'hidden)
       (my-layout--set-window 'left-sidebar nil))))
 
-(defun my-layout-hide-right-chat ()
-  "Hide the right chat split."
+(defun my-layout-hide-top-chat ()
+  "Hide the top chat split."
   (interactive)
-  (let ((window (my-layout--get-window 'right-chat)))
+  (let ((window (my-layout--get-window 'top-chat)))
     (when (and window (window-live-p window))
       (delete-window window)
-      (my-layout--set-state 'right-chat 'hidden)
-      (my-layout--set-window 'right-chat nil))))
+      (my-layout--set-state 'top-chat 'hidden)
+      (my-layout--set-window 'top-chat nil))))
 
 (defun my-layout-hide-bottom-bar ()
   "Hide the bottom bar."
@@ -185,16 +192,16 @@
        (magit-buffer (my-layout-show-in-left-sidebar magit-buffer))
        (t (my-layout-show-marks-in-sidebar))))))
 
-(defun my-layout-toggle-right-sidebar ()
-  "Toggle the right sidebar visibility."
+(defun my-layout-toggle-top-chat ()
+  "Toggle the top chat split visibility."
   (interactive)
-  (if (eq (my-layout--get-state 'right-chat) 'visible)
-      (my-layout-hide-right-chat)
+  (if (eq (my-layout--get-state 'top-chat) 'visible)
+      (my-layout-hide-top-chat)
     (let ((chat-buffer (or (get-buffer "*claude-chat*")
                           (get-buffer "*AI Chat*")
                           (get-buffer "*GPT*"))))
       (if chat-buffer
-          (my-layout-show-in-right-chat chat-buffer)
+          (my-layout-show-in-top-chat chat-buffer)
         (message "No AI chat buffer available")))))
 
 (defun my-layout-navigate-left ()
@@ -214,16 +221,16 @@
   (let ((current-window (selected-window)))
     (condition-case nil
         (windmove-right)
-      (error 
-       (when (my-layout--get-window 'right-chat)
-         (select-window (my-layout--get-window 'right-chat)))))))
+      (error (message "No window to the right")))))
 
 (defun my-layout-navigate-up ()
   "Navigate to the window above."
   (interactive)
   (condition-case nil
       (windmove-up)
-    (error (message "No window above"))))
+    (error 
+     (when (my-layout--get-window 'top-chat)
+       (select-window (my-layout--get-window 'top-chat))))))
 
 (defun my-layout-navigate-down ()
   "Navigate to the window below."
@@ -250,10 +257,11 @@
     (my-layout-show-in-left-sidebar magit-buffer)))
 
 (defun my-layout-smart-claude-code ()
-  "Smart Claude Code handler: start, show, or focus based on current state."
+  "Smart Claude Code handler: start or show in main-center window."
   (interactive)
-  (let* ((right-chat-window (my-layout--get-window 'right-chat))
-         (right-chat-visible (and right-chat-window (window-live-p right-chat-window))))
+  (let ((claude-buffer (seq-find (lambda (buf)
+                                   (string-match-p "^\\*claude:" (buffer-name buf)))
+                                 (buffer-list))))
     
     (cond
      ;; Case 1: Claude never started - start it
@@ -262,29 +270,16 @@
       (setq my-layout--claude-started t)
       (message "Started Claude Code"))
      
-     ;; Case 2: Claude started but right split is closed - open split and focus it
-     ((and my-layout--claude-started (not right-chat-visible))
-      (let ((claude-buffer (seq-find (lambda (buf)
-                                       (string-match-p "claude\\|Claude" (buffer-name buf)))
-                                     (buffer-list))))
-        (if claude-buffer
-            (progn
-              (my-layout-show-in-right-chat claude-buffer)
-              (select-window (my-layout--get-window 'right-chat))
-              (message "Opened Claude Code in right sidebar"))
-          (progn
-            (claude-code)
-            (message "Restarted Claude Code")))))
-     
-     ;; Case 3: Claude started and split is open - just focus it
-     ((and my-layout--claude-started right-chat-visible)
-      (select-window right-chat-window)
-      (message "Focused Claude Code"))
+     ;; Case 2: Claude buffer exists - show it in main-center
+     (claude-buffer
+      (my-layout-show-in-main-center claude-buffer)
+      (message "Showing Claude Code in main window"))
      
      ;; Fallback: start Claude Code
      (t
       (claude-code)
-      (setq my-layout--claude-started t)))))
+      (setq my-layout--claude-started t)
+      (message "Started Claude Code")))))
 
 (defun my-layout-show-file-main-center (file-path &optional line-num)
   "Show FILE-PATH in main center window, optionally go to LINE-NUM."
@@ -295,10 +290,10 @@
         (goto-line line-num)
         (recenter)))))
 
-(defun my-layout-show-file-main-right (file-path &optional line-num)
-  "Show FILE-PATH in right chat window, optionally go to LINE-NUM."
+(defun my-layout-show-file-top-chat (file-path &optional line-num)
+  "Show FILE-PATH in top chat window, optionally go to LINE-NUM."
   (let ((buffer (find-file-noselect file-path)))
-    (my-layout-show-in-right-chat buffer)
+    (my-layout-show-in-top-chat buffer)
     (when line-num
       (with-current-buffer buffer
         (goto-line line-num)
@@ -308,9 +303,9 @@
   "Show BUFFER in main center window."
   (my-layout-show-in-main-center buffer))
 
-(defun my-layout-show-buffer-main-right (buffer)
-  "Show BUFFER in right chat window."
-  (my-layout-show-in-right-chat buffer))
+(defun my-layout-show-buffer-top-chat (buffer)
+  "Show BUFFER in top chat window."
+  (my-layout-show-in-top-chat buffer))
 
 (defun my-layout-show-buffer-left-sidebar (buffer)
   "Show BUFFER in left sidebar."
@@ -327,10 +322,11 @@
       (with-selected-window left-window
         (window-resize left-window (- 60 (window-width)) t))))
   
-  (when-let ((right-window (my-layout--get-window 'right-chat)))
-    (when (window-live-p right-window)
-      (with-selected-window right-window
-        (window-resize right-window (- 60 (window-width)) t))))
+  (when-let ((top-window (my-layout--get-window 'top-chat)))
+    (when (window-live-p top-window)
+      (with-selected-window top-window
+        (let ((target-height (floor (* (frame-height) 0.3))))
+          (window-resize top-window (- target-height (window-height)) nil)))))
   
   (when-let ((bottom-window (my-layout--get-window 'bottom-bar)))
     (when (window-live-p bottom-window)
@@ -341,16 +337,16 @@
 (defun my-layout--window-deleted-hook (window)
   "Hook function called when a window is deleted."
   (when (or (eq window (my-layout--get-window 'left-sidebar))
-            (eq window (my-layout--get-window 'right-chat))
+            (eq window (my-layout--get-window 'top-chat))
             (eq window (my-layout--get-window 'bottom-bar)))
     ;; One of our layout windows was deleted, update state
     (cond
      ((eq window (my-layout--get-window 'left-sidebar))
       (my-layout--set-state 'left-sidebar 'hidden)
       (my-layout--set-window 'left-sidebar nil))
-     ((eq window (my-layout--get-window 'right-chat))
-      (my-layout--set-state 'right-chat 'hidden)
-      (my-layout--set-window 'right-chat nil))
+     ((eq window (my-layout--get-window 'top-chat))
+      (my-layout--set-state 'top-chat 'hidden)
+      (my-layout--set-window 'top-chat nil))
      ((eq window (my-layout--get-window 'bottom-bar))
       (my-layout--set-state 'bottom-bar 'hidden)
       (my-layout--set-window 'bottom-bar nil)))
@@ -362,7 +358,7 @@
           (lambda (frame) 
             (my-layout--restore-window-sizes)))
 
-;; Visual focus indication for right sidebar
+;; Visual focus indication for top chat
 (defface my-layout-focused-window-face
   '((t (:background "#361707" :extend t)))
   ;; '((t (:background "#261707" :extend t)))
@@ -371,11 +367,11 @@
 (defvar my-layout-focused-window-overlay nil
   "Overlay for focused window indication.")
 
-(defun my-layout-highlight-right-sidebar ()
-  "Add visual highlight to right sidebar when focused."
-  (when (and (my-layout--get-window 'right-chat)
-             (eq (selected-window) (my-layout--get-window 'right-chat)))
-    (let ((window (my-layout--get-window 'right-chat)))
+(defun my-layout-highlight-top-chat ()
+  "Add visual highlight to top chat when focused."
+  (when (and (my-layout--get-window 'top-chat)
+             (eq (selected-window) (my-layout--get-window 'top-chat)))
+    (let ((window (my-layout--get-window 'top-chat)))
       (when (window-live-p window)
         (with-selected-window window
           (when my-layout-focused-window-overlay
@@ -385,21 +381,21 @@
           ;; (overlay-put my-layout-focused-window-overlay 'face 'my-layout-focused-window-face)
           (overlay-put my-layout-focused-window-overlay 'window window))))))
 
-(defun my-layout-remove-sidebar-highlight ()
-  "Remove visual highlight from sidebar."
+(defun my-layout-remove-chat-highlight ()
+  "Remove visual highlight from chat."
   (when my-layout-focused-window-overlay
     (delete-overlay my-layout-focused-window-overlay)
     (setq my-layout-focused-window-overlay nil)))
 
-(defun my-layout-update-sidebar-focus ()
-  "Update sidebar focus indication."
-  (my-layout-remove-sidebar-highlight)
-  (my-layout-highlight-right-sidebar))
+(defun my-layout-update-chat-focus ()
+  "Update chat focus indication."
+  (my-layout-remove-chat-highlight)
+  (my-layout-highlight-top-chat))
 
 ;; Hook to update focus indication
 (add-hook 'window-selection-change-functions 
-          (lambda (frame) (my-layout-update-sidebar-focus)))
-(add-hook 'buffer-list-update-hook #'my-layout-update-sidebar-focus)
+          (lambda (frame) (my-layout-update-chat-focus)))
+(add-hook 'buffer-list-update-hook #'my-layout-update-chat-focus)
 
 (defun my-layout-reset ()
   "Reset the layout to a clean state."
@@ -410,13 +406,13 @@
   (message "Layout reset"))
 
 ;; Compatibility aliases for existing code
-(defalias 'my/show-file-main-right 'my-layout-show-file-main-right)
+(defalias 'my/show-file-main-right 'my-layout-show-file-top-chat)
 (defalias 'my-window-layout-show-with-layout 
   (lambda (split buffer)
     (pcase split
       ('bottom-bar (my-layout-show-in-bottom-bar buffer))
       ('left-sidebar (my-layout-show-in-left-sidebar buffer))
-      ('right-chat (my-layout-show-in-right-chat buffer))
+      ('top-chat (my-layout-show-in-top-chat buffer))
       ('main-center (my-layout-show-in-main-center buffer))
       (_ (switch-to-buffer buffer)))))
 
@@ -443,9 +439,9 @@
        :desc "Show marks in sidebar" "m" #'my-layout-show-marks-in-sidebar
        :desc "Show magit in sidebar" "g" #'my-layout-show-magit-in-sidebar
        :desc "Toggle left sidebar" "l" #'my-layout-toggle-left-sidebar
-       :desc "Toggle right sidebar" "r" #'my-layout-toggle-right-sidebar
+       :desc "Toggle top chat" "t" #'my-layout-toggle-top-chat
        :desc "Hide left sidebar" "h" #'my-layout-hide-left-sidebar
-       :desc "Hide right chat" "H" #'my-layout-hide-right-chat
+       :desc "Hide top chat" "H" #'my-layout-hide-top-chat
        :desc "Toggle bottom bar" "b" #'my-layout-toggle-bottom-bar
        :desc "Reset layout" "R" #'my-layout-reset))
 

@@ -199,13 +199,53 @@
 ;; Key bindings
 (map! "C-j" #'my/toggle-terminal-show)
 
-;; Force C-b to be terminal toggle - override all other bindings
-(after! evil
-  (define-key evil-insert-state-map (kbd "C-b") #'my/toggle-terminal)
-  (define-key evil-normal-state-map (kbd "C-b") #'my/toggle-terminal)
-  (define-key evil-visual-state-map (kbd "C-b") #'my/toggle-terminal))
+(defun my/smart-navigate-down ()
+  "Smart navigation: top to center to bottom (terminal).
+  
+  - In Claude chat (top split): Move to main center window
+  - In main center window: Toggle terminal (bottom)
+  - Elsewhere: Try to navigate down or toggle terminal"
+  (interactive)
+  (let ((current-window (selected-window))
+        (top-chat-window (when (fboundp 'my-layout--get-window) 
+                          (my-layout--get-window 'top-chat)))
+        (main-center-window (when (fboundp 'my-layout--get-window) 
+                             (my-layout--get-window 'main-center))))
+    
+    ;; Debug message to see what's happening
+    (message "smart-navigate-down: current=%s, top-chat=%s, main-center=%s" 
+             current-window top-chat-window main-center-window)
+    
+    (cond
+     ;; Case 1: We're in the Claude top chat window
+     ((and top-chat-window (eq current-window top-chat-window))
+      (message "In top-chat, moving to main-center")
+      (if main-center-window
+          (select-window main-center-window)
+        ;; Fallback: just try windmove-down
+        (condition-case nil
+            (windmove-down)
+          (error (my/toggle-terminal)))))
+     
+     ;; Case 2: We're in the main center window  
+     ((and main-center-window (eq current-window main-center-window))
+      (message "In main-center, toggling terminal")
+      (my/toggle-terminal))
+     
+     ;; Case 3: We're somewhere else - try to navigate down, fallback to terminal
+     (t
+      (message "Elsewhere, trying windmove-down or terminal")
+      (condition-case nil
+          (windmove-down)
+        (error (my/toggle-terminal)))))))
 
-(global-set-key (kbd "C-b") #'my/toggle-terminal)
+;; Force C-b to be smart navigation - override all other bindings
+(after! evil
+  (define-key evil-insert-state-map (kbd "s-b") #'my/smart-navigate-down)
+  (define-key evil-normal-state-map (kbd "s-b") #'my/smart-navigate-down)
+  (define-key evil-visual-state-map (kbd "s-b") #'my/smart-navigate-down))
+
+(global-set-key (kbd "s-b") #'my/smart-navigate-down)
 
 ;; Leader key bindings - integrate with existing bindings
 (map! :leader

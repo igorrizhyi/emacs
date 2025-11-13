@@ -30,6 +30,7 @@
 ;; (require 'my-jumps)
 (require 'my-super-jumps)
 (require 'my-search)
+(require 'my-eshell)
 (require' claude-code-emacs)
 
 ;; Disable automatic project switching when opening files
@@ -553,7 +554,7 @@
 ;; Window navigation keybindings - move focus between splits
 (map! "C-h" #'my/smart-move-left   ; Smart left movement or Magit
       "C-l" #'windmove-right       ; Focus right window split
-      "C-k" #'my-layout-smart-claude-code) ; Smart Claude Code handler
+      "s-k" #'my-layout-smart-claude-code) ; Smart Claude Code handler
 
 
 ;; Jump navigation keybindings - like browser back/forward
@@ -856,16 +857,16 @@
   (add-hook 'claude-code-process-environment-functions #'monet-start-server-function)
   (monet-mode 1)
 
-  ;; Custom display function to use our window layout right sidebar
-  (defun my-claude-display-right-sidebar (buffer)
-    "Display Claude buffer in our window layout right sidebar."
-    ;; Use the new layout system to show buffer in right chat
-    (my-layout-show-in-right-chat buffer)
-    ;; Return the right chat window
-    (my-layout--get-window 'right-chat))
+  ;; Custom display function to use our window layout main center
+  (defun my-claude-display-top-split (buffer)
+    "Display Claude buffer in our window layout main center."
+    ;; Use the layout system to show buffer in main center
+    (my-layout-show-in-main-center buffer)
+    ;; Return the main center window
+    (my-layout--get-window 'main-center))
 
   ;; Configure claude-code to use our custom display function
-  (setq claude-code-display-window-fn #'my-claude-display-right-sidebar)
+  (setq claude-code-display-window-fn #'my-claude-display-top-split)
   
   ;; Override find-file behavior when called from claude-code contexts
   (defun my/claude-code-find-file-advice (orig-fun &rest args)

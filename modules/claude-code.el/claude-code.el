@@ -167,7 +167,7 @@ resizing."
   :type 'boolean
   :group 'claude-code)
 
-(defcustom claude-code-terminal-backend 'vterm
+(defcustom claude-code-terminal-backend 'eat
   "Terminal backend to use for Claude Code.
 Choose between \\='eat (default) and \\='vterm terminal emulators."
   :type '(radio (const :tag "Eat terminal emulator" eat)
@@ -641,7 +641,7 @@ _BACKEND is the terminal backend type (should be \\='eat)."
     (setq-local eat-term-scrollback-size nil))
 
   ;; Set up custom scroll function to stop eat from scrolling to the top
-  (setq-local eat--synchronize-scroll-function #'claude-code--eat-synchronize-scroll)
+  ;; (setq-local eat--synchronize-scroll-function #'claude-code--eat-synchronize-scroll)
 
   ;; Configure bell handler - ensure eat-terminal exists
   (when (bound-and-true-p eat-terminal)
@@ -678,6 +678,9 @@ _BACKEND is the terminal backend type (should be \\='eat)."
 
     ;; C-g for escape
     (define-key map (kbd "C-g") #'claude-code-send-escape)
+    
+    ;; s-k to return to previous buffer
+    (define-key map (kbd "s-k") #'claude-code--switch-to-previous-buffer)
 
     ;; Configure key bindings based on user preference
     (pcase claude-code-newline-keybinding-style
@@ -698,6 +701,23 @@ _BACKEND is the terminal backend type (should be \\='eat)."
        (define-key map (kbd "<return>") #'claude-code--eat-send-alt-return)
        (define-key map (kbd "<s-return>") #'claude-code--eat-send-return)))
     (use-local-map map)))
+
+(defun claude-code--switch-to-previous-buffer ()
+  "Switch to previous buffer and exit visual state if active."
+  (interactive)
+  ;; Store visual selection info before switching
+  (let ((was-visual (and (featurep 'evil) (evil-visual-state-p)))
+        (visual-mark (when (and (featurep 'evil) (evil-visual-state-p))
+                       (mark)))
+        (visual-point (when (and (featurep 'evil) (evil-visual-state-p))
+                        (point)))
+        (visual-type (when (and (featurep 'evil) (evil-visual-state-p))
+                       evil-visual-selection)))
+    ;; Exit visual state before switching
+    (when was-visual
+      (evil-exit-visual-state))
+    ;; Switch to previous buffer
+    (previous-buffer)))
 
 (defun claude-code--eat-send-alt-return ()
   "Send <alt>-<return> to eat."
@@ -886,6 +906,9 @@ _BACKEND is the terminal backend type (should be \\='vterm)."
 
     ;; C-g for escape
     (define-key map (kbd "C-g") #'claude-code--vterm-send-escape)
+    
+    ;; s-k to return to previous buffer
+    (define-key map (kbd "s-k") #'claude-code--switch-to-previous-buffer)
 
     (pcase claude-code-newline-keybinding-style
       ('newline-on-shift-return
@@ -1206,10 +1229,15 @@ Returns the selected Claude buffer or nil."
   (eq window claude-code--focused-window))
 
 (defun claude-code--custom-modeline ()
-  "Generate custom modeline with bright colors when focused."
+  "Generate custom modeline with bright colors when focused and mode-based background."
   (let* ((current-window (selected-window))
          (is-focused (claude-code--is-window-focused-p current-window))
-         (bg-color (if is-focused "#ff6600" "#1a1006"))
+         (is-normal-mode (and (bound-and-true-p evil-mode)
+                             (eq evil-state 'normal)))
+         (bg-color (cond
+                    ((and is-focused is-normal-mode) "#333")
+                    (is-focused "#ff6600")
+                    (t "#1a1006")))
          (fg-color "#ffffff")
          (text " ")
          (width (window-width current-window))
@@ -1269,11 +1297,35 @@ Returns the selected Claude buffer or nil."
               (when (claude-code--buffer-p (current-buffer))
                 (force-mode-line-update))))
 
-(defun claude-code-display-buffer-below (buffer)
-  "Displays the claude code BUFFER below the currently selected one."
-  (display-buffer buffer '((display-buffer-below-selected))))
+;; Hook to update modeline when evil state changes
+(when (featurep 'evil)
+  (add-hook 'evil-normal-state-entry-hook
+            (lambda ()
+              (when (claude-code--buffer-p (current-buffer))
+                (force-mode-line-update))))
+  (add-hook 'evil-insert-state-entry-hook
+            (lambda ()
+              (when (claude-code--buffer-p (current-buffer))
+                (force-mode-line-update))))
+  (add-hook 'evil-visual-state-entry-hook
+            (lambda ()
+              (when (claude-code--buffer-p (current-buffer))
+                (force-mode-line-update))))
+  (add-hook 'evil-emacs-state-entry-hook
+            (lambda ()
+              (when (claude-code--buffer-p (current-buffer))
+                (force-mode-line-update)))))
 
-(defcustom claude-code-display-window-fn #'claude-code-display-buffer-below
+(defun claude-code-display-buffer-top-split (buffer)
+  "Displays the claude code BUFFER in the top split (30% of frame height)."
+  (if (fboundp 'my-layout-show-in-top-chat)
+      (progn
+        (my-layout-show-in-top-chat buffer)
+        (my-layout--get-window 'top-chat))
+    ;; Fallback if my-layout is not available
+    (display-buffer buffer '((display-buffer-below-selected)))))
+
+(defcustom claude-code-display-window-fn #'claude-code-display-buffer-top-split
   "Function used to display the claude code window.
 
 Must be callable with a buffer as its parameter."
@@ -1354,6 +1406,9 @@ With double prefix ARG (\\[universal-argument] \\[universal-argument]), prompt f
 
       ;; set buffer face
       (buffer-face-set :inherit 'claude-code-repl-face)
+      
+      ;; make font smaller
+      (text-scale-decrease 1)
 
       ;; Setup custom modeline with right window focus detection
       (claude-code--setup-custom-modeline buffer)
