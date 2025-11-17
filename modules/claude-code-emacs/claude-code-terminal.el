@@ -130,6 +130,54 @@ Returns the terminal ID."
       
       terminal-id)))
 
+(defun claude-code-terminal-create-numbered (&optional directory)
+  "Create a new terminal buffer with auto-generated numbered name based on current terminal.
+If current terminal follows pattern 'name_N', creates 'name_{N+1}'.
+If no current terminal or no pattern match, creates 'local_1'."
+  (interactive)
+  (let* ((project-root (claude-code-normalize-project-root (projectile-project-root)))
+         (sessions (claude-code-terminal-get-sessions project-root))
+         (current-terminal-id (when (and (boundp 'claude-code-terminal-id)
+                                        claude-code-terminal-id)
+                               claude-code-terminal-id))
+         (base-name (if (and current-terminal-id
+                            (string-match "^\\(.+\\)_\\([0-9]+\\)$" current-terminal-id))
+                       (match-string 1 current-terminal-id)
+                     "local"))
+         (existing-numbers (mapcar (lambda (session)
+                                    (let ((id (cdr session)))
+                                      (when (string-match (concat "^" (regexp-quote base-name) "_\\([0-9]+\\)$") id)
+                                        (string-to-number (match-string 1 id)))))
+                                  sessions))
+         (max-number (if existing-numbers
+                        (apply #'max (delq nil existing-numbers))
+                      0))
+         (new-terminal-id (format "%s_%d" base-name (1+ max-number)))
+         (buffer-name (claude-code-terminal-buffer-name project-root new-terminal-id))
+         (default-directory (or directory project-root)))
+    
+    ;; Create vterm buffer
+    (let ((buffer (vterm buffer-name)))
+      ;; Store terminal ID as buffer-local variable
+      (with-current-buffer buffer
+        (setq-local claude-code-terminal-id new-terminal-id)
+        (setq-local claude-code-terminal-project-root project-root)
+        ;; Enable claude terminal mode and apply font scaling
+        (claude-code-terminal-mode 1)
+        (claude-code-terminal-apply-large-font))
+      
+      ;; Register terminal session
+      (claude-code-terminal-register project-root buffer-name new-terminal-id)
+      
+      ;; Update last created terminal ID and record access time
+      (setq claude-code-terminal-last-created new-terminal-id)
+      (puthash new-terminal-id (current-time) claude-code-terminal-access-times)
+      
+      ;; Switch to the buffer
+      (switch-to-buffer buffer)
+      
+      new-terminal-id)))
+
 (defun claude-code-terminal-register (project-root buffer-name terminal-id)
   "Register terminal session for PROJECT-ROOT with BUFFER-NAME and TERMINAL-ID."
   (let ((sessions (gethash project-root claude-code-terminal-sessions '())))
@@ -725,25 +773,83 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
               (message "  %s (%s)" id time-str)))
           
           ;; Create completion choices and prompt user
-          ;; Use completion system with proper ordering preservation
+          ;; Use completion system with proper ordering preservation and preview
           (let ((choice (cond
-                         ;; For ivy, disable sorting to preserve our order
+                         ;; For ivy, disable sorting and add preview
                          ((and (boundp 'ivy-mode) ivy-mode)
                           (let ((ivy-sort-functions-alist nil))
-                            (ivy-read "Switch to terminal (recent first): " choices)))
-                         ;; For vertico, disable sorting
+                            (ivy-read "Switch to terminal (recent first): " choices
+                                      :action (lambda (x) x)
+                                      :update-fn (lambda ()
+                                                   (when ivy--current
+                                                     (let* ((choice-entry (assoc ivy--current choices))
+                                                            (term (when choice-entry (cdr choice-entry)))
+                                                            (buffer (when term (plist-get term :buffer))))
+                                                       (when (and buffer (buffer-live-p buffer))
+                                                         (switch-to-buffer buffer))))))))
+                         
+                         ;; For vertico, disable sorting and add preview
                          ((and (boundp 'vertico-mode) vertico-mode)
                           (let ((vertico-sort-function nil))
-                            (completing-read "Switch to terminal (recent first): " choices nil t)))
-                         ;; For helm, disable sorting
+                            (minibuffer-with-setup-hook
+                                (lambda ()
+                                  ;; Hook into vertico's selection change
+                                  (when (boundp 'vertico--index)
+                                    (let ((preview-function 
+                                           (lambda ()
+                                             (when (and (boundp 'vertico--candidates) 
+                                                        (boundp 'vertico--index)
+                                                        vertico--candidates
+                                                        vertico--index
+                                                        (>= vertico--index 0)
+                                                        (< vertico--index (length vertico--candidates)))
+                                               (let* ((selected-candidate (nth vertico--index vertico--candidates))
+                                                      (choice-entry (assoc selected-candidate choices))
+                                                      (term (when choice-entry (cdr choice-entry)))
+                                                      (buffer (when term (plist-get term :buffer))))
+                                                 (when (and buffer (buffer-live-p buffer))
+                                                   (with-selected-window (minibuffer-selected-window)
+                                                     (switch-to-buffer buffer))))))))
+                                      ;; Add hook for navigation changes
+                                      (add-hook 'post-command-hook preview-function nil t)
+                                      ;; Also trigger preview immediately for initial selection
+                                      (run-with-timer 0.01 nil preview-function))))
+                              (completing-read "Switch to terminal (recent first): " choices nil t))))
+                         
+                         ;; For helm, disable sorting and add preview
                          ((and (boundp 'helm-mode) helm-mode)
                           (let ((helm-candidate-sort-fn nil))
-                            (completing-read "Switch to terminal (recent first): " choices nil t)))
-                         ;; For default completing-read, try to preserve order
+                            (helm :sources
+                                  (helm-build-sync-source "Terminals"
+                                    :candidates choices
+                                    :persistent-action (lambda (candidate)
+                                                         (let* ((choice-entry (assoc candidate choices))
+                                                                (term (when choice-entry (cdr choice-entry)))
+                                                                (buffer (when term (plist-get term :buffer))))
+                                                           (when (and buffer (buffer-live-p buffer))
+                                                             (switch-to-buffer buffer))))
+                                    :action (lambda (candidate) candidate))
+                                  :prompt "Switch to terminal (recent first): ")))
+                         
+                         ;; For default completing-read with basic preview
                          (t
-                          (let ((completion-cycle-threshold nil)
-                                (read-file-name-completion-ignore-case nil))
-                            (completing-read "Switch to terminal (recent first): " choices nil t))))))
+                          (minibuffer-with-setup-hook
+                              (lambda ()
+                                (add-hook 'after-change-functions
+                                          (lambda (&rest _)
+                                            (let* ((input (minibuffer-contents))
+                                                   (match (try-completion input choices)))
+                                              (when (and match (stringp match))
+                                                (let* ((choice-entry (assoc match choices))
+                                                       (term (when choice-entry (cdr choice-entry)))
+                                                       (buffer (when term (plist-get term :buffer))))
+                                                  (when (and buffer (buffer-live-p buffer))
+                                                    (with-selected-window (minibuffer-selected-window)
+                                                      (switch-to-buffer buffer)))))))
+                                          nil t))
+                            (let ((completion-cycle-threshold nil)
+                                  (read-file-name-completion-ignore-case nil))
+                              (completing-read "Switch to terminal (recent first): " choices nil t)))))))
             (when choice
               (let ((terminal (cdr (assoc choice choices))))
                 (switch-to-buffer (plist-get terminal :buffer))

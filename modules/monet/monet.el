@@ -45,7 +45,7 @@ These settings control which MCP tools are available to Claude Code."
   :group 'monet
   :prefix "monet-")
 
-(defcustom monet-diff-tool 'monet-simple-diff-tool
+(defcustom monet-diff-tool nil
   "Function to use for creating diff displays.
 The function should have the signature:
   (old-file-path new-file-path new-file-contents on-accept on-quit &optional session)

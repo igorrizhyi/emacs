@@ -554,7 +554,8 @@
 ;; Window navigation keybindings - move focus between splits
 (map! "C-h" #'my/smart-move-left   ; Smart left movement or Magit
       "C-l" #'windmove-right       ; Focus right window split
-      "s-k" #'my-layout-smart-claude-code) ; Smart Claude Code handler
+      "s-k" #'my-layout-smart-claude-code
+      "C-k" #'my-layout-smart-claude-code) ; Smart Claude Code handler
 
 
 ;; Jump navigation keybindings - like browser back/forward
@@ -673,6 +674,8 @@
 
 ;; Global keybinding for claude-code-terminal-create
 (map! "C-c c" #'claude-code-terminal-create)
+;; Global keybinding for claude-code-terminal-create-numbered
+(map! "C-c n" #'claude-code-terminal-create-numbered)
 (map! "C-c r" #'lsp-workspace-restart)
 
 ;; Smart Q function with context-aware behavior
