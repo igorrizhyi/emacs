@@ -882,7 +882,7 @@ Shows confirmation popup before executing and includes buffer corruption detecti
           (claude-code-mcp-init-command-state terminal-id)
           
           (condition-case exec-err
-              (let ((result (claude-code-terminal-execute-command terminal-id command project-root timeout-duration)))
+              (let ((result (claude-code-terminal-execute-command terminal-id command project-root timeout-duration t)))
                 (unless result
                   (error "Command execution returned no result"))
                 

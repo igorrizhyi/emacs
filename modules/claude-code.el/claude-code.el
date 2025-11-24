@@ -167,7 +167,7 @@ resizing."
   :type 'boolean
   :group 'claude-code)
 
-(defcustom claude-code-terminal-backend 'eat
+(defcustom claude-code-terminal-backend 'vterm
   "Terminal backend to use for Claude Code.
 Choose between \\='eat (default) and \\='vterm terminal emulators."
   :type '(radio (const :tag "Eat terminal emulator" eat)
@@ -562,7 +562,7 @@ SWITCHES are optional command-line arguments for PROGRAM."
 
 _BACKEND is the terminal backend type (should be \\='eat).
 STRING is the text to send to the terminal."
-  (eat-term-send-string eat-terminal string))
+  (vterm-send-string string))
 
 (cl-defmethod claude-code--term-kill-process ((_backend (eql eat)) buffer)
   "Kill the eat terminal process in BUFFER.
@@ -725,9 +725,9 @@ _BACKEND is the terminal backend type (should be \\='eat)."
   (eat-term-send-string eat-terminal "\e\C-m"))
 
 (defun claude-code--eat-send-return ()
-  "Send <return> to eat."
+  "Send return key to vterm."
   (interactive)
-  (eat-term-send-string eat-terminal (kbd "RET")))
+  (vterm-send-key "\C-m"))
 
 (cl-defgeneric claude-code--term-get-adjust-process-window-size-fn (backend)
   "Get the BACKEND specific function that adjusts window size.")
@@ -1373,7 +1373,7 @@ With double prefix ARG (\\[universal-argument] \\[universal-argument]), prompt f
                                       extra-env-variables
                                       process-environment))
          ;; Start the terminal process
-         (buffer (claude-code--term-make claude-code-terminal-backend buffer-name claude-code-program program-switches)))
+         (buffer (claude-code--term-make 'vterm buffer-name claude-code-program program-switches)))
 
     ;; Check if the claude program is available
     (unless (executable-find claude-code-program)
@@ -1975,7 +1975,7 @@ and then sends a return key to execute the command."
   (let ((text (read-string "Text to send to Claude: ")))
     (claude-code--with-buffer
      (claude-code--term-send-string claude-code-terminal-backend text))
-    (claude-code-send-return)))
+    (claude-code--vterm-send-return)))
 
 ;;;###autoload
 (defun claude-code-send-emacs-terminal ()

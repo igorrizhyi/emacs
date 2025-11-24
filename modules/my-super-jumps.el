@@ -601,7 +601,8 @@ Perfect for rapid navigation where you want only the final position registered."
 
 (defun my-super-jumps--post-command-hook ()
   "Register jump after certain commands complete, but only if movement is significant."
-  (when (and my-super-jumps-mode 
+  (when (and nil
+             my-super-jumps-mode
              my-super-jumps--last-command)
     (let ((cmd-name (symbol-name my-super-jumps--last-command)))
       ;; Check for navigation commands that might need position validation

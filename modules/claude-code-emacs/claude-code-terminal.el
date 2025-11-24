@@ -68,6 +68,10 @@ Each value is a list of shell contexts: ((command prompt) ...), newest first.")
 (defvar claude-code-terminal-pending-check (make-hash-table :test 'equal)
   "Hash table tracking pending prompt checks after Enter for each terminal.")
 
+(defvar claude-code-terminal-async-commands (make-hash-table :test 'equal)
+  "Hash table tracking asynchronous command execution for each terminal.
+Each entry is a plist with :start-time :start-marker :callback :timer :command.")
+
 (defvar claude-code-terminal-embedded-shells (make-hash-table :test 'equal)
   "Hash table tracking active embedded shell commands for headline display.")
 
@@ -178,6 +182,45 @@ If no current terminal or no pattern match, creates 'local_1'."
       
       new-terminal-id)))
 
+(defun claude-code-terminal-switch-recent ()
+  "Switch to the most recent terminal without prompting."
+  (interactive)
+  (claude-code-terminal-cleanup-dead-buffers)
+  ;; Update current terminal's access time before building the list
+  (claude-code-terminal-update-last-focused)
+  
+  (let* ((current-buffer (current-buffer))
+         (active-terminals (claude-code-terminal-list-active))
+         ;; Exclude current terminal from the list
+         (other-terminals (seq-filter (lambda (term)
+                                        (not (eq (plist-get term :buffer) current-buffer)))
+                                      active-terminals)))
+    (if other-terminals
+        ;; Sort terminals by access time (most recent first) and switch to the first one
+        (let* ((sorted-terminals 
+                (sort other-terminals
+                      (lambda (a b)
+                        (let* ((id-a (plist-get a :terminal-id))
+                               (id-b (plist-get b :terminal-id))
+                               (time-a (gethash id-a claude-code-terminal-access-times nil))
+                               (time-b (gethash id-b claude-code-terminal-access-times nil)))
+                          ;; Sort by access time (most recent first)
+                          (cond
+                           ((and time-a time-b) (time-less-p time-b time-a))
+                           (time-a nil)  ; a has time, b doesn't -> a comes first
+                           (time-b t)    ; b has time, a doesn't -> b comes first  
+                           (t nil)))))) ; both nil -> preserve order
+               (most-recent-terminal (car sorted-terminals)))
+          (when most-recent-terminal
+            (let ((buffer (plist-get most-recent-terminal :buffer)))
+              (when (buffer-live-p buffer)
+                (switch-to-buffer buffer)
+                ;; Update access time for the terminal we just switched to
+                (claude-code-terminal-update-last-focused)
+                (message "Switched to terminal: %s" 
+                         (plist-get most-recent-terminal :terminal-id))))))
+      (message "No other terminals available"))))
+
 (defun claude-code-terminal-register (project-root buffer-name terminal-id)
   "Register terminal session for PROJECT-ROOT with BUFFER-NAME and TERMINAL-ID."
   (let ((sessions (gethash project-root claude-code-terminal-sessions '())))
@@ -248,6 +291,131 @@ Falls back to current context, last created, or any active terminal."
              claude-code-terminal-sessions)
     active-terminals))
 
+;;; Asynchronous Command Execution
+
+(defun claude-code-terminal-async-check-output (terminal-id)
+  "Check for output from asynchronous command in TERMINAL-ID."
+  (let* ((async-info (gethash terminal-id claude-code-terminal-async-commands))
+         (buffer (claude-code-terminal-get-by-id terminal-id))
+         (start-marker (plist-get async-info :start-marker))
+         (start-time (plist-get async-info :start-time))
+         (callback (plist-get async-info :callback))
+         (command (plist-get async-info :command))
+         (timer (plist-get async-info :timer))
+         (timeout-seconds 30))
+    
+    (when (and async-info buffer (buffer-live-p buffer))
+      (with-current-buffer buffer
+        (let* ((current-time (current-time))
+               (elapsed (float-time (time-subtract current-time start-time)))
+               (output (buffer-substring-no-properties start-marker (point-max)))
+               (cleaned-output (replace-regexp-in-string 
+                               (concat "^.*" (regexp-quote command) "\r?\n") 
+                               "" output)))
+          
+          (cond
+           ;; Timeout reached
+           ((>= elapsed timeout-seconds)
+            (when timer (cancel-timer timer))
+            (remhash terminal-id claude-code-terminal-async-commands)
+            (funcall callback (list :success nil 
+                                    :stdout output
+                                    :stderr "Command timed out waiting for output"
+                                    :exit-code 124
+                                    :timeout t
+                                    :working-directory default-directory)))
+           
+           ;; Got meaningful output
+           ((and (> (length cleaned-output) 0)
+                 (not (string-match-p "^\\s-*$" cleaned-output)))
+            (when timer (cancel-timer timer))
+            (remhash terminal-id claude-code-terminal-async-commands)
+            (funcall callback (list :success t
+                                    :stdout cleaned-output
+                                    :stderr ""
+                                    :exit-code 0
+                                    :timeout nil
+                                    :working-directory default-directory)))
+           
+           ;; No output yet, continue checking
+           (t
+            ;; Timer will call this function again
+            nil)))))))
+
+(defun claude-code-terminal-execute-command-async (terminal-id command callback &optional project-root timeout)
+  "Execute COMMAND asynchronously in terminal TERMINAL-ID.
+CALLBACK will be called with the result plist when output is detected or timeout occurs.
+Returns immediately without blocking."
+  (let ((buffer (claude-code-terminal-get-by-id terminal-id project-root)))
+    (if (not buffer)
+        (funcall callback (list :success nil 
+                               :stdout ""
+                               :stderr "Terminal not found"
+                               :exit-code 1
+                               :timeout nil
+                               :working-directory (or project-root default-directory)))
+      
+      (with-current-buffer buffer
+        (if (not (derived-mode-p 'vterm-mode))
+            (funcall callback (list :success nil 
+                                   :stdout ""
+                                   :stderr "Buffer is not in vterm-mode"
+                                   :exit-code 1
+                                   :timeout nil
+                                   :working-directory (or project-root default-directory)))
+          
+          ;; Cancel any existing async command for this terminal
+          (let ((existing-info (gethash terminal-id claude-code-terminal-async-commands)))
+            (when existing-info
+              (when-let ((existing-timer (plist-get existing-info :timer)))
+                (cancel-timer existing-timer))
+              (remhash terminal-id claude-code-terminal-async-commands)))
+          
+          ;; Start the command
+          (let* ((start-marker (point-max))
+                 (start-time (current-time))
+                 (check-interval 0.2) ; Check every 200ms
+                 (timer (run-with-timer check-interval check-interval 
+                                       'claude-code-terminal-async-check-output terminal-id)))
+            
+            ;; Store async command info
+            (puthash terminal-id 
+                     (list :start-time start-time
+                           :start-marker start-marker
+                           :callback callback
+                           :timer timer
+                           :command command)
+                     claude-code-terminal-async-commands)
+            
+            ;; Send the command
+            (vterm-send-string command)
+            (vterm-send-return)
+            
+            ;; Return immediately
+            (message "Command sent asynchronously: %s" command)))))))
+
+(defun claude-code-terminal-execute-command-with-callback (terminal-id command callback &optional project-root)
+  "Execute COMMAND asynchronously and call CALLBACK with results.
+This is the recommended way to execute commands that might be continuous.
+CALLBACK receives a plist: (:success t/nil :stdout string :stderr string :exit-code num :timeout t/nil :working-directory string)"
+  (claude-code-terminal-execute-command-async terminal-id command callback project-root))
+
+(defun claude-code-terminal-example-async-usage ()
+  "Example of how to use asynchronous command execution.
+This demonstrates running a continuous command like 'tail -f' without blocking Emacs."
+  (interactive)
+  (let ((terminal-id (claude-code-terminal-get-current-id)))
+    (if terminal-id
+        (claude-code-terminal-execute-command-with-callback
+         terminal-id
+         "tail -f /var/log/syslog" ; Example continuous command
+         (lambda (result)
+           (message "Async command result: %s" 
+                   (if (plist-get result :success)
+                       (format "SUCCESS: %s" (plist-get result :stdout))
+                     (format "FAILED: %s" (plist-get result :stderr))))))
+      (message "No terminal found"))))
+
 ;;; Terminal Content Access
 
 (defun claude-code-terminal-get-content (terminal-id &optional project-root)
@@ -257,12 +425,15 @@ Falls back to current context, last created, or any active terminal."
       (with-current-buffer buffer
         (buffer-substring-no-properties (point-min) (point-max))))))
 
-(defun claude-code-terminal-execute-command (terminal-id command &optional project-root timeout)
+(defun claude-code-terminal-execute-command (terminal-id command &optional project-root timeout async)
   "Execute COMMAND in terminal buffer TERMINAL-ID in PROJECT-ROOT.
+If ASYNC is t (default), executes asynchronously and returns immediately.
+If ASYNC is nil, uses synchronous execution and waits for command completion.
 Returns a plist with :success, :stdout, :stderr, :exit-code, :timeout, :working-directory."
   (message "Executing command in terminal '%s' (%s): %s" terminal-id project-root command)
   (let ((buffer (claude-code-terminal-get-by-id terminal-id project-root))
-        (timeout-seconds (or timeout 30)))
+        (timeout-seconds (or timeout 30))
+        (async-mode (if (eq async nil) nil t))) ; Default to async=t
     (if (not buffer)
         (list :success nil 
               :stdout "" 
@@ -280,53 +451,67 @@ Returns a plist with :success, :stdout, :stderr, :exit-code, :timeout, :working-
                   :working-directory (or project-root default-directory))
           ;; Get current working directory from terminal
           (let* ((working-dir (or project-root default-directory))
-                 (start-marker (point-max))
-                 (command-with-exit-code (format "%s; echo \"__EXIT_CODE__:$?\"" command))
-                 (start-time (current-time))
-                 (timed-out nil)
-                 (output "")
-                 (exit-code 0))
+                 (start-marker (point-max)))
             
-            ;; Send command with exit code capture
-            (vterm-send-string command-with-exit-code)
-            (vterm-send-return)
-            
-            ;; Wait for command completion with timeout
-            (while (and (< (float-time (time-subtract (current-time) start-time)) timeout-seconds)
-                       (not (string-match "__EXIT_CODE__:\\([0-9]+\\)" 
-                                         (buffer-substring-no-properties start-marker (point-max))))
-                       (not timed-out))
-              (accept-process-output nil 0.1)
-              (when (>= (float-time (time-subtract (current-time) start-time)) timeout-seconds)
-                (setq timed-out t)))
-            
-            ;; Extract output and exit code
-            (setq output (buffer-substring-no-properties start-marker (point-max)))
-            
-            (if timed-out
-                (list :success nil 
-                      :stdout output 
-                      :stderr "Command timed out" 
-                      :exit-code 124 
-                      :timeout t 
-                      :working-directory working-dir)
-              (let ((exit-match (string-match "__EXIT_CODE__:\\([0-9]+\\)" output)))
-                (when exit-match
-                  (setq exit-code (string-to-number (match-string 1 output)))
-                  ;; Remove the exit code marker from output
-                  (setq output (replace-regexp-in-string "__EXIT_CODE__:[0-9]+\n?" "" output)))
+            (if async-mode
+                ;; Async execution: send command and return immediately
+                (progn
+                  (vterm-send-string command)
+                  (vterm-send-return)
+                  (list :success t 
+                        :stdout "Command started (async)" 
+                        :stderr "" 
+                        :exit-code 0 
+                        :timeout nil 
+                        :working-directory working-dir))
+              
+              ;; Sync execution: wait for command completion
+              (let* ((command-with-exit-code (format "%s; echo \"__EXIT_CODE__:$?\"" command))
+                     (start-time (current-time))
+                     (timed-out nil)
+                     (output "")
+                     (exit-code 0))
                 
-                ;; Clean up the output (remove command echo and prompt)
-                (setq output (replace-regexp-in-string 
-                             (concat "^.*" (regexp-quote command-with-exit-code) "\r?\n") 
-                             "" output))
+                ;; Send command with exit code capture
+                (vterm-send-string command-with-exit-code)
+                (vterm-send-return)
                 
-                (list :success (= exit-code 0)
-                      :stdout output 
-                      :stderr "" 
-                      :exit-code exit-code 
-                      :timeout nil 
-                      :working-directory working-dir)))))))))
+                ;; Wait for command completion with timeout
+                (while (and (< (float-time (time-subtract (current-time) start-time)) timeout-seconds)
+                           (not (string-match "__EXIT_CODE__:\\([0-9]+\\)" 
+                                             (buffer-substring-no-properties start-marker (point-max))))
+                           (not timed-out))
+                  (accept-process-output nil 0.1)
+                  (when (>= (float-time (time-subtract (current-time) start-time)) timeout-seconds)
+                    (setq timed-out t)))
+                
+                ;; Extract output and exit code
+                (setq output (buffer-substring-no-properties start-marker (point-max)))
+                
+                (if timed-out
+                    (list :success nil 
+                          :stdout output 
+                          :stderr "Command timed out" 
+                          :exit-code 124 
+                          :timeout t 
+                          :working-directory working-dir)
+                  (let ((exit-match (string-match "__EXIT_CODE__:\\([0-9]+\\)" output)))
+                    (when exit-match
+                      (setq exit-code (string-to-number (match-string 1 output)))
+                      ;; Remove the exit code marker from output
+                      (setq output (replace-regexp-in-string "__EXIT_CODE__:[0-9]+\n?" "" output)))
+                    
+                    ;; Clean up the output (remove command echo and prompt)
+                    (setq output (replace-regexp-in-string 
+                                 (concat "^.*" (regexp-quote command-with-exit-code) "\r?\n") 
+                                 "" output))
+                    
+                    (list :success (= exit-code 0)
+                          :stdout output 
+                          :stderr "" 
+                          :exit-code exit-code 
+                          :timeout nil 
+                          :working-directory working-dir)))))))))))
 
 (defun claude-code-terminal-execute-command-simple (terminal-id command &optional project-root)
   "Simple version of command execution for backward compatibility."
@@ -640,12 +825,23 @@ Returns a plist with :success, :stdout, :stderr, :exit-code, :timeout, :working-
   (remhash terminal-id claude-code-terminal-shell-stack)
   (remhash terminal-id claude-code-terminal-embedded-shells)
   (remhash terminal-id claude-code-terminal-last-command-line)
+  
+  ;; Cancel pending check timer
   (let ((timer (gethash terminal-id claude-code-terminal-pending-check)))
     (when timer
       (cancel-timer timer)
       (remhash terminal-id claude-code-terminal-pending-check)
       (when claude-code-terminal-debug-mode
-        (message "[DEBUG] Cancelled monitoring timer")))))
+        (message "[DEBUG] Cancelled monitoring timer"))))
+  
+  ;; Cancel async command timer
+  (let ((async-info (gethash terminal-id claude-code-terminal-async-commands)))
+    (when async-info
+      (when-let ((async-timer (plist-get async-info :timer)))
+        (cancel-timer async-timer)
+        (when claude-code-terminal-debug-mode
+          (message "[DEBUG] Cancelled async command timer")))
+      (remhash terminal-id claude-code-terminal-async-commands))))
 
 ;;; Cleanup
 
@@ -659,6 +855,19 @@ Returns a plist with :success, :stdout, :stderr, :exit-code, :timeout, :working-
                      (push session live-sessions))))
                (puthash project-root live-sessions claude-code-terminal-sessions)))
            claude-code-terminal-sessions))
+
+;; Auto-cleanup sentinel for vterm process exit
+(defun claude-code-terminal--vterm-exit-sentinel (process event)
+  "Kill buffer when vterm process exits cleanly (via C-d or exit)."
+  (when (and (not (process-live-p process))
+             (string-match-p "\\(finished\\|exited\\)" event))
+    (let ((buf (process-buffer process)))
+      (when (and (buffer-live-p buf)
+                 (with-current-buffer buf
+                   (bound-and-true-p claude-code-terminal-id)))
+        (message "Terminal %s closed" 
+                 (with-current-buffer buf claude-code-terminal-id))
+        (kill-buffer buf)))))
 
 ;; Add cleanup hook
 (add-hook 'kill-buffer-hook 
@@ -1046,7 +1255,8 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
     ;; Override C-u for terminal switching (takes precedence over universal-argument)
     (define-key map (kbd "C-u") #'claude-code-terminal-switch)
     ;; Override C-f for terminal prefix cycling (only in terminal buffers)
-    (define-key map (kbd "C-f") #'claude-code-terminal-cycle-prefix)
+    (define-key map (kbd "C-f") #'claude-code-terminal-switch-recent)
+    (define-key map (kbd "C-g") #'claude-code-terminal-cycle-prefix)
     map)
   "Keymap for Claude Code terminal mode.")
 
@@ -1121,6 +1331,12 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
   :keymap claude-code-terminal-mode-map
   (if claude-code-terminal-mode
       (progn
+        ;; Setup auto-cleanup when vterm process exits
+        (when (and (derived-mode-p 'vterm-mode)
+                   (get-buffer-process (current-buffer)))
+          (set-process-sentinel (get-buffer-process (current-buffer))
+                               #'claude-code-terminal--vterm-exit-sentinel))
+        
         ;; Ensure mode line is visible in terminal buffers
         ;; (setq-local mode-line-format mode-line-format)
         ;; (when (eq mode-line-format nil)
@@ -1239,8 +1455,8 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
                        (interactive)
                        (delete-frame)
                        (message "Claude command cancelled")))
-      (local-set-key (kbd "C-g") 
-                     (lambda () 
+      (local-set-key (kbd "C-g")
+                     (lambda ()
                        (interactive)
                        (delete-frame)
                        (message "Claude command cancelled")))
@@ -1313,10 +1529,15 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
   (evil-define-key 'insert claude-code-terminal-mode-map (kbd "s-k") 'my-layout-smart-claude-code)
   (evil-define-key 'normal claude-code-terminal-mode-map (kbd "s-k") 'my-layout-smart-claude-code)
   
-  ;; Evil mode bindings for terminal prefix cycling - only in terminal buffers
-  (evil-define-key 'insert claude-code-terminal-mode-map (kbd "C-f") 'claude-code-terminal-cycle-prefix)
-  (evil-define-key 'normal claude-code-terminal-mode-map (kbd "C-f") 'claude-code-terminal-cycle-prefix)
-  (evil-define-key 'emacs claude-code-terminal-mode-map (kbd "C-f") 'claude-code-terminal-cycle-prefix)
+  ;; Evil mode bindings for terminal quick switching - only in terminal buffers
+  (evil-define-key 'insert claude-code-terminal-mode-map (kbd "C-f") 'claude-code-terminal-switch-recent)
+  (evil-define-key 'normal claude-code-terminal-mode-map (kbd "C-f") 'claude-code-terminal-switch-recent)
+  (evil-define-key 'emacs claude-code-terminal-mode-map (kbd "C-f") 'claude-code-terminal-switch-recent)
+  
+  ;; Override Evil C-g for terminal prefix cycling in all states
+  (evil-define-key 'insert claude-code-terminal-mode-map (kbd "C-g") 'claude-code-terminal-cycle-prefix)
+  (evil-define-key 'normal claude-code-terminal-mode-map (kbd "C-g") 'claude-code-terminal-cycle-prefix)
+  (evil-define-key 'emacs claude-code-terminal-mode-map (kbd "C-g") 'claude-code-terminal-cycle-prefix)
   
   ;; Evil mode bindings for shell nesting commands
   (evil-define-key 'insert claude-code-terminal-mode-map (kbd "C-c C-m") 'claude-code-terminal-mark-embedded)

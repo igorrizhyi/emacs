@@ -21,7 +21,7 @@
 (require 'my-navigation)
 (require 'my-goto-last-change)
 ;; (require 'my-smart-splits)
-(require 'my-smart-autosave)
+;; (require 'my-smart-autosave)
 ;; (require 'my-window-layout)
 (require 'my-external-file-indicator)
 (require 'my-jump-animation)
@@ -32,6 +32,9 @@
 (require 'my-search)
 (require 'my-eshell)
 (require' claude-code-emacs)
+
+;; File associations
+(add-to-list 'auto-mode-alist '("\\.jstxt\\'" . js-mode))
 
 ;; Disable automatic project switching when opening files
 (setq projectile-track-known-projects-automatically nil)
@@ -86,8 +89,8 @@
 (setq copilot-indent-offset-warning-disable 1)
 
 ;; Enable smart auto-save that respects Evil mode states
-(setq my-smart-autosave-delay 2)  ; Wait 3 seconds after last change before saving
-(my-smart-autosave-global-mode 1) ; Enable globally for all file buffers
+;; (setq my-smart-autosave-delay 2)  ; Wait 3 seconds after last change before saving
+;; (my-smart-autosave-global-mode 1) ; Enable globally for all file buffers
 
 ;; Enable external file indicator to highlight dependency files
 (my-external-file-indicator-mode 1)
@@ -668,9 +671,10 @@
   ;; Also fix for Evil ex command mode (:)
   (define-key evil-ex-completion-map (kbd "C-v") #'yank))
 
-;; Enable C-c v paste in eat buffers
+;; Enable C-c v and C-v paste in eat buffers
 (with-eval-after-load 'eat
-  (define-key eat-mode-map (kbd "C-c v") 'eat-yank))
+  (define-key eat-mode-map (kbd "C-c v") 'eat-yank)
+  (define-key eat-mode-map (kbd "C-v") 'eat-yank))
 
 ;; Global keybinding for claude-code-terminal-create
 (map! "C-c c" #'claude-code-terminal-create)
@@ -714,7 +718,7 @@
 
 ;; Override s key to perform search instead of substitute
 (after! evil
-  (define-key evil-normal-state-map (kbd "s") #'evil-ex-search-forward))
+  (define-key evil-normal-state-map (kbd "s") #'save-buffer))
 
 ;; Window layout key bindings with SPC-w prefix (window management)
 (map! :leader
