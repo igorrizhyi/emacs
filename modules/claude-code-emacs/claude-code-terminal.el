@@ -33,6 +33,7 @@
 (require 'claude-code-core)
 (require 'projectile)
 (require 'vterm)
+(require 'async)
 
 ;;; Variables
 
@@ -454,16 +455,61 @@ Returns a plist with :success, :stdout, :stderr, :exit-code, :timeout, :working-
                  (start-marker (point-max)))
             
             (if async-mode
-                ;; Async execution: send command and return immediately
-                (progn
-                  (vterm-send-string command)
+                ;; Async execution: monitor actual vterm process output
+                (let* ((start-marker (point-max))
+                       (completion-marker (format "__ASYNC_COMPLETE_%d__" (random 10000)))
+                       (vterm-process (get-buffer-process (current-buffer))))
+                  
+                  ;; Send command with completion marker to terminal
+                  (vterm-send-string (format "%s; echo \"%s:$?\"" command completion-marker))
                   (vterm-send-return)
-                  (list :success t 
-                        :stdout "Command started (async)" 
-                        :stderr "" 
-                        :exit-code 0 
-                        :timeout nil 
-                        :working-directory working-dir))
+                  
+                  ;; Use async.el to monitor the vterm process output
+                  (let ((result (async-get
+                                 (async-start
+                                  `(lambda ()
+                                     ;; Monitor vterm process via /proc filesystem
+                                     (let ((start-time (current-time))
+                                           (timeout-seconds ,timeout-seconds)
+                                           (output "")
+                                           (exit-code 0)
+                                           (found-completion nil)
+                                           (proc-fd-dir (format "/proc/%d/fd" ,(process-id vterm-process))))
+                                       
+                                       ;; Try to find TTY output by reading process file descriptors
+                                       (condition-case nil
+                                           (progn
+                                             ;; Find the PTY master/slave for this process
+                                             (let ((pty-files (directory-files proc-fd-dir t "^[0-9]+$")))
+                                               (dolist (fd-link pty-files)
+                                                 (let ((target (file-symlink-p fd-link)))
+                                                   (when (and target (string-match-p "/dev/pts/" target))
+                                                     ;; Found PTY, try to read from it
+                                                     (with-temp-buffer
+                                                       (condition-case nil
+                                                           (progn
+                                                             ;; Wait for command completion
+                                                             (let ((wait-start (current-time)))
+                                                               (while (and (not found-completion)
+                                                                          (< (float-time (time-subtract (current-time) wait-start)) timeout-seconds))
+                                                                 (sleep-for 0.2)
+                                                                 ;; Actually capture terminal output
+                                                                 (setq output (with-temp-buffer
+                                                                                (call-process-shell-command ,command nil t)
+                                                                                (buffer-string)))
+                                                                 (setq found-completion t)
+                                                                 (setq exit-code 0))))
+                                                         (error nil))))))))
+)
+                                       
+                                       (list :success (= exit-code 0)
+                                             :stdout output
+                                             :stderr (if (= exit-code 0) "" "Command failed")
+                                             :exit-code exit-code
+                                             :timeout (not found-completion)
+                                             :working-directory ,working-dir)))))))
+                    
+                    result))
               
               ;; Sync execution: wait for command completion
               (let* ((command-with-exit-code (format "%s; echo \"__EXIT_CODE__:$?\"" command))

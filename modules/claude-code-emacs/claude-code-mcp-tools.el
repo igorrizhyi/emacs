@@ -70,7 +70,7 @@
 ;; Terminal function declarations
 (declare-function claude-code-terminal-create "claude-code-terminal" (&optional directory))
 (declare-function claude-code-terminal-get-content "claude-code-terminal" (terminal-id &optional project-root))
-(declare-function claude-code-terminal-execute-command "claude-code-terminal" (terminal-id command &optional project-root))
+(declare-function claude-code-terminal-execute-command "claude-code-terminal" (terminal-id command &optional project-root timeout async))
 (declare-function claude-code-terminal-list-active "claude-code-terminal" ())
 (declare-function claude-code-terminal-get-sessions "claude-code-terminal" (&optional project-root))
 (declare-function claude-code-terminal-get-by-id "claude-code-terminal" (terminal-id &optional project-root))
@@ -882,38 +882,38 @@ Shows confirmation popup before executing and includes buffer corruption detecti
           (claude-code-mcp-init-command-state terminal-id)
           
           (condition-case exec-err
-              (let ((result (claude-code-terminal-execute-command terminal-id command project-root timeout-duration t)))
-                (unless result
-                  (error "Command execution returned no result"))
-                
-                ;; Check if command was interrupted due to large output
-                (let* ((state (gethash terminal-id claude-code-mcp-command-states))
-                       (was-interrupted (and state (claude-code-mcp-command-state-interrupted state)))
-                       (large-output (and state (claude-code-mcp-command-state-large-output-detected state))))
-                  
-                  ;; Clean up command state
-                  (remhash terminal-id claude-code-mcp-command-states)
-                  
-                  ;; Return formatted result with interruption info
-                  `((success . ,(plist-get result :success))
-                    (message . ,(cond
-                                 (large-output "Command produced large output and was interrupted")
-                                 ((plist-get result :success) "Command executed successfully")
-                                 (t "Command execution failed")))
-                    (terminalId . ,terminal-id)
-                    (command . ,command)
-                    (stdout . ,(or (plist-get result :stdout) ""))
-                    (stderr . ,(or (plist-get result :stderr) ""))
-                    (exitCode . ,(or (plist-get result :exit-code) 1))
-                    (timeout . ,(if (plist-get result :timeout) t json-false))
-                    (interrupted . ,(if was-interrupted t json-false))
-                    (largeOutput . ,(if large-output t json-false))
-                    (workingDirectory . ,(or (plist-get result :working-directory) project-root default-directory))
-                    (error . ,(cond
-                               (large-output "Command output exceeded size limit")
-                               ((not (plist-get result :success))
-                                (or (plist-get result :stderr) "Command execution failed"))
-                               (t ""))))))
+              ;; Return async marker instead of blocking
+              (let ((async-id (format "term-cmd-%d" (random 100000))))
+                (list :async-pending t
+                      :async-id async-id
+                      :async-callback
+                      (lambda (callback)
+                        ;; Send command to terminal for visual feedback
+                        (with-current-buffer (claude-code-terminal-get-by-id terminal-id project-root)
+                          (vterm-send-string command)
+                          (vterm-send-return))
+                        
+                        ;; Execute async with real callback
+                        (claude-code-terminal-execute-command-async 
+                         terminal-id 
+                         command 
+                         (lambda (result)
+                           ;; Convert result to MCP format and call callback
+                           (let* ((mcp-result `((success . ,(plist-get result :success))
+                                               (message . ,(if (plist-get result :success) "Command executed successfully" "Command failed"))
+                                               (terminalId . ,terminal-id)
+                                               (command . ,command)
+                                               (stdout . ,(or (plist-get result :stdout) ""))
+                                               (stderr . ,(or (plist-get result :stderr) ""))
+                                               (exitCode . ,(or (plist-get result :exit-code) 1))
+                                               (timeout . ,(if (plist-get result :timeout) t json-false))
+                                               (interrupted . ,json-false)
+                                               (largeOutput . ,json-false)
+                                               (workingDirectory . ,(or (plist-get result :working-directory) project-root default-directory))
+                                               (error . ,(if (plist-get result :success) "" "Command failed")))))
+                             (funcall callback mcp-result)))
+                         project-root
+                         timeout-duration))))
             
             (args-out-of-range
              ;; Buffer corruption occurred during execution

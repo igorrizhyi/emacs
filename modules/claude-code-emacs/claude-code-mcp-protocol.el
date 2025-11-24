@@ -125,7 +125,22 @@
     (if (fboundp handler)
         (condition-case err
             (let ((result (funcall handler params)))
-              (claude-code-mcp-send-response id result nil project-root))
+              ;; Check if result is async (contains :async-pending marker)
+              (if (and (listp result) (eq (plist-get result :async-pending) t))
+                  ;; Async operation - don't send response yet
+                  (let* ((async-id (plist-get result :async-id))
+                         (async-callback (plist-get result :async-callback)))
+                    (message "Async operation started: %s" async-id)
+                    ;; Store pending async request
+                    (claude-code-mcp-store-async-request id async-id project-root)
+                    ;; Execute async operation with callback
+                    (funcall async-callback 
+                             (lambda (async-result)
+                               ;; Send response when async completes
+                               (claude-code-mcp-send-response id async-result nil project-root)
+                               (claude-code-mcp-remove-async-request id project-root))))
+                ;; Synchronous result - send immediately
+                (claude-code-mcp-send-response id result nil project-root)))
           (error
            (message "Error in handler %s: %s" handler err)
            (claude-code-mcp-send-response id nil
@@ -136,6 +151,29 @@
                                            `((code . -32601)
                                              (message . ,(format "Method not found: %s" method)))
                                            project-root))))
+
+;;; Async Request Management
+
+(defvar claude-code-mcp-async-requests (make-hash-table :test 'equal)
+  "Hash table storing pending async requests by project-root.")
+
+(defun claude-code-mcp-store-async-request (request-id async-id project-root)
+  "Store async REQUEST-ID with ASYNC-ID for PROJECT-ROOT."
+  (let ((project-requests (gethash project-root claude-code-mcp-async-requests)))
+    (unless project-requests
+      (setq project-requests (make-hash-table :test 'equal))
+      (puthash project-root project-requests claude-code-mcp-async-requests))
+    (puthash request-id async-id project-requests)))
+
+(defun claude-code-mcp-remove-async-request (request-id project-root)
+  "Remove async REQUEST-ID for PROJECT-ROOT."
+  (when-let ((project-requests (gethash project-root claude-code-mcp-async-requests)))
+    (remhash request-id project-requests)))
+
+(defun claude-code-mcp-get-async-request (request-id project-root)
+  "Get async request info for REQUEST-ID in PROJECT-ROOT."
+  (when-let ((project-requests (gethash project-root claude-code-mcp-async-requests)))
+    (gethash request-id project-requests)))
 
 ;;; WebSocket Event Handlers
 
