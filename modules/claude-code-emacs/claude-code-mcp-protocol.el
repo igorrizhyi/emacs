@@ -137,8 +137,11 @@
                     (funcall async-callback 
                              (lambda (async-result)
                                ;; Send response when async completes
+                               (message "Async callback fired! Sending response for request %s" id)
+                               (message "Async result: %S" async-result)
                                (claude-code-mcp-send-response id async-result nil project-root)
-                               (claude-code-mcp-remove-async-request id project-root))))
+                               (claude-code-mcp-remove-async-request id project-root)
+                               (message "Response sent successfully"))))
                 ;; Synchronous result - send immediately
                 (claude-code-mcp-send-response id result nil project-root)))
           (error

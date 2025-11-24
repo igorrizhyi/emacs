@@ -71,7 +71,7 @@ Each value is a list of shell contexts: ((command prompt) ...), newest first.")
 
 (defvar claude-code-terminal-async-commands (make-hash-table :test 'equal)
   "Hash table tracking asynchronous command execution for each terminal.
-Each entry is a plist with :start-time :start-marker :callback :timer :command.")
+Each entry is a plist with :start-time :start-marker :callback :timer :command :meaningful-found :wait-start.")
 
 (defvar claude-code-terminal-embedded-shells (make-hash-table :test 'equal)
   "Hash table tracking active embedded shell commands for headline display.")
@@ -303,16 +303,20 @@ Falls back to current context, last created, or any active terminal."
          (callback (plist-get async-info :callback))
          (command (plist-get async-info :command))
          (timer (plist-get async-info :timer))
-         (timeout-seconds 30))
+         (meaningful-found (plist-get async-info :meaningful-found))
+         (wait-start (plist-get async-info :wait-start))
+         (timeout-seconds 30)
+         (wait-after-meaningful 0.5))
     
     (when (and async-info buffer (buffer-live-p buffer))
       (with-current-buffer buffer
         (let* ((current-time (current-time))
                (elapsed (float-time (time-subtract current-time start-time)))
                (output (buffer-substring-no-properties start-marker (point-max)))
-               (cleaned-output (replace-regexp-in-string 
-                               (concat "^.*" (regexp-quote command) "\r?\n") 
-                               "" output)))
+               ;; Try to remove just the command echo line, but be conservative
+               (cleaned-output (if (string-match (concat "\\(^.*\\b" (regexp-quote command) "\\b.*?\r?\n\\)\\(.*\\)") output)
+                                  (match-string 2 output)
+                                output)))
           
           (cond
            ;; Timeout reached
@@ -326,9 +330,9 @@ Falls back to current context, last created, or any active terminal."
                                     :timeout t
                                     :working-directory default-directory)))
            
-           ;; Got meaningful output
-           ((and (> (length cleaned-output) 0)
-                 (not (string-match-p "^\\s-*$" cleaned-output)))
+           ;; Already found meaningful output, now check if wait period is over
+           ((and meaningful-found wait-start
+                 (>= (float-time (time-subtract current-time wait-start)) wait-after-meaningful))
             (when timer (cancel-timer timer))
             (remhash terminal-id claude-code-terminal-async-commands)
             (funcall callback (list :success t
@@ -338,7 +342,16 @@ Falls back to current context, last created, or any active terminal."
                                     :timeout nil
                                     :working-directory default-directory)))
            
-           ;; No output yet, continue checking
+           ;; Found meaningful output for the first time - start wait period  
+           ((and (not meaningful-found)
+                 (> (length output) 10)) ; Just check we have substantial output
+            ;; Mark that we found meaningful output and start wait timer
+            (plist-put (gethash terminal-id claude-code-terminal-async-commands) :meaningful-found t)
+            (plist-put (gethash terminal-id claude-code-terminal-async-commands) :wait-start current-time)
+            ;; Continue checking
+            nil)
+           
+           ;; No meaningful output yet, continue checking
            (t
             ;; Timer will call this function again
             nil)))))))
@@ -372,12 +385,17 @@ Returns immediately without blocking."
                 (cancel-timer existing-timer))
               (remhash terminal-id claude-code-terminal-async-commands)))
           
-          ;; Start the command
+          ;; Set marker BEFORE sending command to catch all output
           (let* ((start-marker (point-max))
                  (start-time (current-time))
-                 (check-interval 0.2) ; Check every 200ms
-                 (timer (run-with-timer check-interval check-interval 
+                 (check-interval 1) ; Check every 100ms
+                 ;; Start timer with initial delay to let command begin execution
+                 (timer (run-with-timer 0.05 check-interval 
                                        'claude-code-terminal-async-check-output terminal-id)))
+          
+          ;; Send the command AFTER setting up monitoring
+          (vterm-send-string command)
+          (vterm-send-return)
             
             ;; Store async command info
             (puthash terminal-id 
@@ -385,12 +403,10 @@ Returns immediately without blocking."
                            :start-marker start-marker
                            :callback callback
                            :timer timer
-                           :command command)
+                           :command command
+                           :meaningful-found nil
+                           :wait-start nil)
                      claude-code-terminal-async-commands)
-            
-            ;; Send the command
-            (vterm-send-string command)
-            (vterm-send-return)
             
             ;; Return immediately
             (message "Command sent asynchronously: %s" command)))))))
@@ -459,57 +475,57 @@ Returns a plist with :success, :stdout, :stderr, :exit-code, :timeout, :working-
                 (let* ((start-marker (point-max))
                        (completion-marker (format "__ASYNC_COMPLETE_%d__" (random 10000)))
                        (vterm-process (get-buffer-process (current-buffer))))
-                  
+
                   ;; Send command with completion marker to terminal
                   (vterm-send-string (format "%s; echo \"%s:$?\"" command completion-marker))
                   (vterm-send-return)
                   
-                  ;; Use async.el to monitor the vterm process output
-                  (let ((result (async-get
-                                 (async-start
-                                  `(lambda ()
-                                     ;; Monitor vterm process via /proc filesystem
-                                     (let ((start-time (current-time))
-                                           (timeout-seconds ,timeout-seconds)
-                                           (output "")
-                                           (exit-code 0)
-                                           (found-completion nil)
-                                           (proc-fd-dir (format "/proc/%d/fd" ,(process-id vterm-process))))
-                                       
-                                       ;; Try to find TTY output by reading process file descriptors
-                                       (condition-case nil
-                                           (progn
-                                             ;; Find the PTY master/slave for this process
-                                             (let ((pty-files (directory-files proc-fd-dir t "^[0-9]+$")))
-                                               (dolist (fd-link pty-files)
-                                                 (let ((target (file-symlink-p fd-link)))
-                                                   (when (and target (string-match-p "/dev/pts/" target))
-                                                     ;; Found PTY, try to read from it
-                                                     (with-temp-buffer
-                                                       (condition-case nil
-                                                           (progn
-                                                             ;; Wait for command completion
-                                                             (let ((wait-start (current-time)))
-                                                               (while (and (not found-completion)
-                                                                          (< (float-time (time-subtract (current-time) wait-start)) timeout-seconds))
-                                                                 (sleep-for 0.2)
-                                                                 ;; Actually capture terminal output
-                                                                 (setq output (with-temp-buffer
-                                                                                (call-process-shell-command ,command nil t)
-                                                                                (buffer-string)))
-                                                                 (setq found-completion t)
-                                                                 (setq exit-code 0))))
-                                                         (error nil))))))))
-)
-                                       
-                                       (list :success (= exit-code 0)
-                                             :stdout output
-                                             :stderr (if (= exit-code 0) "" "Command failed")
-                                             :exit-code exit-code
-                                             :timeout (not found-completion)
-                                             :working-directory ,working-dir)))))))
+                  ;; Simple polling-based approach
+                  (let* ((start-time (current-time))
+                         (check-interval 0.1) ; Check every 100ms
+                         (last-content-length (length (buffer-substring-no-properties start-marker (point-max))))
+                         (stable-count 0)
+                         (min-stable-checks 3) ; Need 3 consecutive stable checks
+                         (output "")
+                         (exit-code 0)
+                         (found-completion nil))
                     
-                    result))
+                    ;; Poll for changes in buffer content
+                    (while (and (< (float-time (time-subtract (current-time) start-time)) timeout-seconds)
+                               (not found-completion))
+                      (sleep-for check-interval)
+                      
+                      ;; Check current buffer content from our marker
+                      (let* ((current-content (buffer-substring-no-properties start-marker (point-max)))
+                             (current-length (length current-content)))
+                        
+                        ;; Check if we found the completion marker
+                        (when (string-match (format "%s:\\([0-9]+\\)" completion-marker) current-content)
+                          (setq exit-code (string-to-number (match-string 1 current-content)))
+                          (setq found-completion t)
+                          (setq output current-content))
+                        
+                        ;; Track stability (no new output for a few checks)
+                        (if (= current-length last-content-length)
+                            (setq stable-count (1+ stable-count))
+                          (setq stable-count 0
+                                last-content-length current-length))
+                        
+                        ;; If we have output but no completion marker, check if it's stable
+                        (when (and (> current-length 0)
+                                   (not found-completion)
+                                   (>= stable-count min-stable-checks))
+                          ;; Output seems stable, assume command finished
+                          (setq output current-content
+                                found-completion t
+                                exit-code 0))))
+                    
+                    (list :success (and found-completion (= exit-code 0))
+                          :stdout (or output "")
+                          :stderr (if found-completion "" "Command timed out or no output")
+                          :exit-code exit-code
+                          :timeout (not found-completion)
+                          :working-directory working-dir)))
               
               ;; Sync execution: wait for command completion
               (let* ((command-with-exit-code (format "%s; echo \"__EXIT_CODE__:$?\"" command))

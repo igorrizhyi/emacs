@@ -889,9 +889,9 @@ Shows confirmation popup before executing and includes buffer corruption detecti
                       :async-callback
                       (lambda (callback)
                         ;; Send command to terminal for visual feedback
-                        (with-current-buffer (claude-code-terminal-get-by-id terminal-id project-root)
-                          (vterm-send-string command)
-                          (vterm-send-return))
+                        ;; (with-current-buffer (claude-code-terminal-get-by-id terminal-id project-root)
+                        ;;   (vterm-send-string command)
+                        ;;   (vterm-send-return))
                         
                         ;; Execute async with real callback
                         (claude-code-terminal-execute-command-async 
@@ -899,6 +899,7 @@ Shows confirmation popup before executing and includes buffer corruption detecti
                          command 
                          (lambda (result)
                            ;; Convert result to MCP format and call callback
+                           (message "Terminal async callback received! Result: %S" result)
                            (let* ((mcp-result `((success . ,(plist-get result :success))
                                                (message . ,(if (plist-get result :success) "Command executed successfully" "Command failed"))
                                                (terminalId . ,terminal-id)
@@ -911,6 +912,7 @@ Shows confirmation popup before executing and includes buffer corruption detecti
                                                (largeOutput . ,json-false)
                                                (workingDirectory . ,(or (plist-get result :working-directory) project-root default-directory))
                                                (error . ,(if (plist-get result :success) "" "Command failed")))))
+                             (message "Calling MCP callback with: %S" mcp-result)
                              (funcall callback mcp-result)))
                          project-root
                          timeout-duration))))
