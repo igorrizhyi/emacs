@@ -712,9 +712,10 @@
    (t
     (delete-window))))
 
-;; Global keybinding for smart Q
+;; Global keybinding for smart Q and kill buffer with q
 (map! :map evil-normal-state-map
-      "Q" #'my/smart-q)
+      "Q" #'my/smart-q
+      "q" #'kill-current-buffer)
 
 ;; Override s key to perform search instead of substitute
 (after! evil
