@@ -602,8 +602,8 @@ Returns a plist with :success, :stdout, :stderr, :exit-code, :timeout, :working-
     (let ((trimmed (string-trim line)))
       (cond
        ;; Git-style prompts - extract everything before the last command (if there is one)
-       ((string-match "^\\(.*[✗✓⚡➜].*?\\)\\s-+\\([^[:space:]]+\\)\\s*$" trimmed)
-        (string-trim (match-string 1 trimmed)))
+       ;; ((string-match "^\\(.*[✗✓⚡➜].*?\\)\\s-+\\([^[:space:]]+\\)\\s*$" trimmed)
+       ;;  (string-trim (match-string 1 trimmed)))
        ;; Standard prompts ending with $ # > followed by command
        ((string-match "^\\(.*?[$#>]+\\)\\s-+\\([^[:space:]]+\\)" trimmed)
         (string-trim (match-string 1 trimmed)))
@@ -611,8 +611,8 @@ Returns a plist with :success, :stdout, :stderr, :exit-code, :timeout, :working-
        ((string-match "[$#>✗✓⚡➜]\\s-*$" trimmed)
         (string-trim trimmed))
        ;; Fallback: try to remove what looks like a command at the end
-       ((string-match "^\\(.*?\\)\\s-+[^[:space:]]+\\s*$" trimmed)
-        (string-trim (match-string 1 trimmed)))
+       ;; ((string-match "^\\(.*?\\)\\s-+[^[:space:]]+\\s*$" trimmed)
+       ;;  (string-trim (match-string 1 trimmed)))
        ;; If nothing matches, return the whole line
        (t (string-trim trimmed))))))
 
@@ -786,9 +786,7 @@ Returns a plist with :success, :stdout, :stderr, :exit-code, :timeout, :working-
           (when (and (bound-and-true-p claude-code-terminal-mode)
                      (bound-and-true-p claude-code-terminal-id)
                      (string= claude-code-terminal-id terminal-id))
-            (force-mode-line-update))
-          
-          (message "Context changed"))))))
+            (force-mode-line-update)))))))
 
 (defun claude-code-terminal-check-context-exit (terminal-id current-prefix)
   "Check if we've exited from an embedded shell context."

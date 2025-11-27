@@ -41,6 +41,7 @@
 (require 'ediff)
 (require 'alert nil t)  ;; Optional dependency
 (require 'claude-code-terminal)
+(require 'claude-code-mcp-protocol)  ;; For async request management
 (require 'cl-lib)
 
 ;; LSP function declarations
@@ -71,9 +72,11 @@
 (declare-function claude-code-terminal-create "claude-code-terminal" (&optional directory))
 (declare-function claude-code-terminal-get-content "claude-code-terminal" (terminal-id &optional project-root))
 (declare-function claude-code-terminal-execute-command "claude-code-terminal" (terminal-id command &optional project-root timeout async))
+(declare-function claude-code-terminal-execute-command-async "claude-code-terminal" (terminal-id command callback &optional project-root timeout))
 (declare-function claude-code-terminal-list-active "claude-code-terminal" ())
 (declare-function claude-code-terminal-get-sessions "claude-code-terminal" (&optional project-root))
 (declare-function claude-code-terminal-get-by-id "claude-code-terminal" (terminal-id &optional project-root))
+(declare-function claude-code-terminal-get-last-focused "claude-code-terminal" ())
 
 ;;; MCP Tool Handlers
 
