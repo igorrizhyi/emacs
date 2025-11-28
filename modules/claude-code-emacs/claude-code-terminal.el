@@ -79,9 +79,16 @@ Each entry is a plist with :start-time :start-marker :callback :timer :command :
 (defvar claude-code-terminal-check-delay 0.8
   "Delay in seconds before checking prompt after Enter key press.")
 
-(defvar claude-code-terminal-ignored-commands
-  '("cd" "ls" "pwd" "echo" "export" "set" "unset" "history" "clear" "exit")
-  "Commands that commonly change prompts temporarily but don't create embedded contexts.")
+(defvar claude-code-terminal-monitored-commands
+  '("kubectl" "docker" "ssh" "bash" "zsh" "sh" "python" "mysql" "psql" "redis-cli" 
+    "vim" "emacs" "nano" "htop" "top" "watch" "tail" "less" "more" "man" "git"
+    "npm" "node" "make" "cargo" "go" "java" "mvn" "gradle" "terraform" "ansible"
+    "gdb" "lldb" "k9s" "helm" "minikube" "vagrant" "tmux" "screen" "nohup"
+    "jupyter" "ipython" "R" "sqlite3" "mongo" "curl" "wget" "nc" "telnet" "ping"
+    "traceroute" "mtr" "dig" "nslookup" "iperf" "iperf3" "tcpdump" "wireshark"
+    "strace" "ltrace" "perf" "valgrind" "gprof" "kbash" "klogs" "kedit")
+  "Commands that should be monitored for embedded shell context and status display.
+These commands typically create interactive sessions or long-running processes.")
 
 (defvar claude-code-terminal-debug-mode nil
   "Enable debug messages for shell nesting detection.")
@@ -309,10 +316,13 @@ Falls back to current context, last created, or any active terminal."
          (wait-after-meaningful 0.5))
     
     (when (and async-info buffer (buffer-live-p buffer))
-      (with-current-buffer buffer
+      (condition-case err
+          (with-current-buffer buffer
         (let* ((current-time (current-time))
                (elapsed (float-time (time-subtract current-time start-time)))
-               (output (buffer-substring-no-properties start-marker (point-max)))
+               ;; Safely get output, handling invalid markers
+               (safe-start (max (point-min) (min start-marker (point-max))))
+               (output (buffer-substring-no-properties safe-start (point-max)))
                ;; Try to remove just the command echo line, but be conservative
                (cleaned-output (if (string-match (concat "\\(^.*\\b" (regexp-quote command) "\\b.*?\r?\n\\)\\(.*\\)") output)
                                   (match-string 2 output)
@@ -354,7 +364,12 @@ Falls back to current context, last created, or any active terminal."
            ;; No meaningful output yet, continue checking
            (t
             ;; Timer will call this function again
-            nil)))))))
+            nil))))
+        ;; Error handling - cancel timer and cleanup on any error
+        (error
+         (when timer (cancel-timer timer))
+         (remhash terminal-id claude-code-terminal-async-commands)
+         (message "Terminal async monitoring error for %s: %s" terminal-id (error-message-string err)))))))
 
 (defun claude-code-terminal-execute-command-async (terminal-id command callback &optional project-root timeout)
   "Execute COMMAND asynchronously in terminal TERMINAL-ID.
@@ -674,11 +689,13 @@ Returns a plist with :success, :stdout, :stderr, :exit-code, :timeout, :working-
        ;; If nothing matches, return the whole line
        (t trimmed)))))
 
-(defun claude-code-terminal-should-ignore-command-p (command)
-  "Return t if COMMAND should be ignored for nesting detection."
-  (or (not command)
-      (member command claude-code-terminal-ignored-commands)
-      (string-match-p "^\\s-*$" command)))
+(defun claude-code-terminal-should-monitor-command-p (command)
+  "Return t if COMMAND should be monitored for nesting detection.
+Uses a whitelist approach - only predefined commands are monitored."
+  (and command
+       (not (string-match-p "^\\s-*$" command))
+       (member command claude-code-terminal-monitored-commands)))
+
 
 (defun claude-code-terminal-get-current-line ()
   "Get the current line content in the terminal."
@@ -843,21 +860,21 @@ Returns a plist with :success, :stdout, :stderr, :exit-code, :timeout, :working-
         (message "[DEBUG]   Command line: %s" current-line)
         (message "[DEBUG]   Extracted command: %s" command)
         (message "[DEBUG]   Current prefix: %s" current-prefix)
-        (message "[DEBUG]   Should ignore: %s" (claude-code-terminal-should-ignore-command-p command)))
-      
-      ;; Cancel any existing timer
-      (when existing-timer
-        (cancel-timer existing-timer)
-        (when claude-code-terminal-debug-mode
-          (message "[DEBUG]   Cancelled existing timer")))
+        (message "[DEBUG]   Should monitor: %s" (claude-code-terminal-should-monitor-command-p command)))
       
       ;; Store command info for later comparison
       (puthash terminal-id (list current-line current-prefix command) claude-code-terminal-last-command-line)
       
-      ;; If command is not ignored, immediately set header and start monitoring
-      (when (and command (not (claude-code-terminal-should-ignore-command-p command)))
+      ;; If command should be monitored, cancel existing timer and start new monitoring
+      (when (claude-code-terminal-should-monitor-command-p command)
+        ;; Cancel existing timer only when starting new monitoring
+        (when existing-timer
+          (cancel-timer existing-timer)
+          (when claude-code-terminal-debug-mode
+            (message "[DEBUG]   Cancelled existing timer for new monitored command")))
+        
         (when claude-code-terminal-debug-mode
-          (message "[DEBUG] Command not ignored - setting header immediately"))
+          (message "[DEBUG] Command should be monitored - setting header immediately"))
         
         ;; Extract full command for display (everything after the prompt)
         (let* ((full-command (claude-code-terminal-extract-full-command current-line))
@@ -875,7 +892,44 @@ Returns a plist with :success, :stdout, :stderr, :exit-code, :timeout, :working-
           (force-mode-line-update)
           
           ;; Start monitoring for the clean prefix (without command)
-          (claude-code-terminal-start-monitoring terminal-id clean-prefix))))))
+          (claude-code-terminal-start-monitoring terminal-id clean-prefix)))
+      
+      ;; Even if no new monitored command was started, check if we've returned to a known prompt
+      ;; This handles cases like C-d exit where monitoring might have been canceled
+      (unless (claude-code-terminal-should-monitor-command-p command)
+        (let ((stack (gethash terminal-id claude-code-terminal-shell-stack)))
+          (when (and stack current-prefix)
+            ;; Check if current prompt matches any context in the stack
+            (let ((found-context nil)
+                  (index 0))
+              (dolist (context stack)
+                (let ((context-prefix (cadr context)))
+                  (when (and context-prefix 
+                             (string= current-prefix context-prefix)
+                             (not found-context))
+                    (setq found-context index)))
+                (setq index (1+ index)))
+              
+              (when found-context
+                (when claude-code-terminal-debug-mode
+                  (message "[DEBUG] Detected return to known context at index %s: %s" found-context current-prefix))
+                
+                ;; Pop the stack to the found context level
+                (let ((new-stack (nthcdr (1+ found-context) stack)))
+                  (if new-stack
+                      (progn
+                        (puthash terminal-id new-stack claude-code-terminal-shell-stack)
+                        (puthash terminal-id (caar new-stack) claude-code-terminal-embedded-shells)
+                        (when claude-code-terminal-debug-mode
+                          (message "[DEBUG] Popped stack to context: %s" (caar new-stack))))
+                    ;; Stack is empty, clear everything
+                    (remhash terminal-id claude-code-terminal-shell-stack)
+                    (remhash terminal-id claude-code-terminal-embedded-shells)
+                    (when claude-code-terminal-debug-mode
+                      (message "[DEBUG] Cleared all contexts - returned to base shell"))))
+                
+                ;; Force display update
+                (force-mode-line-update)))))))))
 
 (defun claude-code-terminal-reset-context (terminal-id)
   "Reset shell nesting context for TERMINAL-ID."
