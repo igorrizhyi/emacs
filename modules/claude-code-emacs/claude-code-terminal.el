@@ -1411,7 +1411,7 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
 (defun claude-code-terminal-header-line-with-state ()
   "Generate header line with terminal ID, embedded shell status, and current state background."
   (let* ((terminal-id claude-code-terminal-id)
-         (embedded-shell (gethash terminal-id claude-code-terminal-embedded-shells))
+         (shell-stack (gethash terminal-id claude-code-terminal-shell-stack))
          (state-name (claude-code-terminal-get-evil-state-name))
          ;; Check if this window is focused in the right chat layout position
          (is-focused-right (claude-code-terminal-is-in-focused-right-window))
@@ -1423,9 +1423,18 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
                      (claude-code-terminal-get-evil-state-foreground)))
          ;; Add very obvious text when focused
          (focus-indicator (if is-focused-right " ★★★ FOCUSED RIGHT WINDOW ★★★ " ""))
-         (text (if embedded-shell
-                   (format " :: %s :: %s %s" terminal-id embedded-shell focus-indicator)
-                 (format " :: %s %s" terminal-id focus-indicator)))
+         (text (cond
+                ;; No embedded shells
+                ((not shell-stack)
+                 (format " :: %s %s" terminal-id focus-indicator))
+                ;; Single embedded shell
+                ((= (length shell-stack) 1)
+                 (format " :: %s :: %s %s" terminal-id (caar shell-stack) focus-indicator))
+                ;; Multiple embedded shells - show first and last
+                (t
+                 (let ((first-command (car (car (last shell-stack))))  ; First item (deepest in stack)
+                       (last-command (caar shell-stack)))              ; Last item (top of stack)
+                   (format " :: %s :: %s :: %s %s" terminal-id first-command last-command focus-indicator)))))
          (width (window-width))
          (remaining-width (max 0 (- width (length text))))
          (full-line (concat text (make-string remaining-width ?\s))))
