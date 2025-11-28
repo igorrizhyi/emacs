@@ -1401,8 +1401,8 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
   (when (and (bound-and-true-p claude-code-terminal-id)
              (bound-and-true-p evil-mode))
     (if (eq evil-state 'normal)
-        ;; Normal mode - show grey background that stretches across remaining space
-        (let ((padding-length (max 0 (- (window-width) 40)))) ; Dynamic width based on window
+        ;; Normal mode - show grey background that fills all remaining space
+        (let ((padding-length (max 10 (window-width))))  ; Use full window width, let doom-modeline handle overflow
           (propertize (make-string padding-length ?\s)
                       'face '(:background "#666666")))
       ;; Other modes - transparent (no visual indicator)
@@ -1422,10 +1422,10 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
     "Display large evil state indicator for terminals."
     (claude-code-terminal-doom-modeline-evil-state))
   
-  ;; Add our segments to the default modeline with evil state indicator
+  ;; Add our segments to the default modeline with evil state indicator (no right side segments)
   (doom-modeline-def-modeline 'claude-terminal
     '(bar workspace-name window-number matches claude-code-terminal-id claude-code-terminal-commands claude-code-terminal-evil-state)
-    '(misc-info battery minor-modes input-method major-mode process vcs))
+    '())
   
   ;; Use our custom modeline in terminal buffers
   (add-hook 'claude-code-terminal-mode-hook
