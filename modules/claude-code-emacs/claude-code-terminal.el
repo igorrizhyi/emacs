@@ -1396,6 +1396,18 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
            (propertize (format " %s " last-command)
                        'face 'claude-code-terminal-current-command-face))))))))
 
+(defun claude-code-terminal-doom-modeline-evil-state ()
+  "Generate large evil state indicator that stretches across the modeline."
+  (when (and (bound-and-true-p claude-code-terminal-id)
+             (bound-and-true-p evil-mode))
+    (if (eq evil-state 'normal)
+        ;; Normal mode - show grey background that stretches across remaining space
+        (let ((padding-length (max 0 (- (window-width) 40)))) ; Dynamic width based on window
+          (propertize (make-string padding-length ?\s)
+                      'face '(:background "#666666")))
+      ;; Other modes - transparent (no visual indicator)
+      nil)))
+
 ;; Setup doom-modeline integration when the package is available
 (with-eval-after-load 'doom-modeline
   (doom-modeline-def-segment claude-code-terminal-id
@@ -1406,15 +1418,20 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
     "Display shell command stack with colored backgrounds."
     (claude-code-terminal-doom-modeline-commands))
   
-  ;; Add our segments to the default modeline (hide buffer-info, position, etc. since they're not useful in terminals)
+  (doom-modeline-def-segment claude-code-terminal-evil-state
+    "Display large evil state indicator for terminals."
+    (claude-code-terminal-doom-modeline-evil-state))
+  
+  ;; Add our segments to the default modeline with evil state indicator
   (doom-modeline-def-modeline 'claude-terminal
-    '(bar workspace-name window-number modals matches follow claude-code-terminal-id claude-code-terminal-commands remote-host)
-    '(compilation objed-state misc-info persp-name battery grip irc mu4e gnus github debug repl lsp minor-modes input-method indent-info buffer-encoding major-mode process vcs))
+    '(bar workspace-name window-number matches claude-code-terminal-id claude-code-terminal-commands claude-code-terminal-evil-state)
+    '(misc-info battery minor-modes input-method major-mode process vcs))
   
   ;; Use our custom modeline in terminal buffers
   (add-hook 'claude-code-terminal-mode-hook
             (lambda ()
               (doom-modeline-set-modeline 'claude-terminal))))
+  
 
 ;;; Mode Definition
 
@@ -1437,71 +1454,6 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
     map)
   "Keymap for Claude Code terminal mode.")
 
-(defun claude-code-terminal-mode-line-format ()
-  "Generate mode line format showing terminal ID."
-  (when (bound-and-true-p claude-code-terminal-id)
-    (propertize (format " [Terminal: %s]" claude-code-terminal-id)
-                'face 'mode-line-emphasis)))
-
-(defun claude-code-terminal-get-evil-state-background ()
-  "Get background color for current evil state."
-  (if (and (bound-and-true-p evil-mode) (bound-and-true-p evil-state))
-      (cond
-       ((eq evil-state 'normal) "#666666")
-       ((eq evil-state 'visual) "#666666")
-       ((eq evil-state 'insert) "#f5a623")
-       ((eq evil-state 'emacs) "#7ed321")
-       (t "#d0021b"))
-    "#999999"))
-
-(defun claude-code-terminal-get-evil-state-foreground ()
-  "Get foreground color for current evil state."
-  (if (and (bound-and-true-p evil-mode) (bound-and-true-p evil-state))
-      (cond
-       ((eq evil-state 'normal) "#ffffff")
-       ((eq evil-state 'visual) "#ffffff")
-       ((eq evil-state 'insert) "#000000")
-       ((eq evil-state 'emacs) "#000000")
-       (t "#ffffff"))
-    "#ffffff"))
-
-(defun claude-code-terminal-get-evil-state-name ()
-  "Get current evil state name."
-  (if (and (bound-and-true-p evil-mode) (bound-and-true-p evil-state))
-      (upcase (symbol-name evil-state))
-    "EMACS"))
-
-(defun claude-code-terminal-header-line-with-state ()
-  "Generate header line with terminal ID, embedded shell status, and current state background."
-  (let* ((terminal-id claude-code-terminal-id)
-         (shell-stack (gethash terminal-id claude-code-terminal-shell-stack))
-         (state-name (claude-code-terminal-get-evil-state-name))
-         ;; Check if this window is focused in the right chat layout position
-         (is-focused-right (claude-code-terminal-is-in-focused-right-window))
-         (bg-color (if is-focused-right
-                       "#ff0000"  ; BRIGHT RED for testing - very obvious
-                     (claude-code-terminal-get-evil-state-background)))
-         (fg-color (if is-focused-right
-                       "#ffffff"  ; White text for focused right window
-                     (claude-code-terminal-get-evil-state-foreground)))
-         ;; Add very obvious text when focused
-         (focus-indicator (if is-focused-right " ★★★ FOCUSED RIGHT WINDOW ★★★ " ""))
-         (text (cond
-                ;; No embedded shells
-                ((not shell-stack)
-                 (format " :: %s %s" terminal-id focus-indicator))
-                ;; Single embedded shell
-                ((= (length shell-stack) 1)
-                 (format " :: %s :: %s %s" terminal-id (caar shell-stack) focus-indicator))
-                ;; Multiple embedded shells - show first and last
-                (t
-                 (let ((first-command (car (car (last shell-stack))))  ; First item (deepest in stack)
-                       (last-command (caar shell-stack)))              ; Last item (top of stack)
-                   (format " :: %s :: %s :: %s %s" terminal-id first-command last-command focus-indicator)))))
-         (width (window-width))
-         (remaining-width (max 0 (- width (length text))))
-         (full-line (concat text (make-string remaining-width ?\s))))
-    (propertize full-line 'face `(:background ,bg-color :foreground ,fg-color :weight bold :height 1.5))))
 
 (defun claude-code-terminal-is-in-focused-right-window ()
   "Check if current Claude terminal window is the focused right window in my-layout system."
