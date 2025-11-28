@@ -96,6 +96,7 @@
 
 (package! ultra-scroll)
 (package! eat)
+(package! telephone-line)
 
 (package! evil-snipe :disable t)
 

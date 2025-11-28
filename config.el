@@ -848,6 +848,11 @@
 (use-package monet
   :defer t)
 
+;; Telephone-line for colorful mode line segments
+(use-package telephone-line
+  :config
+  (telephone-line-mode 1))
+
 ;; (use-package ultra-scroll
 ;;   ;:vc (:url "https://github.com/jdtsmith/ultra-scroll") ; if desired (emacs>=v30)
 ;;   :init

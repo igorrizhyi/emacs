@@ -1353,6 +1353,69 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
         (princ (format "  Prefix: %s\n" (claude-code-terminal-extract-prompt-prefix line)))
         (princ (format "  Command: %s\n\n" (claude-code-terminal-extract-command line)))))))
 
+;;; Doom-modeline Integration for Colorful Mode Line
+
+(defface claude-code-terminal-id-face
+  '((t :background "#4a90e2" :foreground "#ffffff" :weight bold))
+  "Face for terminal ID in mode line.")
+
+(defface claude-code-terminal-first-command-face
+  '((t :background "#27ae60" :foreground "#ffffff" :weight bold))
+  "Face for first command in nested shell stack.")
+
+(defface claude-code-terminal-current-command-face
+  '((t :background "#f39c12" :foreground "#000000" :weight bold))
+  "Face for current/last command in shell stack.")
+
+(declare-function doom-modeline-def-segment "doom-modeline" (name &rest plist))
+
+(defun claude-code-terminal-doom-modeline-terminal-id ()
+  "Generate terminal ID segment for doom-modeline."
+  (when (bound-and-true-p claude-code-terminal-id)
+    (propertize (format " %s " claude-code-terminal-id)
+                'face 'claude-code-terminal-id-face)))
+
+(defun claude-code-terminal-doom-modeline-commands ()
+  "Generate shell commands segment for doom-modeline."
+  (when (bound-and-true-p claude-code-terminal-id)
+    (let ((shell-stack (gethash claude-code-terminal-id claude-code-terminal-shell-stack)))
+      (cond
+       ;; No embedded shells
+       ((not shell-stack) nil)
+       ;; Single embedded shell - use first-command-face to keep consistency
+       ((= (length shell-stack) 1)
+        (propertize (format " %s " (caar shell-stack))
+                    'face 'claude-code-terminal-first-command-face))
+       ;; Multiple embedded shells - show first and last
+       (t
+        (let ((first-command (car (car (last shell-stack))))  ; First item (deepest in stack)
+              (last-command (caar shell-stack)))              ; Last item (top of stack)
+          (concat
+           (propertize (format " %s " first-command)
+                       'face 'claude-code-terminal-first-command-face)
+           (propertize (format " %s " last-command)
+                       'face 'claude-code-terminal-current-command-face))))))))
+
+;; Setup doom-modeline integration when the package is available
+(with-eval-after-load 'doom-modeline
+  (doom-modeline-def-segment claude-code-terminal-id
+    "Display terminal ID with colored background."
+    (claude-code-terminal-doom-modeline-terminal-id))
+  
+  (doom-modeline-def-segment claude-code-terminal-commands  
+    "Display shell command stack with colored backgrounds."
+    (claude-code-terminal-doom-modeline-commands))
+  
+  ;; Add our segments to the default modeline (hide buffer-info, position, etc. since they're not useful in terminals)
+  (doom-modeline-def-modeline 'claude-terminal
+    '(bar workspace-name window-number modals matches follow claude-code-terminal-id claude-code-terminal-commands remote-host)
+    '(compilation objed-state misc-info persp-name battery grip irc mu4e gnus github debug repl lsp minor-modes input-method indent-info buffer-encoding major-mode process vcs))
+  
+  ;; Use our custom modeline in terminal buffers
+  (add-hook 'claude-code-terminal-mode-hook
+            (lambda ()
+              (doom-modeline-set-modeline 'claude-terminal))))
+
 ;;; Mode Definition
 
 (defvar claude-code-terminal-mode-map
@@ -1469,21 +1532,9 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
         ;; (setq-local header-line-format
         ;;             '(:eval (when (bound-and-true-p claude-code-terminal-id)
         ;;                       (claude-code-terminal-header-line-with-state))))
-        ;; Add terminal ID as bottom bar (mode line) with same styling
-        (setq-local mode-line-format
-                    '(:eval (when (bound-and-true-p claude-code-terminal-id)
-                              (claude-code-terminal-header-line-with-state))))
-        ;; Remove default header line and mode line background to let our custom colors show cleanly
-        ;; (face-remap-add-relative 'header-line '(:background unspecified :box nil))
-        ;; Completely override mode-line faces to remove all styling
-        (face-remap-add-relative 'mode-line '(:background nil :foreground nil :box nil :underline nil :overline nil :strike-through nil :inherit nil))
-        (face-remap-add-relative 'mode-line-inactive '(:background nil :foreground nil :box nil :underline nil :overline nil :strike-through nil :inherit nil))
-        (face-remap-add-relative 'mode-line-buffer-id '(:background nil :foreground nil :box nil :inherit nil))
-        (face-remap-add-relative 'mode-line-emphasis '(:background nil :foreground nil :box nil :inherit nil))
-        (face-remap-add-relative 'mode-line-highlight '(:background nil :foreground nil :box nil :inherit nil))
-        ;; Also disable window dividers and borders
-        (setq-local window-divider-mode nil)
-        (setq-local mode-line-format-separator nil)
+        ;; Ensure mode-line is visible (don't override, let telephone-line handle it)
+        (unless mode-line-format
+          (setq-local mode-line-format (default-value 'mode-line-format)))
         ;; Force display update
         (force-mode-line-update))
     ;; Reset mode line when mode is disabled
