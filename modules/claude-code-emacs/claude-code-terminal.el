@@ -86,7 +86,7 @@ Each entry is a plist with :start-time :start-marker :callback :timer :command :
     "gdb" "lldb" "k9s" "helm" "minikube" "vagrant" "tmux" "screen" "nohup"
     "jupyter" "ipython" "R" "sqlite3" "mongo" "curl" "wget" "nc" "telnet" "ping"
     "traceroute" "mtr" "dig" "nslookup" "iperf" "iperf3" "tcpdump" "wireshark"
-    "strace" "ltrace" "perf" "valgrind" "gprof" "kbash" "klogs" "kedit")
+    "strace" "ltrace" "perf" "valgrind" "gprof" "kbash" "klogs" "kedit" "kdjan")
   "Commands that should be monitored for embedded shell context and status display.
 These commands typically create interactive sessions or long-running processes.")
 
@@ -1360,11 +1360,11 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
   "Face for terminal ID in mode line.")
 
 (defface claude-code-terminal-first-command-face
-  '((t :background "#27ae60" :foreground "#ffffff" :weight bold))
+  '((t :background "#f39c12" :foreground "#000000" :weight bold))
   "Face for first command in nested shell stack.")
 
 (defface claude-code-terminal-current-command-face
-  '((t :background "#f39c12" :foreground "#000000" :weight bold))
+  '((t :background "#cf8f2b" :foreground "#000000" :weight bold))
   "Face for current/last command in shell stack.")
 
 (declare-function doom-modeline-def-segment "doom-modeline" (name &rest plist))
