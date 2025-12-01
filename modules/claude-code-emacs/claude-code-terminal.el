@@ -86,7 +86,7 @@ Each entry is a plist with :start-time :start-marker :callback :timer :command :
     "gdb" "lldb" "k9s" "helm" "minikube" "vagrant" "tmux" "screen" "nohup"
     "jupyter" "ipython" "R" "sqlite3" "mongo" "curl" "wget" "nc" "telnet" "ping"
     "traceroute" "mtr" "dig" "nslookup" "iperf" "iperf3" "tcpdump" "wireshark"
-    "strace" "ltrace" "perf" "valgrind" "gprof" "kbash" "klogs" "kedit" "kdjan")
+    "strace" "ltrace" "perf" "valgrind" "gprof" "kbash" "klogs" "kedit" "kdjan" "adb" "psql")
   "Commands that should be monitored for embedded shell context and status display.
 These commands typically create interactive sessions or long-running processes.")
 
