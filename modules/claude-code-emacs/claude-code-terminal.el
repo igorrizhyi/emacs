@@ -1077,11 +1077,25 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
                                          (access-time (gethash id claude-code-terminal-access-times nil))
                                          (time-str (if access-time
                                                       (format-time-string "%H:%M:%S" access-time)
-                                                    "never")))
-                                    (cons (format "%s [%s] (%s)" 
+                                                    "never"))
+                                         (shell-stack (gethash id claude-code-terminal-shell-stack))
+                                         (stack-info 
+                                          (cond
+                                           ;; No embedded shells
+                                           ((not shell-stack) "")
+                                           ;; Single embedded shell
+                                           ((= (length shell-stack) 1)
+                                            (format " → %s" (caar shell-stack)))
+                                           ;; Multiple embedded shells - show first and last
+                                           (t
+                                            (let ((first-command (car (car (last shell-stack))))  ; First item (deepest in stack)
+                                                  (last-command (caar shell-stack)))              ; Last item (top of stack)
+                                              (format " → %s :: %s" first-command last-command))))))
+                                    (cons (format "%s [%s] (%s)%s" 
                                                  (plist-get term :buffer-name)
                                                  (plist-get term :terminal-id)
-                                                 time-str)
+                                                 time-str
+                                                 stack-info)
                                           term)))
                                sorted-terminals)))
           ;;

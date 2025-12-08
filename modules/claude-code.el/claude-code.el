@@ -2337,6 +2337,30 @@ Returns marker position of completion or nil if still running."
       (claude-code--disconnect-terminal-from-ai)
     (claude-code--connect-terminal-to-ai)))
 
+;;;; Global keybindings
+;; Autoload terminal switching function from claude-code-terminal
+(autoload 'claude-code-terminal-switch "claude-code-terminal" 
+  "Switch to a terminal buffer, ordered by most recent usage." t)
+
+;; Global terminal switching with C-u
+(global-set-key (kbd "C-u") #'claude-code-terminal-switch)
+
+;; Also bind in vterm-mode-map when vterm is loaded
+(with-eval-after-load 'vterm
+  (define-key vterm-mode-map (kbd "C-u") #'claude-code-terminal-switch))
+
+;; Evil mode bindings when evil is loaded
+(with-eval-after-load 'evil
+  ;; Global evil bindings - override C-u everywhere to do terminal switching
+  (evil-global-set-key 'normal (kbd "C-u") #'claude-code-terminal-switch)
+  (evil-global-set-key 'insert (kbd "C-u") #'claude-code-terminal-switch)
+  (evil-global-set-key 'visual (kbd "C-u") #'claude-code-terminal-switch)
+  (evil-global-set-key 'emacs (kbd "C-u") #'claude-code-terminal-switch))
+
+;; Terminal mode specific evil bindings are handled in claude-code-terminal.el
+
+(global-set-key (kbd "C-u") 'claude-code-terminal-switch)
+
 ;;;; Provide the feature
 (provide 'claude-code)
 
