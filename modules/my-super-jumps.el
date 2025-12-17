@@ -574,10 +574,12 @@ Perfect for rapid navigation where you want only the final position registered."
 (defun my-super-jumps--pre-command-hook ()
   "Track commands and save position before navigation commands."
   (when my-super-jumps-mode
-    (message (symbol-name this-command))
-    (setq my-super-jumps--last-command this-command)
-    ;; Save position if this is a navigation command
-    (let ((cmd-name (symbol-name this-command))
+    ;; Only process if this-command is a symbol (not a lambda)
+    (when (symbolp this-command)
+      (message (symbol-name this-command))
+      (setq my-super-jumps--last-command this-command)
+      ;; Save position if this is a navigation command
+      (let ((cmd-name (symbol-name this-command))
           (prefix-arg (or current-prefix-arg 
                           (and (boundp 'evil-this-motion-count) evil-this-motion-count)
                           1)))
@@ -597,7 +599,7 @@ Perfect for rapid navigation where you want only the final position registered."
         (setq my-super-jumps--pre-command-file (buffer-file-name))
         (setq my-super-jumps--pre-command-line (line-number-at-pos))
         (setq my-super-jumps--jump-intention t)
-        (my-super-jumps-register)))))
+        (my-super-jumps-register))))))
 
 (defun my-super-jumps--post-command-hook ()
   "Register jump after certain commands complete, but only if movement is significant."

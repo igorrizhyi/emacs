@@ -75,8 +75,14 @@
                     `((jsonrpc . "2.0")
                       (id . ,id)
                       (result . ,result)))))
-    (when websocket
-      (websocket-send-text websocket (json-encode response)))))
+    (if websocket
+        (condition-case send-err
+            (progn
+              (websocket-send-text websocket (json-encode response))
+              (message "📤 [RESPONSE] Sent for request: %s (error: %s)" id (if error "yes" "no")))
+          (error
+           (message "❌ [RESPONSE] Failed to send response for %s: %s" id (error-message-string send-err))))
+      (message "⚠️ [RESPONSE] No websocket available for request: %s (project: %s)" id project-root))))
 
 ;;; Message Handling
 
@@ -130,16 +136,23 @@
                   ;; Async operation - don't send response yet
                   (let* ((async-id (plist-get result :async-id))
                          (async-callback (plist-get result :async-callback)))
-                    (message "Async operation started: %s" async-id)
+                    (message "🔄 [ASYNC] Starting operation: %s (request-id: %s)" async-id id)
                     ;; Store pending async request
                     (claude-code-mcp-store-async-request id async-id project-root)
                     ;; Execute async operation with callback
                     (funcall async-callback 
                              (lambda (async-result)
+                               (message "🔄 [ASYNC] Operation completed: %s, sending response..." async-id)
                                ;; Send response when async completes
-                               (claude-code-mcp-send-response id async-result nil project-root)
+                               (condition-case callback-err
+                                   (progn
+                                     (claude-code-mcp-send-response id async-result nil project-root)
+                                     (message "✅ [ASYNC] Response sent successfully for: %s" async-id))
+                                 (error
+                                  (message "❌ [ASYNC] Failed to send response for %s: %s" async-id (error-message-string callback-err))))
                                (claude-code-mcp-remove-async-request id project-root))))
                 ;; Synchronous result - send immediately
+                (message "🔄 [SYNC] Sending immediate response for request: %s" id)
                 (claude-code-mcp-send-response id result nil project-root)))
           (error
            (message "Error in handler %s: %s" handler err)
@@ -163,12 +176,17 @@
     (unless project-requests
       (setq project-requests (make-hash-table :test 'equal))
       (puthash project-root project-requests claude-code-mcp-async-requests))
-    (puthash request-id async-id project-requests)))
+    (puthash request-id async-id project-requests)
+    (message "📝 [ASYNC] Stored request: %s -> %s (project: %s)" request-id async-id project-root)))
 
 (defun claude-code-mcp-remove-async-request (request-id project-root)
   "Remove async REQUEST-ID for PROJECT-ROOT."
   (when-let ((project-requests (gethash project-root claude-code-mcp-async-requests)))
-    (remhash request-id project-requests)))
+    (if (gethash request-id project-requests)
+        (progn
+          (remhash request-id project-requests)
+          (message "🗑️ [ASYNC] Removed request: %s (project: %s)" request-id project-root))
+      (message "⚠️ [ASYNC] Attempted to remove non-existent request: %s" request-id))))
 
 (defun claude-code-mcp-get-async-request (request-id project-root)
   "Get async request info for REQUEST-ID in PROJECT-ROOT."

@@ -32,6 +32,9 @@
 
 (require 'claude-code-core)
 (require 'projectile)
+
+;; Forward declaration for functions from claude-code.el
+(declare-function claude-code--do-send-command "claude-code" (cmd))
 (require 'vterm)
 (require 'async)
 
