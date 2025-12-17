@@ -47,6 +47,15 @@ Each value is a list of (buffer-name . terminal-id) pairs.")
 (defvar claude-code-terminal-counter 0
   "Counter for generating unique terminal IDs.")
 
+(defvar claude-code-terminal-directory-tracking-enabled t
+  "Enable automatic directory tracking for find-file commands.
+When enabled, find-file will use the current vterm working directory
+instead of the buffer's default-directory.")
+
+(defvar claude-code-terminal-last-directory-sync-time (make-hash-table :test 'equal)
+  "Hash table tracking last directory sync time for each terminal ID.
+Used to prevent excessive directory syncing.")
+
 (defvar claude-code-terminal-current-context nil
   "Current terminal context for Claude Code session.
 Set to terminal ID when starting Claude from a terminal buffer.")
@@ -95,6 +104,84 @@ These commands typically create interactive sessions or long-running processes."
 
 (defvar claude-code-terminal-debug-mode nil
   "Enable debug messages for shell nesting detection.")
+
+;;; Directory Tracking Functions
+
+(defun claude-code-terminal-sync-directory (terminal-id)
+  "Synchronize default-directory with vterm's actual working directory using /proc filesystem."
+  (message "[DEBUG] Starting sync for terminal-id: %s" terminal-id)
+  (when-let ((buffer (claude-code-terminal-get-by-id terminal-id)))
+    (message "[DEBUG] Found buffer: %s" buffer)
+    (with-current-buffer buffer
+      (message "[DEBUG] Mode check - vterm-mode: %s, process: %s" 
+               (derived-mode-p 'vterm-mode) vterm--process)
+      (when (and (derived-mode-p 'vterm-mode) vterm--process)
+        (condition-case err
+            (let* ((pid (process-id vterm--process))
+                   (proc-cwd (format "/proc/%d/cwd/" pid))
+                   (dir (when (file-exists-p proc-cwd)
+                          (file-truename proc-cwd))))
+              (message "[DEBUG] PID: %s, proc-cwd: %s, dir result: %s (type: %s)" 
+                       pid proc-cwd dir (type-of dir))
+              (when (and dir (file-directory-p dir))
+                (message "[DEBUG] Setting default-directory to: %s" dir)
+                (setq default-directory dir)
+                (puthash terminal-id (current-time) claude-code-terminal-last-directory-sync-time)
+                (message "[DEBUG] Successfully synced directory for %s: %s" terminal-id dir)
+                dir))
+          (error 
+           (message "[DEBUG] Error in sync for %s: %s" terminal-id (error-message-string err))
+           nil))))))
+
+(defun claude-code-terminal-get-working-directory (terminal-id)
+  "Get the current working directory of TERMINAL-ID using /proc filesystem."
+  (when-let ((buffer (claude-code-terminal-get-by-id terminal-id)))
+    (with-current-buffer buffer
+      (when (and (derived-mode-p 'vterm-mode) vterm--process)
+        (condition-case err
+            (let* ((pid (process-id vterm--process))
+                   (proc-cwd (format "/proc/%d/cwd/" pid)))
+              (when (file-exists-p proc-cwd)
+                (file-truename proc-cwd)))
+          (error nil))))))
+
+(defun claude-code-terminal-sync-default-directory (terminal-id)
+  "Sync Emacs default-directory with vterm's current working directory using /proc filesystem."
+  (when (and claude-code-terminal-directory-tracking-enabled terminal-id)
+    (claude-code-terminal-sync-directory terminal-id)))
+
+(defun claude-code-terminal-sync-all-directories ()
+  "Sync default-directory for all active terminal buffers."
+  (interactive)
+  (let ((synced-count 0))
+    (dolist (terminal (claude-code-terminal-list-active))
+      (when (claude-code-terminal-sync-default-directory 
+             (plist-get terminal :terminal-id))
+        (setq synced-count (1+ synced-count))))
+    (message "Synced %d terminal directories" synced-count)))
+
+(defun claude-code-terminal-find-file-with-vterm-directory ()
+  "Enhanced find-file that uses current vterm working directory.
+When called from a vterm buffer, uses vterm's PWD instead of default-directory."
+  (interactive)
+  (if-let ((terminal-id (claude-code-terminal-get-current-id)))
+      (progn
+        ;; First sync the directory using /proc filesystem
+        (claude-code-terminal-sync-directory terminal-id)
+        ;; Then call find-file normally - it will use the updated default-directory
+        (call-interactively 'find-file))
+    ;; Not in a terminal buffer, use normal find-file
+    (call-interactively 'find-file)))
+
+;; Hook to override find-file in vterm buffers
+(defun claude-code-terminal-setup-directory-hooks ()
+  "Set up hooks for on-demand directory synchronization."
+  ;; Override find-file in vterm buffers to use synced directory
+  (add-hook 'vterm-mode-hook 
+            (lambda ()
+              (when (bound-and-true-p claude-code-terminal-id)
+                (local-set-key (kbd "C-x C-f") 'claude-code-terminal-find-file-with-vterm-directory)
+                (local-set-key (kbd "s-f") 'claude-code-terminal-find-file-with-vterm-directory)))))
 
 ;;; Terminal Buffer Management
 
@@ -1468,6 +1555,9 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
     ;; Override C-f for terminal prefix cycling (only in terminal buffers)
     (define-key map (kbd "C-f") #'claude-code-terminal-switch-recent)
     (define-key map (kbd "C-g") #'claude-code-terminal-cycle-prefix)
+    ;; Directory-aware find-file keybindings
+    (define-key map (kbd "s-f") #'claude-code-terminal-find-file-with-vterm-directory)
+    (define-key map (kbd "C-x C-f") #'claude-code-terminal-find-file-with-vterm-directory)
     map)
   "Keymap for Claude Code terminal mode.")
 
@@ -1529,6 +1619,9 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
             (when (bound-and-true-p claude-code-terminal-id)
               (claude-code-terminal-mode 1)
               (claude-code-terminal-apply-large-font))))
+
+;; Initialize directory tracking hooks
+(claude-code-terminal-setup-directory-hooks)
 
 ;; Track last focused terminal buffer
 (add-hook 'buffer-list-update-hook 'claude-code-terminal-update-last-focused)
@@ -1658,6 +1751,9 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
   (define-key vterm-mode-map (kbd "C-c k") 'my-layout-smart-claude-code)
   (define-key vterm-mode-map (kbd "C-l") 'windmove-right)
   (define-key vterm-mode-map (kbd "C-u") 'claude-code-terminal-switch)
+  ;; Directory-aware find-file keybindings
+  (define-key vterm-mode-map (kbd "s-f") 'claude-code-terminal-find-file-with-vterm-directory)
+  (define-key vterm-mode-map (kbd "C-x C-f") 'claude-code-terminal-find-file-with-vterm-directory)
   
   ;; Hook into Return key for shell nesting detection
   (advice-add 'vterm-send-return :before 'claude-code-terminal-on-return-pressed)
