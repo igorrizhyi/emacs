@@ -885,8 +885,9 @@ Shows confirmation popup before executing and includes buffer corruption detecti
           (claude-code-mcp-init-command-state terminal-id)
           
           (condition-case exec-err
-              ;; Return async marker instead of blocking
-              (let ((async-id (format "term-cmd-%d" (random 100000))))
+              ;; Return async marker instead of blocking with instance-specific ID
+              (let* ((instance-id (or (cdr (assoc 'emacs_instance_id params)) (emacs-pid)))
+                     (async-id (format "term-cmd-%d-%d" instance-id (random 100000))))
                 (list :async-pending t
                       :async-id async-id
                       :async-callback

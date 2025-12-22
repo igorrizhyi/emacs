@@ -81,10 +81,14 @@
 
 ;;; Variables
 
+(defvar claude-code-mcp-server-started nil
+  "Flag to track if instance-specific Emacs server has been started.")
+
 (defvar claude-code-mcp-project-connections (make-hash-table :test 'equal)
-  "Hash table mapping project roots to connection info.
+  "Hash table mapping instance-specific project keys to connection info.
+Key format: \"{instance-id}:{project-root}\" (e.g., \"12345:/path/to/project\")
 Each value is an alist with keys:
-  - websocket: The WebSocket connection
+  - websocket: The WebSocket connection  
   - request-id: Counter for JSON-RPC request IDs
   - pending-requests: Hash table of pending requests
   - connection-attempts: Number of connection attempts
@@ -92,12 +96,73 @@ Each value is an alist with keys:
   - ping-timeout-timer: Timer for ping timeout detection
   - last-pong-time: Time of last received pong")
 
+(defun claude-code-mcp-make-instance-project-key (project-root)
+  "Create instance-specific project key for PROJECT-ROOT.
+Returns key in format: \"{instance-id}:{project-root}\"."
+  (format "%d:%s" (emacs-pid) (claude-code-normalize-project-root project-root)))
+
+(defun claude-code-mcp-is-project-for-current-instance (project-root)
+  "Check if PROJECT-ROOT belongs to current Emacs instance."
+  (gethash (claude-code-mcp-make-instance-project-key project-root)
+           claude-code-mcp-project-connections))
+
+(defun claude-code-mcp-get-current-instance-projects ()
+  "Get list of project roots managed by current Emacs instance.
+Returns a list suitable for maphash iteration."
+  (let ((current-instance-id (emacs-pid))
+        (projects '()))
+    (maphash 
+     (lambda (key value)
+       (when (string-prefix-p (format "%d:" current-instance-id) key)
+         ;; Extract project root from "instance-id:project-root"
+         (let ((project-root (substring key (+ (length (format "%d:" current-instance-id)) 0))))
+           (push (cons project-root value) projects))))
+     claude-code-mcp-project-connections)
+    projects))
+
+;;; Emacs Server Management
+
+(defun claude-code-mcp-ensure-instance-server ()
+  "Ensure Emacs server is running with instance-specific name.
+Server name format: 'emacs-{PID}'."
+  (let* ((instance-id (emacs-pid))
+         (instance-server-name (format "emacs-%d" instance-id))
+         (server-running (and (boundp 'server-process) server-process)))
+    (message "[PID:%d] DEBUG: claude-code-mcp-ensure-instance-server called, server-started=%s, server-process=%s" 
+             instance-id claude-code-mcp-server-started server-running)
+    (unless claude-code-mcp-server-started
+      (condition-case err
+          (progn
+            (message "[PID:%d] DEBUG: About to configure server for instance-specific name" instance-id)
+            
+            ;; Set server name BEFORE starting/restarting
+            (setq server-name instance-server-name)  ; This sets the global server-name variable
+            
+            (if server-running
+                (progn
+                  (message "[PID:%d] Server already running, restarting with instance name: %s" instance-id instance-server-name)
+                  ;; Stop and restart with new name
+                  (server-stop t)
+                  (server-start))
+              (progn
+                (message "[PID:%d] Starting new Emacs server: %s" instance-id instance-server-name)
+                (server-start)))
+            
+            (setq claude-code-mcp-server-started t)
+            (message "[PID:%d] Successfully configured Emacs server: %s" instance-id instance-server-name))
+        (error
+         (message "[PID:%d] Failed to configure Emacs server %s: %s" 
+                  instance-id instance-server-name (error-message-string err)))))))
+
 ;;; Connection info management
 
 (defun claude-code-mcp-initialize-connection-info (project-root)
   "Initialize and return connection info for PROJECT-ROOT.
 Creates a new connection info structure with default values."
-  (let* ((normalized-root (claude-code-normalize-project-root project-root))
+  ;; Ensure instance-specific server is running
+  (claude-code-mcp-ensure-instance-server)
+  
+  (let* ((instance-key (claude-code-mcp-make-instance-project-key project-root))
          ;; QUESTION: '((websocket . nil)) みたいな書き方だと setcdr したときに全て変更されるのはなんで？
          (info (list (cons 'websocket nil)
                      (cons 'request-id 0)
@@ -106,13 +171,13 @@ Creates a new connection info structure with default values."
                      (cons 'ping-timer nil)
                      (cons 'ping-timeout-timer nil)
                      (cons 'last-pong-time nil))))
-    (puthash normalized-root info claude-code-mcp-project-connections)
+    (puthash instance-key info claude-code-mcp-project-connections)
     info))
 
 (defun claude-code-mcp-get-connection-info (project-root)
   "Get connection info for PROJECT-ROOT.
-Returns nil if no connection info exists for the project."
-  (gethash (claude-code-normalize-project-root project-root)
+Returns nil if no connection info exists for the project in this instance."
+  (gethash (claude-code-mcp-make-instance-project-key project-root)
            claude-code-mcp-project-connections))
 
 
@@ -178,7 +243,7 @@ If CALLBACK is provided, call it with connection result."
          (format "ws://%s:%d/?session=%s"
                  claude-code-mcp-host
                  port
-                 (url-hexify-string project-root))
+                 (url-hexify-string (format "%d:%s" (emacs-pid) project-root)))
          :on-open (lambda (websocket)
                     (message "MCP WebSocket opened for project %s" project-root)
                     (when-let ((info (claude-code-mcp-get-connection-info project-root)))
@@ -298,10 +363,13 @@ PARAMS is an alist of event parameters."
   (let ((websocket (claude-code-mcp-get-websocket project-root)))
     (when (and websocket (websocket-openp websocket))
       (condition-case err
-          (let ((message (json-encode
+          (let* ((enhanced-params (append params
+                                         `((emacs_instance_id . ,(emacs-pid))
+                                           (project_root . ,project-root))))
+                 (message (json-encode
                           `((jsonrpc . "2.0")
                             (method . ,(concat "emacs/" event-name))
-                            (params . ,params)))))
+                            (params . ,enhanced-params)))))
             (websocket-send-text websocket message))
         (error
          (message "Error sending event %s to MCP server for project %s: %s"

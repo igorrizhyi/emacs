@@ -35,6 +35,11 @@
 (require 'lsp-mode nil t)
 (require 'lsp-protocol nil t)
 
+;; MCP function declarations
+(declare-function claude-code-mcp-send-event-to-project "claude-code-mcp-connection" (project-root event-name params))
+(declare-function claude-code-mcp-is-project-for-current-instance "claude-code-mcp-connection" (project-root))
+(declare-function claude-code-mcp-get-current-instance-projects "claude-code-mcp-connection" ())
+
 ;; LSP function declarations
 (declare-function lsp:diagnostic-range "lsp-protocol" (diagnostic))
 (declare-function lsp:range-start "lsp-protocol" (range))
@@ -113,7 +118,8 @@
               project-root
               "bufferListUpdated"
               `((buffers . ,(nreverse buffers)))))))
-       claude-code-mcp-project-connections)
+       ;; Only iterate over projects for current instance
+       (claude-code-mcp-get-current-instance-projects))
     (error
      (message "Error sending buffer list update: %s" (error-message-string err)))))
 
@@ -168,26 +174,28 @@ OLD-LEN is the length of the text before the change."
               (when project-root
                 (push change (gethash project-root changes-by-project)))))
 
-          ;; Send changes for each project (all changes as a batch per project)
+          ;; Send changes for each project managed by current instance
           (maphash
            (lambda (project-root changes)
-             ;; Convert changes to the format expected by the notification
-             (let ((formatted-changes
-                    (mapcar (lambda (change)
-                              (let ((file (nth 0 change))
-                                    (start-line (nth 1 change))
-                                    (end-line (nth 2 change))
-                                    (old-len (nth 3 change)))
-                                `((file . ,file)
-                                  (startLine . ,start-line)
-                                  (endLine . ,end-line)
-                                  (changeLength . ,old-len))))
-                            changes)))
-               ;; Send all changes for this project at once
-               (claude-code-mcp-send-event-to-project
-                project-root
-                "bufferContentModified"
-                `((changes . ,formatted-changes)))))
+             ;; Only process projects for current instance
+             (when (claude-code-mcp-is-project-for-current-instance project-root)
+               ;; Convert changes to the format expected by the notification
+               (let ((formatted-changes
+                      (mapcar (lambda (change)
+                                (let ((file (nth 0 change))
+                                      (start-line (nth 1 change))
+                                      (end-line (nth 2 change))
+                                      (old-len (nth 3 change)))
+                                  `((file . ,file)
+                                    (startLine . ,start-line)
+                                    (endLine . ,end-line)
+                                    (changeLength . ,old-len))))
+                              changes)))
+                 ;; Send all changes for this project at once
+                 (claude-code-mcp-send-event-to-project
+                  project-root
+                  "bufferContentModified"
+                  `((changes . ,formatted-changes))))))
            changes-by-project))
         ;; Clear pending changes
         (setq claude-code-mcp-events-pending-changes nil))
@@ -249,23 +257,25 @@ OLD-LEN is the length of the text before the change."
                          (puthash project-root project-files diagnostics-by-project)))))))
              lsp-diags)
 
-            ;; Send notifications for each project (all diagnostics as a batch per project)
+            ;; Send notifications for each project managed by current instance
             (maphash
              (lambda (project-root project-files)
-               ;; Convert hash table to list of file diagnostics
-               (let ((all-diagnostics '()))
-                 (maphash
-                  (lambda (file diagnostics)
-                    (push `((file . ,file)
-                            (diagnostics . ,diagnostics))
-                          all-diagnostics))
-                  project-files)
-                 ;; Send all diagnostics for this project at once
-                 (when all-diagnostics
-                   (claude-code-mcp-send-event-to-project
-                    project-root
-                    "diagnosticsChanged"
-                    `((files . ,(nreverse all-diagnostics)))))))
+               ;; Only process projects for current instance
+               (when (claude-code-mcp-is-project-for-current-instance project-root)
+                 ;; Convert hash table to list of file diagnostics
+                 (let ((all-diagnostics '()))
+                   (maphash
+                    (lambda (file diagnostics)
+                      (push `((file . ,file)
+                              (diagnostics . ,diagnostics))
+                            all-diagnostics))
+                    project-files)
+                   ;; Send all diagnostics for this project at once
+                   (when all-diagnostics
+                     (claude-code-mcp-send-event-to-project
+                      project-root
+                      "diagnosticsChanged"
+                      `((files . ,(nreverse all-diagnostics))))))))
              diagnostics-by-project))))
     (error
      (message "Error sending diagnostics update: %s" (error-message-string err)))))

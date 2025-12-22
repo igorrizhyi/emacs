@@ -168,30 +168,49 @@
 ;;; Async Request Management
 
 (defvar claude-code-mcp-async-requests (make-hash-table :test 'equal)
-  "Hash table storing pending async requests by project-root.")
+  "Hash table storing pending async requests by instance-project key.")
 
 (defun claude-code-mcp-store-async-request (request-id async-id project-root)
   "Store async REQUEST-ID with ASYNC-ID for PROJECT-ROOT."
-  (let ((project-requests (gethash project-root claude-code-mcp-async-requests)))
+  ;; Extract instance ID from request-id if it's in format "instance-id-actual-id"
+  (let* ((instance-id (if (stringp request-id)
+                          (when (string-match "^\\([0-9]+\\)-" request-id)
+                            (match-string 1 request-id))
+                        (emacs-pid)))
+         (instance-key (format "%s:%s" (or instance-id (emacs-pid)) project-root))
+         (project-requests (gethash instance-key claude-code-mcp-async-requests)))
     (unless project-requests
       (setq project-requests (make-hash-table :test 'equal))
-      (puthash project-root project-requests claude-code-mcp-async-requests))
+      (puthash instance-key project-requests claude-code-mcp-async-requests))
     (puthash request-id async-id project-requests)
-    (message "📝 [ASYNC] Stored request: %s -> %s (project: %s)" request-id async-id project-root)))
+    (message "📝 [ASYNC] Stored request: %s -> %s (instance-project: %s)" request-id async-id instance-key)))
 
 (defun claude-code-mcp-remove-async-request (request-id project-root)
   "Remove async REQUEST-ID for PROJECT-ROOT."
-  (when-let ((project-requests (gethash project-root claude-code-mcp-async-requests)))
-    (if (gethash request-id project-requests)
+  ;; Extract instance ID from request-id if it's in format "instance-id-actual-id"
+  (let* ((instance-id (if (stringp request-id)
+                          (when (string-match "^\\([0-9]+\\)-" request-id)
+                            (match-string 1 request-id))
+                        (emacs-pid)))
+         (instance-key (format "%s:%s" (or instance-id (emacs-pid)) project-root))
+         (project-requests (gethash instance-key claude-code-mcp-async-requests)))
+    (if (and project-requests (gethash request-id project-requests))
         (progn
           (remhash request-id project-requests)
-          (message "🗑️ [ASYNC] Removed request: %s (project: %s)" request-id project-root))
-      (message "⚠️ [ASYNC] Attempted to remove non-existent request: %s" request-id))))
+          (message "🗑️ [ASYNC] Removed request: %s (instance-project: %s)" request-id instance-key))
+      (message "⚠️ [ASYNC] Attempted to remove non-existent request: %s (instance-project: %s)" request-id instance-key))))
 
 (defun claude-code-mcp-get-async-request (request-id project-root)
   "Get async request info for REQUEST-ID in PROJECT-ROOT."
-  (when-let ((project-requests (gethash project-root claude-code-mcp-async-requests)))
-    (gethash request-id project-requests)))
+  ;; Extract instance ID from request-id if it's in format "instance-id-actual-id"
+  (let* ((instance-id (if (stringp request-id)
+                          (when (string-match "^\\([0-9]+\\)-" request-id)
+                            (match-string 1 request-id))
+                        (emacs-pid)))
+         (instance-key (format "%s:%s" (or instance-id (emacs-pid)) project-root))
+         (project-requests (gethash instance-key claude-code-mcp-async-requests)))
+    (when project-requests
+      (gethash request-id project-requests))))
 
 ;;; WebSocket Event Handlers
 

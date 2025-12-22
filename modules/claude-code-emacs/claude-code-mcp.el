@@ -38,5 +38,8 @@
 (require 'claude-code-mcp-protocol)
 (require 'claude-code-mcp-tools)
 
+;; Initialize instance-specific Emacs server after a short delay
+(run-with-timer 1 nil 'claude-code-mcp-ensure-instance-server)
+
 (provide 'claude-code-mcp)
 ;;; claude-code-mcp.el ends here
