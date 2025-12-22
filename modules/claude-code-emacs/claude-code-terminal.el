@@ -133,33 +133,6 @@ These commands typically create interactive sessions or long-running processes."
            (message "[DEBUG] Error in sync for %s: %s" terminal-id (error-message-string err))
            nil))))))
 
-(defun claude-code-terminal-get-working-directory (terminal-id)
-  "Get the current working directory of TERMINAL-ID using /proc filesystem."
-  (when-let ((buffer (claude-code-terminal-get-by-id terminal-id)))
-    (with-current-buffer buffer
-      (when (and (derived-mode-p 'vterm-mode) vterm--process)
-        (condition-case err
-            (let* ((pid (process-id vterm--process))
-                   (proc-cwd (format "/proc/%d/cwd/" pid)))
-              (when (file-exists-p proc-cwd)
-                (file-truename proc-cwd)))
-          (error nil))))))
-
-(defun claude-code-terminal-sync-default-directory (terminal-id)
-  "Sync Emacs default-directory with vterm's current working directory using /proc filesystem."
-  (when (and claude-code-terminal-directory-tracking-enabled terminal-id)
-    (claude-code-terminal-sync-directory terminal-id)))
-
-(defun claude-code-terminal-sync-all-directories ()
-  "Sync default-directory for all active terminal buffers."
-  (interactive)
-  (let ((synced-count 0))
-    (dolist (terminal (claude-code-terminal-list-active))
-      (when (claude-code-terminal-sync-default-directory 
-             (plist-get terminal :terminal-id))
-        (setq synced-count (1+ synced-count))))
-    (message "Synced %d terminal directories" synced-count)))
-
 (defun claude-code-terminal-find-file-with-vterm-directory ()
   "Enhanced find-file that uses current vterm working directory.
 When called from a vterm buffer, uses vterm's PWD instead of default-directory."

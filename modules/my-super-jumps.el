@@ -572,7 +572,7 @@ Perfect for rapid navigation where you want only the final position registered."
   "Line number before the command.")
 
 (defun my-super-jumps--pre-command-hook ()
-  "Track commands and save position before navigation commands."
+  "Track commands and save position before navigation commands!."
   (when my-super-jumps-mode
     ;; Only process if this-command is a symbol (not a lambda)
     (when (symbolp this-command)
@@ -580,7 +580,7 @@ Perfect for rapid navigation where you want only the final position registered."
       (setq my-super-jumps--last-command this-command)
       ;; Save position if this is a navigation command
       (let ((cmd-name (symbol-name this-command))
-          (prefix-arg (or current-prefix-arg 
+          (prefix-arg (or current-prefix-arg
                           (and (boundp 'evil-this-motion-count) evil-this-motion-count)
                           1)))
       (when (or (string-match-p "consult-buffer" cmd-name)
