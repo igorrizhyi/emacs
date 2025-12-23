@@ -338,7 +338,7 @@ Otherwise, register current position."
       (unless my-super-jumps--current-index
         (my-super-jumps-register)
         (setq my-super-jumps--current-index 0))
-      
+
       ;; Move to next jump (backward in time)
       (setq my-super-jumps--current-index
             (min (1+ my-super-jumps--current-index) (1- ring-length)))
@@ -603,14 +603,14 @@ Perfect for rapid navigation where you want only the final position registered."
 
 (defun my-super-jumps--post-command-hook ()
   "Register jump after certain commands complete, but only if movement is significant."
-  (when (and nil
-             my-super-jumps-mode
+  (when (and my-super-jumps-mode
              my-super-jumps--last-command)
     (let ((cmd-name (symbol-name my-super-jumps--last-command)))
       ;; Check for navigation commands that might need position validation
       (when (or (string-match-p "find-file\\|switch-to-buffer\\|projectile\\|evil-goto-first-line\\|evil-goto-line\\|evil-next-line\\|evil-previous-line" cmd-name)
                 (string-match-p "consult\\|vertico\\|ivy" cmd-name)
                 (get my-super-jumps--last-command :jump)) ; Use evil's jump property
+        (message "POST COMMAND HOOK processing for %s" cmd-name)
         
         (let ((current-file (buffer-file-name))
               (current-line (line-number-at-pos)))
@@ -667,12 +667,33 @@ Perfect for rapid navigation where you want only the final position registered."
   "Set up command hooks like Evil does."
   (add-hook 'pre-command-hook #'my-super-jumps--pre-command-hook)
   (add-hook 'post-command-hook #'my-super-jumps--post-command-hook)
-  (message "DEBUG: Added command hooks for jump tracking"))
+  
+  ;; Add advice for completion frameworks
+  (when (featurep 'vertico)
+    (advice-add 'vertico-exit :after #'my-super-jumps--on-vertico-exit))
+  (when (featurep 'consult)
+    (advice-add 'consult--read :after #'my-super-jumps--on-consult-read))
+  (when (featurep 'ivy)
+    (advice-add 'ivy-done :after #'my-super-jumps--on-ivy-done))
+  (when (featurep 'helm)
+    (advice-add 'helm-exit-minibuffer :after #'my-super-jumps--on-helm-exit))
+  
+  (message "DEBUG: Added command hooks and completion framework advice for jump tracking"))
 
 (defun my-super-jumps--remove-completion-hooks ()
   "Remove command hooks."
   (remove-hook 'pre-command-hook #'my-super-jumps--pre-command-hook)
-  (remove-hook 'post-command-hook #'my-super-jumps--post-command-hook))
+  (remove-hook 'post-command-hook #'my-super-jumps--post-command-hook)
+  
+  ;; Remove advice for completion frameworks
+  (when (featurep 'vertico)
+    (advice-remove 'vertico-exit #'my-super-jumps--on-vertico-exit))
+  (when (featurep 'consult)
+    (advice-remove 'consult--read #'my-super-jumps--on-consult-read))
+  (when (featurep 'ivy)
+    (advice-remove 'ivy-done #'my-super-jumps--on-ivy-done))
+  (when (featurep 'helm)
+    (advice-remove 'helm-exit-minibuffer #'my-super-jumps--on-helm-exit)))
 
 (provide 'my-super-jumps)
 ;;; my-super-jumps.el ends here
