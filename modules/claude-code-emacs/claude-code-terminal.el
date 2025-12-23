@@ -381,15 +381,15 @@ Falls back to current context, last created, or any active terminal."
     (when (and async-info buffer (buffer-live-p buffer))
       (condition-case err
           (with-current-buffer buffer
-        (let* ((current-time (current-time))
-               (elapsed (float-time (time-subtract current-time start-time)))
-               ;; Safely get output, handling invalid markers
-               (safe-start (max (point-min) (min start-marker (point-max))))
-               (output (buffer-substring-no-properties safe-start (point-max)))
-               ;; Try to remove just the command echo line, but be conservative
-               (cleaned-output (if (string-match (concat "\\(^.*\\b" (regexp-quote command) "\\b.*?\r?\n\\)\\(.*\\)") output)
-                                  (match-string 2 output)
-                                output)))
+            (let* ((current-time (current-time))
+                   (elapsed (float-time (time-subtract current-time start-time)))
+                   ;; Safely get output, handling invalid markers
+                   (safe-start (max (point-min) (min start-marker (point-max))))
+                   (output (buffer-substring-no-properties safe-start (point-max)))
+                   ;; Try to remove just the command echo line, but be conservative
+                   (cleaned-output (if (string-match (concat "\\(^.*\\b" (regexp-quote command) "\\b.*?\r?\n\\)\\(.*\\)") output)
+                                      (match-string 2 output)
+                                    output)))
           
           (cond
            ;; Timeout reached
@@ -415,19 +415,44 @@ Falls back to current context, last created, or any active terminal."
                                     :timeout nil
                                     :working-directory default-directory)))
            
-           ;; Found meaningful output for the first time - start wait period  
-           ((and (not meaningful-found)
-                 (> (length output) 10)) ; Just check we have substantial output
-            ;; Mark that we found meaningful output and start wait timer
-            (plist-put (gethash terminal-id claude-code-terminal-async-commands) :meaningful-found t)
-            (plist-put (gethash terminal-id claude-code-terminal-async-commands) :wait-start current-time)
-            ;; Continue checking
-            nil)
+           ;; Check for command completion using prompt detection
+           ((not meaningful-found)
+            (let* ((current-line (claude-code-terminal-get-current-line))
+                   (current-prompt (when (and current-line (stringp current-line))
+                                    (claude-code-terminal-extract-prompt-only current-line)))
+                   ;; Get original prompt when command was sent
+                   (original-prompt (when-let ((command-data (gethash terminal-id claude-code-terminal-last-command-line)))
+                                     (let ((command-line (if (listp command-data) (car command-data) command-data)))
+                                       (when (stringp command-line)
+                                         (claude-code-terminal-extract-prompt-only command-line))))))
+              ;; Command completed if we see a prompt again and have some output
+              (if (and current-prompt
+                       original-prompt
+                       (string= current-prompt original-prompt)
+                       (> (length output) 5)) ; Minimal output threshold
+                  ;; Command completed - finish immediately
+                  (progn
+                    (when timer (cancel-timer timer))
+                    (remhash terminal-id claude-code-terminal-async-commands)
+                    (funcall callback (list :success t
+                                            :stdout cleaned-output
+                                            :stderr ""
+                                            :exit-code 0
+                                            :timeout nil
+                                            :working-directory default-directory)))
+                ;; Not completed yet, continue checking
+                nil)))
            
-           ;; No meaningful output yet, continue checking
+           ;; Fallback: use old logic for non-prompt-based detection
            (t
-            ;; Timer will call this function again
-            nil))))
+            ;; If we have substantial output but no clear prompt, use the old wait logic
+            (if (> (length output) 10)
+                (progn
+                  (plist-put (gethash terminal-id claude-code-terminal-async-commands) :meaningful-found t)
+                  (plist-put (gethash terminal-id claude-code-terminal-async-commands) :wait-start current-time)
+                  nil)
+              ;; Continue checking
+              nil)))))
         ;; Error handling - cancel timer and cleanup on any error
         (error
          (when timer (cancel-timer timer))
@@ -467,9 +492,17 @@ Returns immediately without blocking."
           (let* ((start-marker (point-max))
                  (start-time (current-time))
                  (check-interval 1) ; Check every 100ms
+                 ;; Capture current prompt before sending command
+                 (current-line (claude-code-terminal-get-current-line))
+                 (original-prompt (when current-line
+                                   (claude-code-terminal-extract-prompt-only current-line)))
                  ;; Start timer with initial delay to let command begin execution
                  (timer (run-with-timer 0.05 check-interval 
                                        'claude-code-terminal-async-check-output terminal-id)))
+          
+          ;; Store the original command line for prompt comparison
+          (when current-line
+            (puthash terminal-id (list current-line original-prompt command) claude-code-terminal-last-command-line))
           
           ;; Send the command AFTER setting up monitoring
           (vterm-send-string command)
