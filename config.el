@@ -31,6 +31,7 @@
 (require 'my-super-jumps)
 (require 'my-search)
 (require 'my-eshell)
+(require 'my-magit-utils)
 (require' claude-code-emacs)
 
 ;; File associations
@@ -40,6 +41,8 @@
 (setq projectile-track-known-projects-automatically nil)
 (setq projectile-switch-project-action 'projectile-dired)
 (setq projectile-auto-discover nil)
+(setq projectile-enable-caching nil)
+(setq projectile-indexing-method 'alien)
 (setq projectile-require-project-root nil)
 
 ;; Manual project control - completely disable automatic project detection
@@ -145,6 +148,14 @@
       "h" #'dap-hydra                  ; Debug hydra
       )
 
+;; Git/Magit key bindings
+(map! :leader
+      :desc "Copy branch name" "g Y" #'my/magit-copy-branch-name)
+
+;; Magit section navigation and folding
+(after! magit
+  (map! :map magit-mode-map
+        :n "<backtab>" #'magit-section-show-level-2-all))
 
 ;; Some functionality uses this to identify you, e.g. GPG configuration, email
 ;; clients, file templates and snippets. It is optional.
@@ -649,7 +660,7 @@
       "o" #'projectile-find-file     ; SPC o
       "n" (lambda () (interactive) (+lookup/definition (read-string "Find definition for: ")))     ; Go to symbol in workspace (like VSCode) - fallback option
       ;; "f" #'consult-ripgrep ; Search in project with preview
-      "f" #'project-find-regexp ; Search in project with preview
+      "f" #'projectile-grep ; Search in project with preview
       "e" #'treemacs               ; Toggle treemacs with SPC-e
       "r" #'my/run-nearest-test-with-class  ; Run nearest test with SPC-r (moved from SPC-e)
       "<escape>" #'my-window-layout-close-auxiliary  ; Close auxiliary windows with SPC-ESC
