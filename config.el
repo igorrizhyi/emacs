@@ -873,9 +873,11 @@
 ;;   (ultra-scroll-mode 1)
 ;;   )
 
-(setq claude-code-terminal-backend 'eat)
 ;; (use-package vterm :ensure t)
 (use-package claude-code
+  :init
+  ;; Set terminal backend BEFORE package loads
+  (setq claude-code-terminal-backend 'eat)
   :config
   ;; optional IDE integration with Monet
   (add-hook 'claude-code-process-environment-functions #'monet-start-server-function)

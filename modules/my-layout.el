@@ -426,12 +426,16 @@
       :n "s-<right>" #'my-layout-navigate-right
       :n "C-j" #'my-layout-navigate-down)
 
-;; Specific vterm keybindings using M-arrow keys that work reliably
-(after! vterm
-  (define-key vterm-mode-map (kbd "s-<left>") #'my-layout-navigate-left)
-  (define-key vterm-mode-map (kbd "s-<right>") #'my-layout-navigate-right)
-  (define-key vterm-mode-map (kbd "s-<down>") #'my-layout-navigate-down)
-  (define-key vterm-mode-map (kbd "s-<up>") #'my-layout-navigate-up))
+;; Specific eat terminal keybindings using s-arrow keys that work reliably
+(after! eat
+  (define-key eat-semi-char-mode-map (kbd "s-<left>") #'my-layout-navigate-left)
+  (define-key eat-semi-char-mode-map (kbd "s-<right>") #'my-layout-navigate-right)
+  (define-key eat-semi-char-mode-map (kbd "s-<down>") #'my-layout-navigate-down)
+  (define-key eat-semi-char-mode-map (kbd "s-<up>") #'my-layout-navigate-up)
+  (define-key eat-char-mode-map (kbd "s-<left>") #'my-layout-navigate-left)
+  (define-key eat-char-mode-map (kbd "s-<right>") #'my-layout-navigate-right)
+  (define-key eat-char-mode-map (kbd "s-<down>") #'my-layout-navigate-down)
+  (define-key eat-char-mode-map (kbd "s-<up>") #'my-layout-navigate-up))
 
 ;; Leader key bindings for layout management
 (map! :leader

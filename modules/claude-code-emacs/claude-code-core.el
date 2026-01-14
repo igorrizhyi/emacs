@@ -29,20 +29,14 @@
 ;;; Code:
 
 (require 'projectile)
-
-;; vterm variables
-(defvar vterm-timer-delay)
-(defvar vterm-shell)
+(require 'eat)
 
 ;; Terminal integration variables
 (defvar claude-code-terminal-current-context)
 
-(declare-function vterm-send-return "vterm" ())
-(declare-function vterm-send-string "vterm" (string &optional paste-p))
-
 ;; Forward declarations for MCP integration
 (declare-function claude-code-mcp-disconnect "claude-code-mcp-connection" (project-root))
-(declare-function claude-code-vterm-mode "claude-code-ui" ())
+(declare-function claude-code-eat-mode "claude-code-ui" ())
 
 ;;; Customization
 
@@ -89,11 +83,14 @@ Return nil if not in a project."
   (or (claude-code-get-buffer)
       (error "No Claude Code session for this project.  Use 'claude-code-run' to start one")))
 
-(defun claude-code-with-vterm-buffer (body-fn)
-  "Execute BODY-FN in the Claude Code vterm buffer."
+(defun claude-code-with-terminal-buffer (body-fn)
+  "Execute BODY-FN in the Claude Code terminal buffer."
   (let ((buf (claude-code-ensure-buffer)))
     (with-current-buffer buf
       (funcall body-fn))))
+
+;; Keep old name for backward compatibility
+(defalias 'claude-code-with-vterm-buffer 'claude-code-with-terminal-buffer)
 
 ;;; Session Management
 
@@ -108,7 +105,7 @@ With prefix argument, select from available options."
   (let* ((buffer-name (claude-code-buffer-name))
          (project-root (claude-code-normalize-project-root (projectile-project-root)))
          (default-directory project-root)
-         (buf (get-buffer-create buffer-name))
+         (buf (get-buffer buffer-name))
          (selected-option (when current-prefix-arg
                             (let* ((choices (mapcar (lambda (opt)
                                                       (format "%s - %s"
@@ -121,16 +118,21 @@ With prefix argument, select from available options."
          (extra-input (when (and selected-option
                                  (string-match-p "--resume" selected-option))
                         (read-string "Session ID: ")))
-         (vterm-shell (concat claude-code-executable
-                              (when selected-option
-                                (concat " " selected-option))
-                              (when extra-input
-                                (concat " " extra-input)))))
-    (with-current-buffer buf
-      (unless (eq major-mode 'claude-code-vterm-mode)
-        (claude-code-vterm-mode)))
-    (switch-to-buffer-other-window buffer-name)
-    
+         (claude-command (concat claude-code-executable
+                                 (when selected-option
+                                   (concat " " selected-option))
+                                 (when extra-input
+                                   (concat " " extra-input)))))
+    ;; Create eat terminal if buffer doesn't exist or is not an eat terminal
+    (unless (and buf
+                 (with-current-buffer buf
+                   (derived-mode-p 'eat-mode)))
+      (setq buf (eat-make buffer-name "/bin/sh" nil
+                          (list "-c" claude-command)))
+      (with-current-buffer buf
+        (claude-code-eat-mode)))
+    (switch-to-buffer-other-window buf)
+
     ;; Send terminal context if available
     (when (and (boundp 'claude-code-terminal-current-context)
                claude-code-terminal-current-context)
@@ -143,7 +145,7 @@ With prefix argument, select from available options."
     (run-with-timer 2.0 nil
                     (lambda ()
                       (when (get-buffer (claude-code-buffer-name))
-                        (let ((context-message 
+                        (let ((context-message
                                (format "I'm working from a terminal buffer with ID '%s'. You can interact with this terminal using the MCP tools: getTerminalContent, executeTerminalCommandInEmacs, getTerminalList, and createTerminal. The terminal ID is '%s' and you can use it to read terminal content or execute commands in this specific terminal session."
                                        terminal-id terminal-id)))
                           (claude-code-send-string context-message)))))))
@@ -181,18 +183,17 @@ With prefix argument, select from available options."
           ;; First close any windows showing the buffer
           (dolist (window (get-buffer-window-list buffer nil t))
             (delete-window window))
-          ;; Kill the vterm process if it exists
+          ;; Send /quit to Claude and then kill the buffer
           (with-current-buffer buffer
-            (vterm-send-string "/quit")
-            (vterm-send-return)
+            (when-let ((proc (get-buffer-process buffer)))
+              (process-send-string proc "/quit\n"))
             (run-at-time 3 nil
                          (lambda ()
                            (when (buffer-live-p buffer)
-                             ;; Kill vterm process if still running
-                             (when (and (boundp 'vterm--process)
-                                        vterm--process
-                                        (process-live-p vterm--process))
-                               (kill-process vterm--process))
+                             ;; Kill process if still running
+                             (when-let ((proc (get-buffer-process buffer)))
+                               (when (process-live-p proc)
+                                 (kill-process proc)))
                              ;; Kill the buffer
                              (let ((kill-buffer-query-functions nil))
                                (kill-buffer buffer)))
@@ -204,15 +205,15 @@ With prefix argument, select from available options."
 
 ;;; String Sending Functions
 
-(defun claude-code-send-string (string &optional paste-p)
+(defun claude-code-send-string (string &optional _paste-p)
   "Send STRING to the Claude Code session."
   (interactive "sEnter text: ")
-  (claude-code-with-vterm-buffer
+  (claude-code-with-terminal-buffer
    (lambda ()
-     (vterm-send-string string paste-p)
-     ;; NOTE: wait for `accept-process-output' in `vterm-send-string'
-     (sit-for (* vterm-timer-delay 3))
-     (vterm-send-return))))
+     (when-let ((proc (get-buffer-process (current-buffer))))
+       (process-send-string proc string)
+       (sit-for 0.05)  ;; Small delay for eat to process
+       (process-send-string proc "\n")))))
 
 ;;;###autoload
 (defun claude-code-send-region ()

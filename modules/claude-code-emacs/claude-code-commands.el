@@ -34,13 +34,12 @@
 ;; Forward declarations
 (declare-function claude-code-send-string "claude-code-core" (string &optional paste-p))
 (declare-function claude-code-ensure-buffer "claude-code-core" ())
-(declare-function claude-code-with-vterm-buffer "claude-code-core" (body-fn))
+(declare-function claude-code-with-terminal-buffer "claude-code-core" (body-fn))
 (declare-function claude-code-normalize-project-root "claude-code-core" (root))
 
-;; vterm function declarations (vterm is loaded by core)
-(declare-function vterm-send-escape "vterm" ())
-(declare-function vterm-send-return "vterm" ())
-(declare-function vterm-send-key "vterm" (key &optional shift))
+;; eat function declarations
+(declare-function eat-self-input "eat" (n &optional e))
+(declare-function eat-term-send-string-as-yank "eat" (terminal string))
 
 ;; LSP function declarations (optional dependency)
 (declare-function lsp-diagnostics "lsp-mode" (&optional all-workspaces))
@@ -93,17 +92,24 @@
 
 ;;; Key sending functions
 
+(defun claude-code--send-key-to-terminal (key)
+  "Send KEY to the terminal process in current buffer."
+  (when-let ((proc (get-buffer-process (current-buffer))))
+    (process-send-string proc key)))
+
 ;;;###autoload
 (defun claude-code-send-escape ()
   "Send ESC key to Claude Code buffer."
   (interactive)
-  (claude-code-with-vterm-buffer #'vterm-send-escape))
+  (claude-code-with-terminal-buffer
+   (lambda () (claude-code--send-key-to-terminal "\e"))))
 
 ;;;###autoload
 (defun claude-code-send-return ()
   "Send Return key to Claude Code buffer."
   (interactive)
-  (claude-code-with-vterm-buffer #'vterm-send-return))
+  (claude-code-with-terminal-buffer
+   (lambda () (claude-code--send-key-to-terminal "\r"))))
 
 ;;; Quick send functions
 
@@ -141,15 +147,15 @@
 (defun claude-code-send-ctrl-e ()
   "Send Ctrl+E to Claude Code buffer to toggle expand more."
   (interactive)
-  (claude-code-with-vterm-buffer
-   (lambda () (vterm-send-key (kbd "C-e")))))
+  (claude-code-with-terminal-buffer
+   (lambda () (claude-code--send-key-to-terminal "\C-e"))))
 
 ;;;###autoload
 (defun claude-code-send-ctrl-o ()
   "Send Ctrl+O to Claude Code buffer to toggle expand."
   (interactive)
-  (claude-code-with-vterm-buffer
-   (lambda () (vterm-send-key (kbd "C-o")))))
+  (claude-code-with-terminal-buffer
+   (lambda () (claude-code--send-key-to-terminal "\C-o"))))
 
 ;; Keep old function for backward compatibility
 ;;;###autoload
@@ -163,16 +169,17 @@
 (defun claude-code-send-shift-tab ()
   "Send Shift+Tab to Claude Code buffer to toggle auto accept."
   (interactive)
-  (claude-code-with-vterm-buffer
+  (claude-code-with-terminal-buffer
    (lambda ()
-     (vterm-send-key "<tab>" t))))
+     ;; Shift+Tab is typically sent as ESC [ Z
+     (claude-code--send-key-to-terminal "\e[Z"))))
 
 ;;;###autoload
 (defun claude-code-send-ctrl-t ()
   "Send Ctrl+T to Claude Code buffer."
   (interactive)
-  (claude-code-with-vterm-buffer
-   (lambda () (vterm-send-key (kbd "C-t")))))
+  (claude-code-with-terminal-buffer
+   (lambda () (claude-code--send-key-to-terminal "\C-t"))))
 
 ;;; Helper functions for command argument handling
 

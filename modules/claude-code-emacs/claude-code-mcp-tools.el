@@ -44,6 +44,85 @@
 (require 'claude-code-mcp-protocol)  ;; For async request management
 (require 'cl-lib)
 
+;;; Simple Enter-to-Capture MCP Command Execution
+;; Instead of complex async output detection, user presses Enter to capture output
+
+(defvar claude-code-mcp-pending-capture nil
+  "Hash table storing pending MCP command captures.
+Key is terminal-id, value is plist with :callback :start-marker :command :project-root.")
+
+(defun claude-code-mcp-init-pending-capture ()
+  "Initialize the pending capture hash table if needed."
+  (unless claude-code-mcp-pending-capture
+    (setq claude-code-mcp-pending-capture (make-hash-table :test 'equal))))
+
+(defun claude-code-mcp-capture-and-send ()
+  "Capture terminal output since command was sent and send MCP response.
+Call this after command output is complete (bound to Enter in terminal).
+
+For edit mode (command not yet executed):
+  - First Enter: executes the command, updates start-marker
+  - Second Enter: captures output and sends response"
+  (interactive)
+  (claude-code-mcp-init-pending-capture)
+  (let* ((terminal-id (when (fboundp 'claude-code-terminal-get-current-id)
+                        (claude-code-terminal-get-current-id)))
+         (pending (when terminal-id
+                    (gethash terminal-id claude-code-mcp-pending-capture))))
+    (message "MCP DEBUG: capture-and-send called, terminal-id=%s, has-pending=%s"
+             terminal-id (if pending "yes" "no"))
+    (if (not pending)
+        ;; No pending capture - just send Enter normally
+        (when (and (derived-mode-p 'eat-mode)
+                   (bound-and-true-p eat-terminal))
+          (eat-term-send-string eat-terminal "\C-m"))
+      ;; We have a pending capture
+      (let ((executed (plist-get pending :executed)))
+        (if (not executed)
+            ;; Command not yet executed (edit mode) - execute it now
+            (progn
+              (message "MCP DEBUG: Edit mode - executing command now")
+              ;; Send Enter to execute the command
+              (let ((proc (get-buffer-process (current-buffer))))
+                (when proc
+                  (process-send-string proc "\n")))
+              ;; Update the pending capture: mark as executed, update start-marker
+              (puthash terminal-id
+                       (plist-put (plist-put pending :executed t)
+                                  :start-marker (point-max))
+                       claude-code-mcp-pending-capture)
+              (message "MCP: Command executing. Press Enter when output is complete."))
+          ;; Command already executed - capture output
+          (let* ((start-marker (plist-get pending :start-marker))
+                 (callback (plist-get pending :callback))
+                 (command (plist-get pending :command))
+                 (project-root (plist-get pending :project-root))
+                 (end-pos (point-max))
+                 (output (buffer-substring-no-properties start-marker end-pos)))
+            (message "MCP DEBUG: Capturing from %d to %d, output-len=%d, buffer=%s"
+                     start-marker end-pos (length output) (buffer-name))
+            (message "MCP DEBUG: Output preview: %s"
+                     (substring output 0 (min 200 (length output))))
+            ;; Clear pending capture
+            (remhash terminal-id claude-code-mcp-pending-capture)
+            ;; Call callback with result
+            (when callback
+              (funcall callback
+                       (list :success t
+                             :stdout (string-trim output)
+                             :stderr ""
+                             :exit-code 0
+                             :timeout nil
+                             :working-directory (or project-root default-directory))))
+            (message "MCP: Output captured and sent (%d chars)" (length output))))))))
+
+(defun claude-code-mcp-has-pending-capture-p ()
+  "Return t if there's a pending MCP capture for current terminal."
+  (claude-code-mcp-init-pending-capture)
+  (let ((terminal-id (when (fboundp 'claude-code-terminal-get-current-id)
+                       (claude-code-terminal-get-current-id))))
+    (and terminal-id (gethash terminal-id claude-code-mcp-pending-capture))))
+
 ;; LSP function declarations
 (declare-function lsp-diagnostics "lsp-mode" (&optional all-workspaces))
 (declare-function lsp:diagnostic-range "lsp-protocol" (diagnostic))
@@ -660,11 +739,11 @@ PARAMS must include \\='file\\=', \\='line\\=', and \\='symbol\\=' parameters."
 
 (defun claude-code-show-command-confirmation-popup (command project-root)
   "Show confirmation popup for COMMAND execution in PROJECT-ROOT.
-Returns t if user confirms (y), nil if user declines (n)."
+Returns 'execute if user confirms (y), 'edit if user wants to edit (e), nil if declined (n)."
   (let ((buffer-name " *command-confirmation*")
         (working-dir (or project-root default-directory))
-        (confirmation nil))
-    
+        (result nil))
+
     ;; Create popup content
     (with-current-buffer (get-buffer-create buffer-name)
       (erase-buffer)
@@ -674,13 +753,9 @@ Returns t if user confirms (y), nil if user declines (n)."
       (insert "\n")
       (insert (propertize command 'face 'font-lock-string-face))
       (insert "\n\n")
-      ;; (insert (propertize "Working Directory:" 'face 'font-lock-keyword-face))
-      ;; (insert "\n")
-      ;; (insert (propertize working-dir 'face 'font-lock-comment-face))
-      ;; (insert "\n\n")
       (insert (propertize "Execute this command?" 'face 'font-lock-builtin-face))
       (insert "\n\n")
-      (insert (propertize "[y] Yes, execute    [n] No, cancel" 'face 'success))
+      (insert (propertize "[y] Yes    [e] Edit first    [n] No" 'face 'success))
       (goto-char (point-min)))
     
     ;; Show popup using posframe if available, otherwise use pop-to-buffer
@@ -689,8 +764,8 @@ Returns t if user confirms (y), nil if user declines (n)."
             ;; Use posframe for better popup experience
             (progn
               (posframe-show buffer-name
-                           :poshandler #'posframe-poshandler-frame-center
-                           :width 60
+                           :poshandler #'posframe-poshandler-frame-top-right-corner
+                           :width (/ (frame-width) 2)
                            :height 12
                            :border-width 2
                            :border-color "#555555"
@@ -702,32 +777,38 @@ Returns t if user confirms (y), nil if user declines (n)."
               
               ;; Wait for user input
               (let ((key nil))
-                (while (not (memq key '(?y ?n ?Y ?N ?\C-g)))
-                  (setq key (read-key "Execute command? [y/n]: "))
-                  (unless (memq key '(?y ?n ?Y ?N ?\C-g))
-                    (message "Please press 'y' for yes or 'n' for no")))
-                
-                (setq confirmation (memq key '(?y ?Y))))
-              
+                (while (not (memq key '(?y ?n ?Y ?N ?e ?E ?\C-g)))
+                  (setq key (read-key "Execute command? [y/e/n]: "))
+                  (unless (memq key '(?y ?n ?Y ?N ?e ?E ?\C-g))
+                    (message "Press 'y' to execute, 'e' to edit, 'n' to cancel")))
+
+                (setq result (cond
+                              ((memq key '(?y ?Y)) 'execute)
+                              ((memq key '(?e ?E)) 'edit)
+                              (t nil))))
+
               (posframe-hide buffer-name))
-          
+
           ;; Fallback to regular buffer popup
           (pop-to-buffer buffer-name)
           (let ((key nil))
-            (while (not (memq key '(?y ?n ?Y ?N ?\C-g)))
-              (setq key (read-key "Execute command? [y/n]: "))
-              (unless (memq key '(?y ?n ?Y ?N ?\C-g))
-                (message "Please press 'y' for yes or 'n' for no")))
-            
-            (setq confirmation (memq key '(?y ?Y))))
-          
+            (while (not (memq key '(?y ?n ?Y ?N ?e ?E ?\C-g)))
+              (setq key (read-key "Execute command? [y/e/n]: "))
+              (unless (memq key '(?y ?n ?Y ?N ?e ?E ?\C-g))
+                (message "Press 'y' to execute, 'e' to edit, 'n' to cancel")))
+
+            (setq result (cond
+                          ((memq key '(?y ?Y)) 'execute)
+                          ((memq key '(?e ?E)) 'edit)
+                          (t nil))))
+
           (quit-window t))
       
       ;; Cleanup
       (when (get-buffer buffer-name)
         (kill-buffer buffer-name)))
-    
-    confirmation))
+
+    result))
 
 ;;; Terminal Output Size and State Tracking
 
@@ -837,135 +918,133 @@ PARAMS should include 'terminalId' and optionally 'projectRoot'."
 
 (defun claude-code-mcp-handle-executeTerminalCommandInEmacs (params)
   "Handle executeTerminalCommand request with PARAMS.
-PARAMS should include 'command', and optionally 'terminalId', 'projectRoot', and 'timeout'.
-Note: terminalId parameter is ignored - always uses last focused terminal.
-Shows confirmation popup before executing and includes buffer corruption detection."
+PARAMS should include 'command', and optionally 'terminalId', 'projectRoot'.
+Uses simple Enter-to-capture approach: sends command, waits for user to press Enter to capture output."
   (let ((command (cdr (assoc 'command params)))
         (project-root (cdr (assoc 'projectRoot params)))
-        (timeout-duration (or (cdr (assoc 'timeout params)) 30))
         terminal-id
         buffer)
-    
+
     ;; Validate required parameters
     (unless command
       (error "Command parameter is required"))
-    
-    ;; Always use last focused terminal ID, ignore the provided terminalId parameter
-    (setq terminal-id 
+
+    ;; Always use last focused terminal ID
+    (setq terminal-id
           (when (fboundp 'claude-code-terminal-get-last-focused)
             (claude-code-terminal-get-last-focused)))
 
     (unless terminal-id
       (message "No focused terminal found, cannot execute command")
       (error "No focused terminal available"))
-    
-    ;; Check if buffer is corrupted before proceeding
-    (when (claude-code-mcp-is-buffer-corrupted terminal-id)
-      (message "Terminal buffer %s is corrupted, resetting state" terminal-id)
-      (claude-code-mcp-reset-buffer-state terminal-id))
-    
-    ;; Get terminal buffer and validate its state
+
+    ;; Get terminal buffer
     (setq buffer (claude-code-terminal-get-by-id terminal-id project-root))
-    (when buffer
-      (condition-case err
-          (claude-code-mcp-validate-buffer-state buffer)
-        (args-out-of-range
-         (message "Buffer corruption detected during validation for terminal %s" terminal-id)
-         (claude-code-mcp-reset-buffer-state terminal-id)
-         (error "Terminal buffer is corrupted and needs to be recreated"))))
-    
+    (unless buffer
+      (error "Terminal buffer not found for %s" terminal-id))
+
     ;; Show confirmation popup before executing
-    (if (claude-code-show-command-confirmation-popup command project-root)
-        ;; User confirmed - execute the command with enhanced monitoring
-        (progn
-          (unless (fboundp 'claude-code-terminal-execute-command)
-            (error "Terminal execute function not available"))
-          
-          ;; Initialize command state tracking
-          (claude-code-mcp-init-command-state terminal-id)
-          
-          (condition-case exec-err
-              ;; Return async marker instead of blocking with instance-specific ID
-              (let* ((instance-id (or (cdr (assoc 'emacs_instance_id params)) (emacs-pid)))
-                     (async-id (format "term-cmd-%d-%d" instance-id (random 100000))))
-                (list :async-pending t
-                      :async-id async-id
-                      :async-callback
-                      (lambda (callback)
-                        ;; Send command to terminal for visual feedback
-                        ;; (with-current-buffer (claude-code-terminal-get-by-id terminal-id project-root)
-                        ;;   (vterm-send-string command)
-                        ;;   (vterm-send-return))
-                        
-                        ;; Execute async with real callback
-                        (claude-code-terminal-execute-command-async 
-                         terminal-id 
-                         command 
-                         (lambda (result)
-                           ;; Convert result to MCP format and call callback
-                           (let* ((mcp-result `((success . ,(plist-get result :success))
-                                               (message . ,(if (plist-get result :success) "Command executed successfully" "Command failed"))
-                                               (terminalId . ,terminal-id)
-                                               (command . ,command)
-                                               (stdout . ,(or (plist-get result :stdout) ""))
-                                               (stderr . ,(or (plist-get result :stderr) ""))
-                                               (exitCode . ,(or (plist-get result :exit-code) 1))
-                                               (timeout . ,(if (plist-get result :timeout) t json-false))
-                                               (interrupted . ,json-false)
-                                               (largeOutput . ,json-false)
-                                               (workingDirectory . ,(or (plist-get result :working-directory) project-root default-directory))
-                                               (error . ,(if (plist-get result :success) "" "Command failed")))))
-                             (funcall callback mcp-result)))
-                         project-root
-                         timeout-duration))))
-            
-            (args-out-of-range
-             ;; Buffer corruption occurred during execution
-             (message "Buffer corruption during command execution for terminal %s" terminal-id)
-             (puthash terminal-id t claude-code-mcp-terminal-buffer-corrupted)
-             (remhash terminal-id claude-code-mcp-command-states)
-             `((success . nil)
-               (message . "Terminal buffer corrupted during command execution")
-               (terminalId . ,terminal-id)
-               (command . ,command)
-               (stdout . "")
-               (stderr . "Args out of range: Terminal buffer corrupted")
-               (exitCode . 1)
-               (timeout . ,json-false)
-               (interrupted . t)
-               (largeOutput . t)
-               (workingDirectory . ,(or project-root default-directory))
-               (error . "Args out of range: Terminal buffer corrupted")))
-            
-            (error
-             ;; Other execution errors
-             (remhash terminal-id claude-code-mcp-command-states)
-             `((success . nil)
-               (message . ,(format "Command execution error: %s" (error-message-string exec-err)))
-               (terminalId . ,terminal-id)
-               (command . ,command)
-               (stdout . "")
-               (stderr . ,(error-message-string exec-err))
-               (exitCode . 1)
-               (timeout . ,json-false)
-               (interrupted . nil)
-               (largeOutput . nil)
-               (workingDirectory . ,(or project-root default-directory))
-               (error . ,(error-message-string exec-err))))))
-      
-      ;; User declined - return error indicating cancellation
-      `((success . nil)
-        (message . "Command execution was cancelled by user")
-        (terminalId . ,terminal-id)
-        (command . ,command)
-        (stdout . "")
-        (stderr . "KeyboardInterrupt: User cancelled command execution")
-        (exitCode . 130)
-        (timeout . ,json-false)
-        (interrupted . nil)
-        (largeOutput . nil)
-        (workingDirectory . ,(or project-root default-directory))
-        (error . "KeyboardInterrupt: User cancelled command execution")))))
+    (let ((user-choice (claude-code-show-command-confirmation-popup command project-root)))
+      (pcase user-choice
+        ;; User confirmed execute - send command + newline
+        ('execute
+         (let* ((instance-id (or (cdr (assoc 'emacs_instance_id params)) (emacs-pid)))
+                (async-id (format "term-cmd-%d-%d" instance-id (random 100000))))
+           (list :async-pending t
+                 :async-id async-id
+                 :async-callback
+                 (lambda (callback)
+                   (claude-code-mcp-init-pending-capture)
+                   (with-current-buffer buffer
+                     ;; Mark current position as integer (won't move with inserted content)
+                     (let ((start-marker (point-max)))
+                       (message "MCP DEBUG: Storing start-marker=%d, buffer=%s" start-marker (buffer-name))
+                       ;; Store pending capture info
+                       (puthash terminal-id
+                                (list :callback
+                                      (lambda (result)
+                                        ;; Convert to MCP format
+                                        (funcall callback
+                                                 `((success . ,(if (plist-get result :success) t json-false))
+                                                   (message . "Command executed successfully")
+                                                   (terminalId . ,terminal-id)
+                                                   (command . ,command)
+                                                   (stdout . ,(or (plist-get result :stdout) ""))
+                                                   (stderr . ,(or (plist-get result :stderr) ""))
+                                                   (exitCode . ,(or (plist-get result :exit-code) 0))
+                                                   (timeout . ,json-false)
+                                                   (interrupted . ,json-false)
+                                                   (largeOutput . ,json-false)
+                                                   (workingDirectory . ,(or (plist-get result :working-directory) project-root default-directory))
+                                                   (error . ""))))
+                                      :start-marker start-marker
+                                      :executed t
+                                      :command command
+                                      :project-root project-root)
+                                claude-code-mcp-pending-capture)
+                       ;; Send command + Enter
+                       (let ((proc (get-buffer-process buffer)))
+                         (when proc
+                           (process-send-string proc command)
+                           (process-send-string proc "\n")))
+                       (message "MCP: Command sent. Press Enter when output is complete.")))))))
+
+        ;; User wants to edit - send command WITHOUT newline, set up capture
+        ('edit
+         (let* ((instance-id (or (cdr (assoc 'emacs_instance_id params)) (emacs-pid)))
+                (async-id (format "term-cmd-%d-%d" instance-id (random 100000))))
+           (list :async-pending t
+                 :async-id async-id
+                 :async-callback
+                 (lambda (callback)
+                   (claude-code-mcp-init-pending-capture)
+                   (with-current-buffer buffer
+                     ;; Mark current position as integer (won't move with inserted content)
+                     (let ((start-marker (point-max)))
+                       (message "MCP DEBUG: Edit mode - start-marker=%d, buffer=%s" start-marker (buffer-name))
+                       ;; Store pending capture info
+                       (puthash terminal-id
+                                (list :callback
+                                      (lambda (result)
+                                        ;; Convert to MCP format
+                                        (funcall callback
+                                                 `((success . ,(if (plist-get result :success) t json-false))
+                                                   (message . "Command executed successfully (edited)")
+                                                   (terminalId . ,terminal-id)
+                                                   (command . ,command)  ; Original command (may have been edited by user)
+                                                   (stdout . ,(or (plist-get result :stdout) ""))
+                                                   (stderr . ,(or (plist-get result :stderr) ""))
+                                                   (exitCode . ,(or (plist-get result :exit-code) 0))
+                                                   (timeout . ,json-false)
+                                                   (interrupted . ,json-false)
+                                                   (largeOutput . ,json-false)
+                                                   (workingDirectory . ,(or (plist-get result :working-directory) project-root default-directory))
+                                                   (error . ""))))
+                                      :start-marker start-marker
+                                      :executed nil
+                                      :command command
+                                      :project-root project-root)
+                                claude-code-mcp-pending-capture)
+                       ;; Send command WITHOUT Enter - user will edit and press Enter
+                       (let ((proc (get-buffer-process buffer)))
+                         (when proc
+                           (process-send-string proc command)))
+                       (message "MCP: Command inserted. Edit, then Enter to run, Enter again to capture.")))))))
+
+        ;; User declined - return error indicating cancellation
+        (_
+         `((success . nil)
+           (message . "Command execution was cancelled by user")
+           (terminalId . ,terminal-id)
+           (command . ,command)
+           (stdout . "")
+           (stderr . "KeyboardInterrupt: User cancelled command execution")
+           (exitCode . 130)
+           (timeout . ,json-false)
+           (interrupted . nil)
+           (largeOutput . nil)
+           (workingDirectory . ,(or project-root default-directory))
+           (error . "KeyboardInterrupt: User cancelled command execution")))))))
 
 (defun claude-code-mcp-handle-getTerminalList (params)
   "Handle getTerminalList request with PARAMS.

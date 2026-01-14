@@ -562,7 +562,7 @@ SWITCHES are optional command-line arguments for PROGRAM."
 
 _BACKEND is the terminal backend type (should be \\='eat).
 STRING is the text to send to the terminal."
-  (vterm-send-string string))
+  (eat-term-send-string eat-terminal string))
 
 (cl-defmethod claude-code--term-kill-process ((_backend (eql eat)) buffer)
   "Kill the eat terminal process in BUFFER.
@@ -703,21 +703,21 @@ _BACKEND is the terminal backend type (should be \\='eat)."
     (use-local-map map)))
 
 (defun claude-code--switch-to-previous-buffer ()
-  "Switch to previous buffer and exit visual state if active."
+  "Switch to previous buffer and exit visual state if active.
+Uses `switch-to-buffer' with the other buffer to handle eat terminals properly."
   (interactive)
-  ;; Store visual selection info before switching
-  (let ((was-visual (and (featurep 'evil) (evil-visual-state-p)))
-        (visual-mark (when (and (featurep 'evil) (evil-visual-state-p))
-                       (mark)))
-        (visual-point (when (and (featurep 'evil) (evil-visual-state-p))
-                        (point)))
-        (visual-type (when (and (featurep 'evil) (evil-visual-state-p))
-                       evil-visual-selection)))
-    ;; Exit visual state before switching
-    (when was-visual
-      (evil-exit-visual-state))
-    ;; Switch to previous buffer
-    (previous-buffer)))
+  ;; Exit visual state before switching
+  (when (and (featurep 'evil) (fboundp 'evil-visual-state-p) (evil-visual-state-p))
+    (evil-exit-visual-state))
+  ;; Get the other buffer - second in buffer list is the previous one
+  (let* ((current (current-buffer))
+         (prev-buffer (seq-find (lambda (buf)
+                                  (and (not (eq buf current))
+                                       (buffer-live-p buf)
+                                       (not (string-prefix-p " " (buffer-name buf)))))
+                                (buffer-list))))
+    (when prev-buffer
+      (switch-to-buffer prev-buffer))))
 
 (defun claude-code--eat-send-alt-return ()
   "Send <alt>-<return> to eat."
@@ -725,9 +725,9 @@ _BACKEND is the terminal backend type (should be \\='eat)."
   (eat-term-send-string eat-terminal "\e\C-m"))
 
 (defun claude-code--eat-send-return ()
-  "Send return key to vterm."
+  "Send return key to eat terminal."
   (interactive)
-  (vterm-send-key "\C-m"))
+  (eat-term-send-string eat-terminal "\C-m"))
 
 (cl-defgeneric claude-code--term-get-adjust-process-window-size-fn (backend)
   "Get the BACKEND specific function that adjusts window size.")
@@ -1373,7 +1373,7 @@ With double prefix ARG (\\[universal-argument] \\[universal-argument]), prompt f
                                       extra-env-variables
                                       process-environment))
          ;; Start the terminal process
-         (buffer (claude-code--term-make 'vterm buffer-name claude-code-program program-switches)))
+         (buffer (claude-code--term-make claude-code-terminal-backend buffer-name claude-code-program program-switches)))
 
     ;; Check if the claude program is available
     (unless (executable-find claude-code-program)

@@ -87,10 +87,15 @@
         (when (get-buffer buffer-name)
           (kill-buffer buffer-name))
         
-        ;; Create terminal buffer 
-        (if (featurep 'vterm)
-            (setq new-buffer (vterm buffer-name))
-          (setq new-buffer (ansi-term (getenv "SHELL") buffer-name)))
+        ;; Create terminal buffer (prefer eat, fallback to vterm, then ansi-term)
+        (cond
+         ((featurep 'eat)
+          (setq new-buffer (eat-make buffer-name (getenv "SHELL") nil))
+          (with-current-buffer new-buffer (eat-char-mode)))
+         ((featurep 'vterm)
+          (setq new-buffer (vterm buffer-name)))
+         (t
+          (setq new-buffer (ansi-term (getenv "SHELL") buffer-name))))
         
         ;; Store the buffer for this workspace
         (my/set-terminal-buffer new-buffer)

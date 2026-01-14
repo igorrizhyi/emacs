@@ -35,7 +35,7 @@
 
 ;; Forward declaration for functions from claude-code.el
 (declare-function claude-code--do-send-command "claude-code" (cmd))
-(require 'vterm)
+(require 'eat)
 (require 'async)
 
 ;;; Variables
@@ -49,7 +49,7 @@ Each value is a list of (buffer-name . terminal-id) pairs.")
 
 (defvar claude-code-terminal-directory-tracking-enabled t
   "Enable automatic directory tracking for find-file commands.
-When enabled, find-file will use the current vterm working directory
+When enabled, find-file will use the current eat terminal working directory
 instead of the buffer's default-directory.")
 
 (defvar claude-code-terminal-last-directory-sync-time (make-hash-table :test 'equal)
@@ -108,34 +108,35 @@ These commands typically create interactive sessions or long-running processes."
 ;;; Directory Tracking Functions
 
 (defun claude-code-terminal-sync-directory (terminal-id)
-  "Synchronize default-directory with vterm's actual working directory using /proc filesystem."
+  "Synchronize default-directory with eat terminal's actual working directory using /proc filesystem."
   (message "[DEBUG] Starting sync for terminal-id: %s" terminal-id)
   (when-let ((buffer (claude-code-terminal-get-by-id terminal-id)))
     (message "[DEBUG] Found buffer: %s" buffer)
     (with-current-buffer buffer
-      (message "[DEBUG] Mode check - vterm-mode: %s, process: %s" 
-               (derived-mode-p 'vterm-mode) vterm--process)
-      (when (and (derived-mode-p 'vterm-mode) vterm--process)
-        (condition-case err
-            (let* ((pid (process-id vterm--process))
-                   (proc-cwd (format "/proc/%d/cwd/" pid))
-                   (dir (when (file-exists-p proc-cwd)
-                          (file-truename proc-cwd))))
-              (message "[DEBUG] PID: %s, proc-cwd: %s, dir result: %s (type: %s)" 
-                       pid proc-cwd dir (type-of dir))
-              (when (and dir (file-directory-p dir))
-                (message "[DEBUG] Setting default-directory to: %s" dir)
-                (setq default-directory dir)
-                (puthash terminal-id (current-time) claude-code-terminal-last-directory-sync-time)
-                (message "[DEBUG] Successfully synced directory for %s: %s" terminal-id dir)
-                dir))
-          (error 
-           (message "[DEBUG] Error in sync for %s: %s" terminal-id (error-message-string err))
-           nil))))))
+      (let ((proc (get-buffer-process buffer)))
+        (message "[DEBUG] Mode check - eat-mode: %s, process: %s"
+                 (derived-mode-p 'eat-mode) proc)
+        (when (and (derived-mode-p 'eat-mode) proc)
+          (condition-case err
+              (let* ((pid (process-id proc))
+                     (proc-cwd (format "/proc/%d/cwd/" pid))
+                     (dir (when (file-exists-p proc-cwd)
+                            (file-truename proc-cwd))))
+                (message "[DEBUG] PID: %s, proc-cwd: %s, dir result: %s (type: %s)"
+                         pid proc-cwd dir (type-of dir))
+                (when (and dir (file-directory-p dir))
+                  (message "[DEBUG] Setting default-directory to: %s" dir)
+                  (setq default-directory dir)
+                  (puthash terminal-id (current-time) claude-code-terminal-last-directory-sync-time)
+                  (message "[DEBUG] Successfully synced directory for %s: %s" terminal-id dir)
+                  dir))
+            (error
+             (message "[DEBUG] Error in sync for %s: %s" terminal-id (error-message-string err))
+             nil)))))))
 
-(defun claude-code-terminal-find-file-with-vterm-directory ()
-  "Enhanced find-file that uses current vterm working directory.
-When called from a vterm buffer, uses vterm's PWD instead of default-directory."
+(defun claude-code-terminal-find-file-with-terminal-directory ()
+  "Enhanced find-file that uses current eat terminal working directory.
+When called from an eat terminal buffer, uses the terminal's PWD instead of default-directory."
   (interactive)
   (if-let ((terminal-id (claude-code-terminal-get-current-id)))
       (progn
@@ -146,15 +147,15 @@ When called from a vterm buffer, uses vterm's PWD instead of default-directory."
     ;; Not in a terminal buffer, use normal find-file
     (call-interactively 'find-file)))
 
-;; Hook to override find-file in vterm buffers
+;; Hook to override find-file in eat terminal buffers
 (defun claude-code-terminal-setup-directory-hooks ()
   "Set up hooks for on-demand directory synchronization."
-  ;; Override find-file in vterm buffers to use synced directory
-  (add-hook 'vterm-mode-hook 
+  ;; Override find-file in eat buffers to use synced directory
+  (add-hook 'eat-mode-hook
             (lambda ()
               (when (bound-and-true-p claude-code-terminal-id)
-                (local-set-key (kbd "C-x C-f") 'claude-code-terminal-find-file-with-vterm-directory)
-                (local-set-key (kbd "s-f") 'claude-code-terminal-find-file-with-vterm-directory)))))
+                (local-set-key (kbd "C-x C-f") 'claude-code-terminal-find-file-with-terminal-directory)
+                (local-set-key (kbd "s-f") 'claude-code-terminal-find-file-with-terminal-directory)))))
 
 ;;; Terminal Buffer Management
 
@@ -182,27 +183,29 @@ Returns the terminal ID."
                         (claude-code-terminal-generate-id)))
          (buffer-name (claude-code-terminal-buffer-name project-root terminal-id))
          (default-directory (or directory project-root)))
-    
-    ;; Create vterm buffer
-    (let ((buffer (vterm buffer-name)))
+
+    ;; Create eat terminal buffer
+    (let ((buffer (eat-make buffer-name (getenv "SHELL") nil)))
       ;; Store terminal ID as buffer-local variable
       (with-current-buffer buffer
         (setq-local claude-code-terminal-id terminal-id)
         (setq-local claude-code-terminal-project-root project-root)
         ;; Enable claude terminal mode and apply font scaling
         (claude-code-terminal-mode 1)
-        (claude-code-terminal-apply-large-font))
-      
+        (claude-code-terminal-apply-large-font)
+        ;; Switch to semi-char mode for C-c prefix key support
+        (eat-semi-char-mode))
+
       ;; Register terminal session
       (claude-code-terminal-register project-root buffer-name terminal-id)
-      
+
       ;; Update last created terminal ID and record access time
       (setq claude-code-terminal-last-created terminal-id)
       (puthash terminal-id (current-time) claude-code-terminal-access-times)
-      
+
       ;; Switch to the buffer
       (switch-to-buffer buffer)
-      
+
       terminal-id)))
 
 (defun claude-code-terminal-create-numbered (&optional directory)
@@ -230,27 +233,29 @@ If no current terminal or no pattern match, creates 'local_1'."
          (new-terminal-id (format "%s_%d" base-name (1+ max-number)))
          (buffer-name (claude-code-terminal-buffer-name project-root new-terminal-id))
          (default-directory (or directory project-root)))
-    
-    ;; Create vterm buffer
-    (let ((buffer (vterm buffer-name)))
+
+    ;; Create eat terminal buffer
+    (let ((buffer (eat-make buffer-name (getenv "SHELL") nil)))
       ;; Store terminal ID as buffer-local variable
       (with-current-buffer buffer
         (setq-local claude-code-terminal-id new-terminal-id)
         (setq-local claude-code-terminal-project-root project-root)
         ;; Enable claude terminal mode and apply font scaling
         (claude-code-terminal-mode 1)
-        (claude-code-terminal-apply-large-font))
-      
+        (claude-code-terminal-apply-large-font)
+        ;; Switch to semi-char mode for C-c prefix key support
+        (eat-semi-char-mode))
+
       ;; Register terminal session
       (claude-code-terminal-register project-root buffer-name new-terminal-id)
-      
+
       ;; Update last created terminal ID and record access time
       (setq claude-code-terminal-last-created new-terminal-id)
       (puthash new-terminal-id (current-time) claude-code-terminal-access-times)
-      
+
       ;; Switch to the buffer
       (switch-to-buffer buffer)
-      
+
       new-terminal-id)))
 
 (defun claude-code-terminal-switch-recent ()
@@ -313,16 +318,28 @@ If no current terminal or no pattern match, creates 'local_1'."
     (gethash root claude-code-terminal-sessions '())))
 
 (defun claude-code-terminal-get-by-id (terminal-id &optional project-root)
-  "Get terminal buffer by TERMINAL-ID in PROJECT-ROOT."
+  "Get terminal buffer by TERMINAL-ID in PROJECT-ROOT.
+First checks registered sessions, then scans all buffers for unregistered terminals."
   (let* ((root (or project-root (claude-code-normalize-project-root (projectile-project-root))))
          (sessions (claude-code-terminal-get-sessions root)))
-    (catch 'found
-      (dolist (session sessions)
-        (when (string= (cdr session) terminal-id)
-          (let ((buffer (get-buffer (car session))))
-            (when (and buffer (buffer-live-p buffer))
-              (throw 'found buffer)))))
-      nil)))
+    (or
+     ;; First try registered sessions
+     (catch 'found
+       (dolist (session sessions)
+         (when (string= (cdr session) terminal-id)
+           (let ((buffer (get-buffer (car session))))
+             (when (and buffer (buffer-live-p buffer))
+               (throw 'found buffer)))))
+       nil)
+     ;; Fall back to scanning all buffers for unregistered terminals
+     (catch 'found
+       (dolist (buffer (buffer-list))
+         (when (buffer-live-p buffer)
+           (with-current-buffer buffer
+             (when (and (bound-and-true-p claude-code-terminal-id)
+                        (string= claude-code-terminal-id terminal-id))
+               (throw 'found buffer)))))
+       nil))))
 
 (defun claude-code-terminal-get-current-id ()
   "Get terminal ID of current buffer if it's a terminal buffer."
@@ -347,19 +364,55 @@ Falls back to current context, last created, or any active terminal."
         (plist-get (car (last active-terminals)) :terminal-id))))
 
 (defun claude-code-terminal-list-active ()
-  "List all active terminal buffers with their IDs."
+  "List all active terminal buffers with their IDs.
+Also discovers eat/vterm buffers with `claude-code-terminal-mode' that may not be registered."
   (interactive)
-  (let ((active-terminals '()))
+  (let ((active-terminals '())
+        (seen-buffers '()))
+    ;; First, get terminals from the registered sessions
     (maphash (lambda (project-root sessions)
                (dolist (session sessions)
                  (let ((buffer (get-buffer (car session))))
                    (when (and buffer (buffer-live-p buffer))
+                     (push buffer seen-buffers)
                      (push (list :project-root project-root
                                 :buffer-name (car session)
                                 :terminal-id (cdr session)
                                 :buffer buffer)
                            active-terminals)))))
              claude-code-terminal-sessions)
+    ;; Also scan for unregistered eat/vterm terminal buffers
+    (dolist (buffer (buffer-list))
+      (when (and (buffer-live-p buffer)
+                 (not (memq buffer seen-buffers)))
+        (with-current-buffer buffer
+          (cond
+           ;; Case 1: Buffer has claude-code-terminal-mode and ID
+           ((and (bound-and-true-p claude-code-terminal-mode)
+                 (bound-and-true-p claude-code-terminal-id))
+            (let ((project-root (or (bound-and-true-p claude-code-terminal-project-root)
+                                    default-directory)))
+              (claude-code-terminal-register project-root (buffer-name) claude-code-terminal-id)
+              (push (list :project-root project-root
+                         :buffer-name (buffer-name)
+                         :terminal-id claude-code-terminal-id
+                         :buffer buffer)
+                    active-terminals)))
+           ;; Case 2: Eat buffer matching our naming pattern *claude-terminal:*
+           ((and (derived-mode-p 'eat-mode)
+                 (string-match "\\*claude-terminal:\\([^:]+\\):\\([^*]+\\)\\*" (buffer-name)))
+            (let* ((project-root (match-string 1 (buffer-name)))
+                   (terminal-id (match-string 2 (buffer-name))))
+              ;; Set buffer-local variables and enable mode
+              (setq-local claude-code-terminal-id terminal-id)
+              (setq-local claude-code-terminal-project-root project-root)
+              (claude-code-terminal-mode 1)
+              (claude-code-terminal-register project-root (buffer-name) terminal-id)
+              (push (list :project-root project-root
+                         :buffer-name (buffer-name)
+                         :terminal-id terminal-id
+                         :buffer buffer)
+                    active-terminals)))))))
     active-terminals))
 
 ;;; Asynchronous Command Execution
@@ -465,29 +518,29 @@ CALLBACK will be called with the result plist when output is detected or timeout
 Returns immediately without blocking."
   (let ((buffer (claude-code-terminal-get-by-id terminal-id project-root)))
     (if (not buffer)
-        (funcall callback (list :success nil 
+        (funcall callback (list :success nil
                                :stdout ""
                                :stderr "Terminal not found"
                                :exit-code 1
                                :timeout nil
                                :working-directory (or project-root default-directory)))
-      
+
       (with-current-buffer buffer
-        (if (not (derived-mode-p 'vterm-mode))
-            (funcall callback (list :success nil 
+        (if (not (derived-mode-p 'eat-mode))
+            (funcall callback (list :success nil
                                    :stdout ""
-                                   :stderr "Buffer is not in vterm-mode"
+                                   :stderr "Buffer is not in eat-mode"
                                    :exit-code 1
                                    :timeout nil
                                    :working-directory (or project-root default-directory)))
-          
+
           ;; Cancel any existing async command for this terminal
           (let ((existing-info (gethash terminal-id claude-code-terminal-async-commands)))
             (when existing-info
               (when-let ((existing-timer (plist-get existing-info :timer)))
                 (cancel-timer existing-timer))
               (remhash terminal-id claude-code-terminal-async-commands)))
-          
+
           ;; Set marker BEFORE sending command to catch all output
           (let* ((start-marker (point-max))
                  (start-time (current-time))
@@ -497,19 +550,21 @@ Returns immediately without blocking."
                  (original-prompt (when current-line
                                    (claude-code-terminal-extract-prompt-only current-line)))
                  ;; Start timer with initial delay to let command begin execution
-                 (timer (run-with-timer 0.05 check-interval 
-                                       'claude-code-terminal-async-check-output terminal-id)))
-          
+                 (timer (run-with-timer 0.05 check-interval
+                                       'claude-code-terminal-async-check-output terminal-id))
+                 (proc (get-buffer-process buffer)))
+
           ;; Store the original command line for prompt comparison
           (when current-line
             (puthash terminal-id (list current-line original-prompt command) claude-code-terminal-last-command-line))
-          
-          ;; Send the command AFTER setting up monitoring
-          (vterm-send-string command)
-          (vterm-send-return)
-            
+
+          ;; Send the command AFTER setting up monitoring (eat uses process-send-string)
+          (when proc
+            (process-send-string proc command)
+            (process-send-string proc "\n"))
+
             ;; Store async command info
-            (puthash terminal-id 
+            (puthash terminal-id
                      (list :start-time start-time
                            :start-marker start-marker
                            :callback callback
@@ -518,7 +573,7 @@ Returns immediately without blocking."
                            :meaningful-found nil
                            :wait-start nil)
                      claude-code-terminal-async-commands)
-            
+
             ;; Return immediately
             (message "Command sent asynchronously: %s" command)))))))
 
@@ -570,26 +625,26 @@ Returns a plist with :success, :stdout, :stderr, :exit-code, :timeout, :working-
               :timeout nil 
               :working-directory (or project-root default-directory))
       (with-current-buffer buffer
-        (if (not (derived-mode-p 'vterm-mode))
-            (list :success nil 
-                  :stdout "" 
-                  :stderr "Buffer is not in vterm-mode" 
-                  :exit-code 1 
-                  :timeout nil 
+        (if (not (derived-mode-p 'eat-mode))
+            (list :success nil
+                  :stdout ""
+                  :stderr "Buffer is not in eat-mode"
+                  :exit-code 1
+                  :timeout nil
                   :working-directory (or project-root default-directory))
           ;; Get current working directory from terminal
           (let* ((working-dir (or project-root default-directory))
-                 (start-marker (point-max)))
-            
+                 (start-marker (point-max))
+                 (proc (get-buffer-process buffer)))
+
             (if async-mode
-                ;; Async execution: monitor actual vterm process output
+                ;; Async execution: monitor actual eat process output
                 (let* ((start-marker (point-max))
-                       (completion-marker (format "__ASYNC_COMPLETE_%d__" (random 10000)))
-                       (vterm-process (get-buffer-process (current-buffer))))
+                       (completion-marker (format "__ASYNC_COMPLETE_%d__" (random 10000))))
 
                   ;; Send command with completion marker to terminal
-                  (vterm-send-string (format "%s; echo \"%s:$?\"" command completion-marker))
-                  (vterm-send-return)
+                  (when proc
+                    (process-send-string proc (format "%s; echo \"%s:$?\"\n" command completion-marker)))
                   
                   ;; Simple polling-based approach
                   (let* ((start-time (current-time))
@@ -644,10 +699,10 @@ Returns a plist with :success, :stdout, :stderr, :exit-code, :timeout, :working-
                      (timed-out nil)
                      (output "")
                      (exit-code 0))
-                
+
                 ;; Send command with exit code capture
-                (vterm-send-string command-with-exit-code)
-                (vterm-send-return)
+                (when proc
+                  (process-send-string proc (concat command-with-exit-code "\n")))
                 
                 ;; Wait for command completion with timeout
                 (while (and (< (float-time (time-subtract (current-time) start-time)) timeout-seconds)
@@ -794,12 +849,23 @@ Uses a whitelist approach - only predefined commands are monitored."
 
 
 (defun claude-code-terminal-get-current-line ()
-  "Get the current line content in the terminal."
+  "Get the current line content in the terminal.
+For eat terminals, uses the eat terminal cursor position."
   (save-excursion
-    (end-of-line)
-    (let ((end (point)))
-      (beginning-of-line)
-      (buffer-substring-no-properties (point) end))))
+    (cond
+     ;; For eat terminals, go to the cursor position first
+     ((and (derived-mode-p 'eat-mode)
+           (bound-and-true-p eat-terminal))
+      (goto-char (eat-term-display-cursor eat-terminal))
+      (let ((end (line-end-position)))
+        (beginning-of-line)
+        (buffer-substring-no-properties (point) end)))
+     ;; For other terminals (vterm, etc.)
+     (t
+      (end-of-line)
+      (let ((end (point)))
+        (beginning-of-line)
+        (buffer-substring-no-properties (point) end))))))
 
 (defun claude-code-terminal-start-monitoring (terminal-id original-prefix)
   "Start monitoring for prompt changes to detect when we exit the embedded shell."
@@ -944,7 +1010,7 @@ Uses a whitelist approach - only predefined commands are monitored."
 (defun claude-code-terminal-on-return-pressed ()
   "Handle Return key press to detect context changes."
   (when (and (bound-and-true-p claude-code-terminal-id)
-             (derived-mode-p 'vterm-mode))
+             (derived-mode-p 'eat-mode))
     (let* ((terminal-id claude-code-terminal-id)
            (current-line (claude-code-terminal-get-current-line))
            (command (claude-code-terminal-extract-command current-line))
@@ -1066,16 +1132,16 @@ Uses a whitelist approach - only predefined commands are monitored."
                (puthash project-root live-sessions claude-code-terminal-sessions)))
            claude-code-terminal-sessions))
 
-;; Auto-cleanup sentinel for vterm process exit
-(defun claude-code-terminal--vterm-exit-sentinel (process event)
-  "Kill buffer when vterm process exits cleanly (via C-d or exit)."
+;; Auto-cleanup sentinel for eat process exit
+(defun claude-code-terminal--eat-exit-sentinel (process event)
+  "Kill buffer when eat process exits cleanly (via C-d or exit)."
   (when (and (not (process-live-p process))
              (string-match-p "\\(finished\\|exited\\)" event))
     (let ((buf (process-buffer process)))
       (when (and (buffer-live-p buf)
                  (with-current-buffer buf
                    (bound-and-true-p claude-code-terminal-id)))
-        (message "Terminal %s closed" 
+        (message "Terminal %s closed"
                  (with-current-buffer buf claude-code-terminal-id))
         (kill-buffer buf)))))
 
@@ -1545,9 +1611,15 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
 
 ;;; Mode Definition
 
+(defun claude-code-terminal-send-C-c ()
+  "Send C-c to the terminal process."
+  (interactive)
+  (when-let ((proc (get-buffer-process (current-buffer))))
+    (process-send-string proc "\C-c")))
+
 (defvar claude-code-terminal-mode-map
   (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "C-c C-c") (lambda () (interactive) (vterm-send-C-c)))
+    (define-key map (kbd "C-c C-c") #'claude-code-terminal-send-C-c)
     (define-key map (kbd "C-c C-k") #'claude-code-terminal-kill)
     (define-key map (kbd "C-c C-s") #'claude-code-terminal-switch)
     (define-key map (kbd "C-c C-t") #'claude-code-terminal-cycle-prefix)
@@ -1562,8 +1634,8 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
     (define-key map (kbd "C-f") #'claude-code-terminal-switch-recent)
     (define-key map (kbd "C-g") #'claude-code-terminal-cycle-prefix)
     ;; Directory-aware find-file keybindings
-    (define-key map (kbd "s-f") #'claude-code-terminal-find-file-with-vterm-directory)
-    (define-key map (kbd "C-x C-f") #'claude-code-terminal-find-file-with-vterm-directory)
+    (define-key map (kbd "s-f") #'claude-code-terminal-find-file-with-terminal-directory)
+    (define-key map (kbd "C-x C-f") #'claude-code-terminal-find-file-with-terminal-directory)
     map)
   "Keymap for Claude Code terminal mode.")
 
@@ -1582,21 +1654,12 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
   :keymap claude-code-terminal-mode-map
   (if claude-code-terminal-mode
       (progn
-        ;; Setup auto-cleanup when vterm process exits
-        (when (and (derived-mode-p 'vterm-mode)
+        ;; Setup auto-cleanup when eat process exits
+        (when (and (derived-mode-p 'eat-mode)
                    (get-buffer-process (current-buffer)))
           (set-process-sentinel (get-buffer-process (current-buffer))
-                               #'claude-code-terminal--vterm-exit-sentinel))
-        
-        ;; Ensure mode line is visible in terminal buffers
-        ;; (setq-local mode-line-format mode-line-format)
-        ;; (when (eq mode-line-format nil)
-        ;;   (setq-local mode-line-format (default-value 'mode-line-format)))
-        ;;
-        ;; Add terminal ID as centered header bar with bold font and state indicator
-        ;; (setq-local header-line-format
-        ;;             '(:eval (when (bound-and-true-p claude-code-terminal-id)
-        ;;                       (claude-code-terminal-header-line-with-state))))
+                               #'claude-code-terminal--eat-exit-sentinel))
+
         ;; Ensure mode-line is visible (don't override, let telephone-line handle it)
         (unless mode-line-format
           (setq-local mode-line-format (default-value 'mode-line-format)))
@@ -1620,7 +1683,7 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
                               :height (* font-size 10)))))
 
 ;; Auto-enable mode for terminal buffers (backup for edge cases)
-(add-hook 'vterm-mode-hook
+(add-hook 'eat-mode-hook
           (lambda ()
             (when (bound-and-true-p claude-code-terminal-id)
               (claude-code-terminal-mode 1)
@@ -1747,23 +1810,59 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
           (delete-frame)
           (message "Command sent to Claude"))))))
 
-;; Configure vterm key bindings
-(with-eval-after-load 'vterm
-  (define-key vterm-mode-map (kbd "C-c i") 'claude-code-send-emacs-terminal)
-  (define-key vterm-mode-map (kbd "C-c h") 'claude-code-send-emacs-terminal-popup)
-  ;; (define-key vterm-mode-map (kbd "C-y") 'claude-code-send-emacs-terminal)
-  (define-key vterm-mode-map (kbd "C-c 1") 'claude-code-send-1)
-  (define-key vterm-mode-map (kbd "C-c v") 'vterm-yank)
-  (define-key vterm-mode-map (kbd "C-c k") 'my-layout-smart-claude-code)
-  (define-key vterm-mode-map (kbd "C-l") 'windmove-right)
-  (define-key vterm-mode-map (kbd "C-u") 'claude-code-terminal-switch)
+;; Forward declaration for MCP capture function
+(declare-function claude-code-mcp-capture-and-send "claude-code-mcp-tools" ())
+(declare-function claude-code-mcp-has-pending-capture-p "claude-code-mcp-tools" ())
+
+;; Smart Enter function that captures MCP output if pending
+(defun claude-code-terminal-smart-enter ()
+  "Send Enter to terminal, or capture MCP output if pending.
+When an MCP command is waiting for output capture, this captures and sends the result.
+Otherwise, sends a normal Enter to the terminal."
+  (interactive)
+  (if (and (fboundp 'claude-code-mcp-has-pending-capture-p)
+           (claude-code-mcp-has-pending-capture-p))
+      ;; Capture pending MCP output
+      (claude-code-mcp-capture-and-send)
+    ;; Normal Enter - send to terminal
+    (when (and (derived-mode-p 'eat-mode)
+               (bound-and-true-p eat-terminal))
+      (eat-term-send-string eat-terminal "\C-m"))))
+
+;; Configure eat terminal key bindings
+(with-eval-after-load 'eat
+  ;; Semi-char mode keybindings (C-c prefix works)
+  (define-key eat-semi-char-mode-map (kbd "C-c c") 'claude-code-terminal-create)
+  (define-key eat-semi-char-mode-map (kbd "C-c n") 'claude-code-terminal-create-numbered)
+  (define-key eat-semi-char-mode-map (kbd "C-c i") 'claude-code-send-emacs-terminal)
+  (define-key eat-semi-char-mode-map (kbd "C-c h") 'claude-code-send-emacs-terminal-popup)
+  (define-key eat-semi-char-mode-map (kbd "C-c 1") 'claude-code-send-1)
+  (define-key eat-semi-char-mode-map (kbd "C-c v") 'eat-yank)
+  (define-key eat-semi-char-mode-map (kbd "C-c k") 'my-layout-smart-claude-code)
+  (define-key eat-semi-char-mode-map (kbd "C-l") 'windmove-right)
+  (define-key eat-semi-char-mode-map (kbd "C-u") 'claude-code-terminal-switch)
+  ;; Enter key - smart capture or normal
+  (define-key eat-semi-char-mode-map (kbd "<return>") 'claude-code-terminal-smart-enter)
   ;; Directory-aware find-file keybindings
-  (define-key vterm-mode-map (kbd "s-f") 'claude-code-terminal-find-file-with-vterm-directory)
-  (define-key vterm-mode-map (kbd "C-x C-f") 'claude-code-terminal-find-file-with-vterm-directory)
-  
-  ;; Hook into Return key for shell nesting detection
-  (advice-add 'vterm-send-return :before 'claude-code-terminal-on-return-pressed)
-  (message "[DEBUG] Added advice to vterm-send-return"))
+  (define-key eat-semi-char-mode-map (kbd "s-f") 'claude-code-terminal-find-file-with-terminal-directory)
+  (define-key eat-semi-char-mode-map (kbd "C-x C-f") 'claude-code-terminal-find-file-with-terminal-directory)
+
+  ;; Char mode keybindings - use s- (super) prefix since C-c is used for interrupt
+  ;; In char mode, most keys go directly to terminal, so we use super key
+  (define-key eat-char-mode-map (kbd "s-c") 'claude-code-terminal-create)
+  (define-key eat-char-mode-map (kbd "s-n") 'claude-code-terminal-create-numbered)
+  (define-key eat-char-mode-map (kbd "s-i") 'claude-code-send-emacs-terminal)
+  (define-key eat-char-mode-map (kbd "s-h") 'claude-code-send-emacs-terminal-popup)
+  (define-key eat-char-mode-map (kbd "s-1") 'claude-code-send-1)
+  (define-key eat-char-mode-map (kbd "s-v") 'eat-yank)
+  (define-key eat-char-mode-map (kbd "s-k") 'my-layout-smart-claude-code)
+  (define-key eat-char-mode-map (kbd "s-u") 'claude-code-terminal-switch)
+  ;; Enter key - smart capture or normal (s-return for super+enter)
+  (define-key eat-char-mode-map (kbd "s-<return>") 'claude-code-terminal-smart-enter)
+  ;; Directory-aware find-file keybindings
+  (define-key eat-char-mode-map (kbd "s-f") 'claude-code-terminal-find-file-with-terminal-directory)
+
+  (message "[DEBUG] Configured eat terminal keybindings"))
 
 ;; Evil mode bindings for terminal switching - ensures C-u works in all evil states
 (with-eval-after-load 'evil

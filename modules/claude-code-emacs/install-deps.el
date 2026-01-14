@@ -18,7 +18,7 @@
 
 ;; List of required packages
 (defvar claude-code-required-packages
-  '(projectile vterm transient markdown-mode lsp-mode websocket)
+  '(projectile eat transient markdown-mode lsp-mode websocket)
   "List of packages required by claude-code.")
 
 ;; Check if all packages are installed
