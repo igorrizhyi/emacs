@@ -179,6 +179,28 @@
 
 ;; Configure eat terminal to stay in insert mode and disable ESC switching
 (after! eat
+  ;; Remap C-backspace to C-w (backward-kill-word) in eat terminal
+  (define-key eat-semi-char-mode-map (kbd "C-<backspace>")
+    (lambda () (interactive)
+      (eat-term-send-string eat-terminal "\C-w")))
+  (define-key eat-char-mode-map (kbd "C-<backspace>")
+    (lambda () (interactive)
+      (eat-term-send-string eat-terminal "\C-w")))
+
+  ;; Remap C-left/C-right to M-b/M-f (word movement) in eat terminal
+  (define-key eat-semi-char-mode-map (kbd "C-<left>")
+    (lambda () (interactive)
+      (eat-term-send-string eat-terminal "\eb")))
+  (define-key eat-char-mode-map (kbd "C-<left>")
+    (lambda () (interactive)
+      (eat-term-send-string eat-terminal "\eb")))
+  (define-key eat-semi-char-mode-map (kbd "C-<right>")
+    (lambda () (interactive)
+      (eat-term-send-string eat-terminal "\ef")))
+  (define-key eat-char-mode-map (kbd "C-<right>")
+    (lambda () (interactive)
+      (eat-term-send-string eat-terminal "\ef")))
+
   ;; Disable evil mode state switching in eat
   (when (featurep 'evil)
 
@@ -192,7 +214,7 @@
       ;; Add C-t as normal mode switcher
       (evil-local-set-key 'insert (kbd "C-t") #'evil-normal-state)
       (evil-local-set-key 'emacs (kbd "<escape>") #'eat-self-input))
-    
+
     (add-hook 'eat-mode-hook #'my/eat-evil-setup)))
 
 ;; Alternative approach using evil-collection if available
