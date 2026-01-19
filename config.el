@@ -32,6 +32,7 @@
 (require 'my-search)
 (require 'my-eshell)
 (require 'my-magit-utils)
+(require 'my-dired-extension)
 (require 'text-functions)
 (require' claude-code-emacs)
 

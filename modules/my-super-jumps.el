@@ -821,11 +821,40 @@ Perfect for in-file navigation like jump-up/jump-down."
   (when my-super-jumps-mode
     (run-with-timer 0.1 nil #'my-super-jumps-mark-and-register)))
 
+;;; Insert mode exit tracking
+
+(defun my-super-jumps--on-insert-exit ()
+  "Register jump when exiting insert mode."
+  (when (and my-super-jumps-mode
+             (buffer-file-name))
+    (let ((entry (my-super-jumps--create-entry)))
+      (when entry
+        ;; Check if this position is different enough from the last jump
+        (let* ((ring (my-super-jumps--get-project-ring))
+               (should-register
+                (or (ring-empty-p ring)
+                    (let* ((last-entry (ring-ref ring 0))
+                           (last-file (my-super-jumps-entry-file last-entry))
+                           (last-line (my-super-jumps-entry-line last-entry))
+                           (current-file (expand-file-name (buffer-file-name)))
+                           (current-line (line-number-at-pos)))
+                      (or (not (equal current-file last-file))
+                          (>= (abs (- current-line last-line))
+                              my-super-jumps-line-threshold))))))
+          (when should-register
+            (my-super-jumps--add-jump entry)
+            (message "Registered edit jump: %s:%d"
+                     (file-name-nondirectory (my-super-jumps-entry-file entry))
+                     (my-super-jumps-entry-line entry))))))))
+
 ;;; Evil-style command hooks setup
 (defun my-super-jumps--setup-completion-hooks ()
   "Set up command hooks like Evil does."
   (add-hook 'pre-command-hook #'my-super-jumps--pre-command-hook)
   (add-hook 'post-command-hook #'my-super-jumps--post-command-hook)
+
+  ;; Register jump when exiting insert mode
+  (add-hook 'evil-insert-state-exit-hook #'my-super-jumps--on-insert-exit)
 
   ;; Add advice for completion frameworks - use eval-after-load for lazy loading
   (with-eval-after-load 'vertico
@@ -846,6 +875,7 @@ Perfect for in-file navigation like jump-up/jump-down."
   "Remove command hooks."
   (remove-hook 'pre-command-hook #'my-super-jumps--pre-command-hook)
   (remove-hook 'post-command-hook #'my-super-jumps--post-command-hook)
+  (remove-hook 'evil-insert-state-exit-hook #'my-super-jumps--on-insert-exit)
 
   ;; Remove advice for completion frameworks
   (when (featurep 'vertico)
