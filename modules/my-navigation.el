@@ -10,18 +10,20 @@
 (require 'my-layout)
 
 (defun my/jump-up ()
-  "Jump up 10 lines and postpone jump registration."
+  "Jump up 10 lines and register as transient jump.
+Transient jumps are cleared on cross-buffer navigation."
   (interactive)
   (forward-line -10)
-  (when (fboundp 'my-super-jumps-postpone-async)
-    (my-super-jumps-postpone-async "half-page-up")))
+  (when (fboundp 'my-super-jumps-postpone-async-transient)
+    (my-super-jumps-postpone-async-transient "half-page-up")))
 
 (defun my/jump-down ()
-  "Jump down 10 lines and postpone jump registration."
+  "Jump down 10 lines and register as transient jump.
+Transient jumps are cleared on cross-buffer navigation."
   (interactive)
   (forward-line 10)
-  (when (fboundp 'my-super-jumps-postpone-async)
-    (my-super-jumps-postpone-async "half-page-down")))
+  (when (fboundp 'my-super-jumps-postpone-async-transient)
+    (my-super-jumps-postpone-async-transient "half-page-down")))
 
 (defun my/next-defun ()
   "Move to the beginning of the next function definition and postpone jump registration.
