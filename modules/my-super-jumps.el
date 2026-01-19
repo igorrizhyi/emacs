@@ -78,7 +78,8 @@
   position    ; Buffer position (marker or integer)
   line        ; Line number
   column      ; Column number
-  timestamp)  ; When this jump was created/accessed
+  timestamp   ; When this jump was created/accessed
+  transient)  ; If non-nil, this is a transient jump (cleared on cross-buffer jumps)
 
 ;;; Utility functions
 
@@ -97,15 +98,17 @@
       (puthash project-root ring my-super-jumps--project-rings))
     ring))
 
-(defun my-super-jumps--create-entry ()
-  "Create a jump entry for the current position."
+(defun my-super-jumps--create-entry (&optional transient)
+  "Create a jump entry for the current position.
+If TRANSIENT is non-nil, mark this as a transient jump."
   (when-let ((file (buffer-file-name)))
     (make-my-super-jumps-entry
      :file (expand-file-name file)  ; Use full absolute path
      :position (point-marker)
      :line (line-number-at-pos)
      :column (current-column)
-     :timestamp (float-time))))
+     :timestamp (float-time)
+     :transient transient)))
 
 (defun my-super-jumps--entry-equal-p (entry1 entry2)
   "Check if two jump entries represent the same location."
@@ -177,6 +180,39 @@
         (ring-insert ring entry)
         (setq my-super-jumps--current-index 0)))))
 
+(defun my-super-jumps--clear-transient-jumps ()
+  "Remove all transient jumps from the current project's ring."
+  (let* ((ring (my-super-jumps--get-project-ring))
+         (len (ring-length ring))
+         (i 0)
+         (removed 0))
+    ;; Iterate backwards to safely remove elements
+    (while (< i len)
+      (let ((entry (ring-ref ring i)))
+        (if (my-super-jumps-entry-transient entry)
+            (progn
+              (ring-remove ring i)
+              (setq len (1- len))
+              (setq removed (1+ removed)))
+          (setq i (1+ i)))))
+    (when (> removed 0)
+      (message "Cleared %d transient jump(s)" removed)
+      ;; Reset index if it's now out of bounds
+      (when (and my-super-jumps--current-index
+                 (>= my-super-jumps--current-index (ring-length ring)))
+        (setq my-super-jumps--current-index
+              (max 0 (1- (ring-length ring))))))))
+
+(defun my-super-jumps--add-transient-jump ()
+  "Add current position as a transient jump."
+  (when (buffer-file-name)
+    (let ((entry (my-super-jumps--create-entry t)))  ; t = transient
+      (when entry
+        (my-super-jumps--add-jump entry)
+        (message "Registered transient jump: %s:%d"
+                 (file-name-nondirectory (my-super-jumps-entry-file entry))
+                 (my-super-jumps-entry-line entry))))))
+
 ;;; Navigation functions
 
 (defun my-super-jumps--goto-entry (entry)
@@ -245,34 +281,50 @@ Only registers if the async buffer file matches current file."
     (let ((async-file (plist-get buffer-data :file))
           (line (plist-get buffer-data :line))
           (column (plist-get buffer-data :column))
+          (transient (plist-get buffer-data :transient))
           (current-file (buffer-file-name)))
-      
+
       ;; Only register if current file matches the async buffer file
       (if (and current-file (string-equal async-file current-file))
           (progn
-            ;; Set intention and register the jump with explicit position
-            (setq my-super-jumps--jump-intention t)
-            (my-super-jumps-register async-file line column)
-            (message "Async jump registered: %s:%d (ID: %s)" 
-                     (file-name-nondirectory async-file) line buffer-id))
+            ;; Register the jump directly with transient flag
+            (let ((buffer (find-file-noselect async-file)))
+              (with-current-buffer buffer
+                (save-excursion
+                  (goto-char (point-min))
+                  (forward-line (1- line))
+                  (when column (move-to-column column))
+                  (let ((entry (make-my-super-jumps-entry
+                                :file (expand-file-name async-file)
+                                :position (point-marker)
+                                :line line
+                                :column (or column (current-column))
+                                :timestamp (float-time)
+                                :transient transient)))
+                    (my-super-jumps--add-jump entry)
+                    (message "Async %s jump registered: %s:%d (ID: %s)"
+                             (if transient "transient" "solid")
+                             (file-name-nondirectory async-file) line buffer-id))))))
         (message "Skipped async jump: file mismatch (current: %s, async: %s, ID: %s)"
                  (if current-file (file-name-nondirectory current-file) "none")
-                 (file-name-nondirectory async-file) 
+                 (file-name-nondirectory async-file)
                  buffer-id))
-      
+
       ;; Cleanup regardless of whether we registered
       (remhash buffer-id my-super-jumps--async-buffers)
       (remhash buffer-id my-super-jumps--async-timers))))
 
-(defun my-super-jumps--update-async-buffer (buffer-id file line column)
-  "Update the async buffer BUFFER-ID with current position data."
-  (puthash buffer-id 
-           (list :file file 
-                 :line line 
-                 :column column 
-                 :timestamp (float-time))
+(defun my-super-jumps--update-async-buffer (buffer-id file line column &optional transient)
+  "Update the async buffer BUFFER-ID with current position data.
+If TRANSIENT is non-nil, the resulting jump will be transient."
+  (puthash buffer-id
+           (list :file file
+                 :line line
+                 :column column
+                 :timestamp (float-time)
+                 :transient transient)
            my-super-jumps--async-buffers)
-  
+
   ;; Reschedule the timer
   (my-super-jumps--schedule-async-register buffer-id))
 
@@ -319,14 +371,18 @@ Otherwise, register current position."
   ;; Clear intention after attempting to register
   (setq my-super-jumps--jump-intention nil))
 
-;;;###autoload
-(defun my-super-jumps--current-matches-entry-p (entry)
-  "Check if current position matches ENTRY (same file and line)."
+(defun my-super-jumps--current-matches-entry-p (entry &optional exact)
+  "Check if current position matches ENTRY.
+If EXACT is non-nil, require exact line match.
+Otherwise, match if same file and within `my-super-jumps-line-threshold'."
   (and entry
        (buffer-file-name)
        (equal (expand-file-name (buffer-file-name))
               (my-super-jumps-entry-file entry))
-       (= (line-number-at-pos) (my-super-jumps-entry-line entry))))
+       (if exact
+           (= (line-number-at-pos) (my-super-jumps-entry-line entry))
+         (< (abs (- (line-number-at-pos) (my-super-jumps-entry-line entry)))
+            my-super-jumps-line-threshold))))
 
 ;;;###autoload
 (defun my-super-jumps-backward ()
@@ -352,26 +408,41 @@ Otherwise, jump to the first entry."
                    (my-super-jumps-entry-line entry)))))
 
      (t
-      ;; Determine starting index based on current position
-      (let* ((first-entry (ring-ref ring 0))
-             (current-matches-first (my-super-jumps--current-matches-entry-p first-entry))
-             (target-index (if my-super-jumps--current-index
-                               ;; Already navigating - move to next
-                               (min (1+ my-super-jumps--current-index) (1- ring-length))
-                             ;; First backward press - check if we match first entry
-                             (if current-matches-first 1 0))))
+      ;; Check if we're actually still navigating (current pos EXACTLY matches indexed entry)
+      ;; Use exact match so moving even a little resets navigation state
+      (let ((actually-navigating
+             (and my-super-jumps--current-index
+                  (< my-super-jumps--current-index ring-length)
+                  (my-super-jumps--current-matches-entry-p
+                   (ring-ref ring my-super-jumps--current-index) t))))  ; t = exact match
 
-        (setq my-super-jumps--current-index target-index)
+        ;; If we moved away from the indexed entry, reset navigation state
+        (unless actually-navigating
+          (setq my-super-jumps--current-index nil))
 
-        (let ((entry (ring-ref ring target-index)))
-          (my-super-jumps--goto-entry entry)
-          (message "Jump backward (%d/%d): %s:%d"
-                   (1+ target-index)
-                   ring-length
-                   (file-name-nondirectory (my-super-jumps-entry-file entry))
-                   (my-super-jumps-entry-line entry))
+        ;; Determine target index
+        (let* ((first-entry (ring-ref ring 0))
+               ;; Use EXACT match to decide if we should skip first entry
+               ;; If we're exactly at first entry, skip to second
+               ;; If we're close but not exact, go to first entry
+               (current-exactly-at-first (my-super-jumps--current-matches-entry-p first-entry t))
+               (target-index (if my-super-jumps--current-index
+                                 ;; Actually navigating - move to next
+                                 (min (1+ my-super-jumps--current-index) (1- ring-length))
+                               ;; First backward press - skip only if EXACTLY at first entry
+                               (if current-exactly-at-first 1 0))))
 
-          (my-super-jumps--schedule-reorder)))))))
+          (setq my-super-jumps--current-index target-index)
+
+          (let ((entry (ring-ref ring target-index)))
+            (my-super-jumps--goto-entry entry)
+            (message "Jump backward (%d/%d): %s:%d"
+                     (1+ target-index)
+                     ring-length
+                     (file-name-nondirectory (my-super-jumps-entry-file entry))
+                     (my-super-jumps-entry-line entry))
+
+            (my-super-jumps--schedule-reorder)))))))))
 
 ;;;###autoload
 (defun my-super-jumps-forward ()
@@ -438,17 +509,30 @@ Otherwise, jump to the first entry."
 
 ;;;###autoload
 (defun my-super-jumps-postpone-async (buffer-id)
-  "Update async buffer BUFFER-ID with current position.
-This will register a jump after 2 seconds of no updates to this buffer ID.
+  "Update async buffer BUFFER-ID with current position (solid jump).
+This will register a solid jump after settle delay.
 Perfect for rapid navigation where you want only the final position registered."
   (interactive "sBuffer ID: ")
   (when (buffer-file-name)
-    ;; For async operations, we always set intention since they're deliberate
-    (setq my-super-jumps--jump-intention t)
-    (my-super-jumps--update-async-buffer buffer-id 
+    (my-super-jumps--update-async-buffer buffer-id
                                          (buffer-file-name)
                                          (line-number-at-pos)
-                                         (current-column))))
+                                         (current-column)
+                                         nil)))  ; nil = solid jump
+
+;;;###autoload
+(defun my-super-jumps-postpone-async-transient (buffer-id)
+  "Update async buffer BUFFER-ID with current position (transient jump).
+This will register a transient jump after settle delay.
+Transient jumps are cleared when cross-buffer navigation occurs.
+Perfect for in-file navigation like jump-up/jump-down."
+  (interactive "sBuffer ID: ")
+  (when (buffer-file-name)
+    (my-super-jumps--update-async-buffer buffer-id
+                                         (buffer-file-name)
+                                         (line-number-at-pos)
+                                         (current-column)
+                                         t)))  ; t = transient jump
 
 ;;;###autoload
 (defun my-super-jumps-cancel-async (buffer-id)
@@ -632,22 +716,29 @@ Perfect for rapid navigation where you want only the final position registered."
   (when (and my-super-jumps-mode
              my-super-jumps--last-command
              my-super-jumps--pre-command-file)  ; Only process if we saved a before position
-    (let ((cmd-name (symbol-name my-super-jumps--last-command))
-          (current-file (buffer-file-name))
-          (current-line (line-number-at-pos)))
+    (let ((current-file (buffer-file-name))
+          (current-line (line-number-at-pos))
+          (is-cross-buffer nil))
+
+      ;; Check if this is a cross-buffer jump
+      (when (and current-file
+                 (not (equal current-file my-super-jumps--pre-command-file)))
+        (setq is-cross-buffer t)
+        ;; Clear all transient jumps on cross-buffer navigation
+        (my-super-jumps--clear-transient-jumps))
 
       ;; Only register AFTER position if we actually moved significantly
       (when (and current-file
                  (or
                   ;; Different file - always register
-                  (not (equal current-file my-super-jumps--pre-command-file))
+                  is-cross-buffer
                   ;; Same file but significant line difference
                   (and (equal current-file my-super-jumps--pre-command-file)
                        my-super-jumps--pre-command-line
                        (>= (abs (- current-line my-super-jumps--pre-command-line))
                            my-super-jumps-line-threshold))))
-        ;; Force register the AFTER position
-        (let ((entry (my-super-jumps--create-entry)))
+        ;; Force register the AFTER position (solid, not transient)
+        (let ((entry (my-super-jumps--create-entry nil)))  ; nil = solid jump
           (when entry
             (my-super-jumps--add-jump entry)
             (message "Registered AFTER jump: %s:%d (moved %d lines from %s:%d)"
