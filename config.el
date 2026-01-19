@@ -575,8 +575,8 @@
 
 ;; Jump navigation keybindings - like browser back/forward
 (map! :map evil-normal-state-map
-      "H" #'evil-jump-backward   ; Jump back (like C-o)
-      "L" #'evil-jump-forward)   ; Jump forward (like C-i)
+      "H" #'my-super-jumps-backward   ; Project jump back
+      "L" #'my-super-jumps-forward)   ; Project jump forward
 
 ;; Super jumps keybindings - project-specific jumps
 (map! :map evil-normal-state-map
