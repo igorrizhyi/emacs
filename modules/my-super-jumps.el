@@ -442,7 +442,7 @@ Otherwise, jump to the first entry."
                      (file-name-nondirectory (my-super-jumps-entry-file entry))
                      (my-super-jumps-entry-line entry))
 
-            (my-super-jumps--schedule-reorder)))))))))
+            (my-super-jumps--schedule-reorder))))))))
 
 ;;;###autoload
 (defun my-super-jumps-forward ()
@@ -756,18 +756,55 @@ Perfect for in-file navigation like jump-up/jump-down."
   (setq my-super-jumps--pre-command-file nil)
   (setq my-super-jumps--pre-command-line nil))
 
+;; Store position before vertico opens
+(defvar my-super-jumps--vertico-before-file nil
+  "File before vertico opened.")
+(defvar my-super-jumps--vertico-before-line nil
+  "Line before vertico opened.")
+(defvar my-super-jumps--vertico-before-entry nil
+  "Jump entry captured before vertico opened.")
+
+(defun my-super-jumps--on-vertico-setup (&rest _)
+  "Capture position when vertico opens."
+  (when (and my-super-jumps-mode (buffer-file-name (window-buffer (minibuffer-selected-window))))
+    (with-selected-window (minibuffer-selected-window)
+      (setq my-super-jumps--vertico-before-file (buffer-file-name))
+      (setq my-super-jumps--vertico-before-line (line-number-at-pos))
+      (setq my-super-jumps--vertico-before-entry (my-super-jumps--create-entry)))))
+
 ;; Named advice functions
 (defun my-super-jumps--on-vertico-exit (&rest _)
   "Register jump after vertico selection."
-  (message "DEBUG: vertico-exit called!")
   (when my-super-jumps-mode
-    (message "DEBUG: super-jumps-mode is active, registering jump")
-    (run-with-timer 0.1 nil #'my-super-jumps-mark-and-register)))
+    ;; Register BEFORE position if we captured one
+    ;; Navigation hasn't happened yet, so just save it - we'll check distance later
+    (when my-super-jumps--vertico-before-entry
+      (my-super-jumps--add-jump my-super-jumps--vertico-before-entry)
+      (message "Registered BEFORE (vertico): %s:%d"
+               (file-name-nondirectory my-super-jumps--vertico-before-file)
+               my-super-jumps--vertico-before-line))
+    ;; Register AFTER position with timer (navigation happens after vertico-exit returns)
+    (run-with-timer 0.15 nil #'my-super-jumps-mark-and-register)
+    ;; Clear saved position
+    (setq my-super-jumps--vertico-before-file nil)
+    (setq my-super-jumps--vertico-before-line nil)
+    (setq my-super-jumps--vertico-before-entry nil)))
 
 (defun my-super-jumps--on-consult-read (&rest _)
   "Register jump after consult selection."
   (when my-super-jumps-mode
-    (run-with-timer 0.1 nil #'my-super-jumps-mark-and-register)))
+    ;; Register BEFORE position if vertico captured one
+    (when my-super-jumps--vertico-before-entry
+      (my-super-jumps--add-jump my-super-jumps--vertico-before-entry)
+      (message "Registered BEFORE (consult): %s:%d"
+               (file-name-nondirectory my-super-jumps--vertico-before-file)
+               my-super-jumps--vertico-before-line))
+    ;; Register AFTER position
+    (run-with-timer 0.15 nil #'my-super-jumps-mark-and-register)
+    ;; Clear saved position
+    (setq my-super-jumps--vertico-before-file nil)
+    (setq my-super-jumps--vertico-before-line nil)
+    (setq my-super-jumps--vertico-before-entry nil)))
 
 (defun my-super-jumps--on-ivy-done (&rest _)
   "Register jump after ivy selection."
@@ -779,38 +816,49 @@ Perfect for in-file navigation like jump-up/jump-down."
   (when my-super-jumps-mode
     (run-with-timer 0.1 nil #'my-super-jumps-mark-and-register)))
 
+(defun my-super-jumps--on-xref-goto (&rest _)
+  "Register jump after xref navigation (used by lsp-find-references)."
+  (when my-super-jumps-mode
+    (run-with-timer 0.1 nil #'my-super-jumps-mark-and-register)))
+
 ;;; Evil-style command hooks setup
 (defun my-super-jumps--setup-completion-hooks ()
   "Set up command hooks like Evil does."
   (add-hook 'pre-command-hook #'my-super-jumps--pre-command-hook)
   (add-hook 'post-command-hook #'my-super-jumps--post-command-hook)
-  
-  ;; Add advice for completion frameworks
-  (when (featurep 'vertico)
+
+  ;; Add advice for completion frameworks - use eval-after-load for lazy loading
+  (with-eval-after-load 'vertico
+    (advice-add 'vertico--setup :before #'my-super-jumps--on-vertico-setup)
     (advice-add 'vertico-exit :after #'my-super-jumps--on-vertico-exit))
-  (when (featurep 'consult)
+  (with-eval-after-load 'consult
     (advice-add 'consult--read :after #'my-super-jumps--on-consult-read))
-  (when (featurep 'ivy)
+  (with-eval-after-load 'ivy
     (advice-add 'ivy-done :after #'my-super-jumps--on-ivy-done))
-  (when (featurep 'helm)
+  (with-eval-after-load 'helm
     (advice-add 'helm-exit-minibuffer :after #'my-super-jumps--on-helm-exit))
-  
-  (message "DEBUG: Added command hooks and completion framework advice for jump tracking"))
+
+  ;; Also hook into xref for lsp-find-references
+  (with-eval-after-load 'xref
+    (advice-add 'xref-goto-xref :after #'my-super-jumps--on-xref-goto)))
 
 (defun my-super-jumps--remove-completion-hooks ()
   "Remove command hooks."
   (remove-hook 'pre-command-hook #'my-super-jumps--pre-command-hook)
   (remove-hook 'post-command-hook #'my-super-jumps--post-command-hook)
-  
+
   ;; Remove advice for completion frameworks
   (when (featurep 'vertico)
+    (advice-remove 'vertico--setup #'my-super-jumps--on-vertico-setup)
     (advice-remove 'vertico-exit #'my-super-jumps--on-vertico-exit))
   (when (featurep 'consult)
     (advice-remove 'consult--read #'my-super-jumps--on-consult-read))
   (when (featurep 'ivy)
     (advice-remove 'ivy-done #'my-super-jumps--on-ivy-done))
   (when (featurep 'helm)
-    (advice-remove 'helm-exit-minibuffer #'my-super-jumps--on-helm-exit)))
+    (advice-remove 'helm-exit-minibuffer #'my-super-jumps--on-helm-exit))
+  (when (featurep 'xref)
+    (advice-remove 'xref-goto-xref #'my-super-jumps--on-xref-goto)))
 
 (provide 'my-super-jumps)
 ;;; my-super-jumps.el ends here
