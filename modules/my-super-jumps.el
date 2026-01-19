@@ -37,7 +37,7 @@
   :type 'integer
   :group 'my-super-jumps)
 
-(defcustom my-super-jumps-reorder-delay 0.2
+(defcustom my-super-jumps-reorder-delay 2
   "Delay in seconds before reordering jump after navigation."
   :type 'float
   :group 'my-super-jumps)
@@ -320,38 +320,58 @@ Otherwise, register current position."
   (setq my-super-jumps--jump-intention nil))
 
 ;;;###autoload
+(defun my-super-jumps--current-matches-entry-p (entry)
+  "Check if current position matches ENTRY (same file and line)."
+  (and entry
+       (buffer-file-name)
+       (equal (expand-file-name (buffer-file-name))
+              (my-super-jumps-entry-file entry))
+       (= (line-number-at-pos) (my-super-jumps-entry-line entry))))
+
+;;;###autoload
 (defun my-super-jumps-backward ()
-  "Jump backward in the project-specific jump ring."
+  "Jump backward in the project-specific jump ring.
+If current position matches the first entry, jump to second.
+Otherwise, jump to the first entry."
   (interactive)
   (let* ((ring (my-super-jumps--get-project-ring))
          (ring-length (ring-length ring)))
-    
+
     (cond
      ((ring-empty-p ring)
       (message "No jumps in ring for this project"))
-     
-     ((= ring-length 1)
-      (message "Only one jump in ring"))
-     
-     (t
-      ;; If we're not currently navigating, register current position first
-      (unless my-super-jumps--current-index
-        (my-super-jumps-register)
-        (setq my-super-jumps--current-index 0))
 
-      ;; Move to next jump (backward in time)
-      (setq my-super-jumps--current-index
-            (min (1+ my-super-jumps--current-index) (1- ring-length)))
-      
-      (let ((entry (ring-ref ring my-super-jumps--current-index)))
-        (my-super-jumps--goto-entry entry)
-        (message "Jump backward (%d/%d): %s:%d"
-                 (1+ my-super-jumps--current-index)
-                 ring-length
-                 (file-name-nondirectory (my-super-jumps-entry-file entry))
-                 (my-super-jumps-entry-line entry))
-        
-        (my-super-jumps--schedule-reorder))))))
+     ((= ring-length 1)
+      (let ((entry (ring-ref ring 0)))
+        (if (my-super-jumps--current-matches-entry-p entry)
+            (message "Already at only jump in ring")
+          (my-super-jumps--goto-entry entry)
+          (setq my-super-jumps--current-index 0)
+          (message "Jump backward (1/1): %s:%d"
+                   (file-name-nondirectory (my-super-jumps-entry-file entry))
+                   (my-super-jumps-entry-line entry)))))
+
+     (t
+      ;; Determine starting index based on current position
+      (let* ((first-entry (ring-ref ring 0))
+             (current-matches-first (my-super-jumps--current-matches-entry-p first-entry))
+             (target-index (if my-super-jumps--current-index
+                               ;; Already navigating - move to next
+                               (min (1+ my-super-jumps--current-index) (1- ring-length))
+                             ;; First backward press - check if we match first entry
+                             (if current-matches-first 1 0))))
+
+        (setq my-super-jumps--current-index target-index)
+
+        (let ((entry (ring-ref ring target-index)))
+          (my-super-jumps--goto-entry entry)
+          (message "Jump backward (%d/%d): %s:%d"
+                   (1+ target-index)
+                   ring-length
+                   (file-name-nondirectory (my-super-jumps-entry-file entry))
+                   (my-super-jumps-entry-line entry))
+
+          (my-super-jumps--schedule-reorder)))))))
 
 ;;;###autoload
 (defun my-super-jumps-forward ()
@@ -576,68 +596,74 @@ Perfect for rapid navigation where you want only the final position registered."
   (when my-super-jumps-mode
     ;; Only process if this-command is a symbol (not a lambda)
     (when (symbolp this-command)
-      (message (symbol-name this-command))
       (setq my-super-jumps--last-command this-command)
       ;; Save position if this is a navigation command
       (let ((cmd-name (symbol-name this-command))
-          (prefix-arg (or current-prefix-arg
-                          (and (boundp 'evil-this-motion-count) evil-this-motion-count)
-                          1)))
-      (when (or (string-match-p "consult-buffer" cmd-name)
-                (string-match-p "find-file" cmd-name)
-                (string-match-p "evil-goto-first-line" cmd-name)
-                (string-match-p "evil-goto-line" cmd-name)
-                (string-match-p "smart-enter" cmd-name)
-                (string-match-p "projectile" cmd-name)
-                ;; Evil line movements with significant digit arguments
-                (and (or (string-match-p "evil-next-line" cmd-name)
-                         (string-match-p "evil-previous-line" cmd-name))
-                     (>= prefix-arg my-super-jumps-line-threshold)))
-        (message "LETS GO - saving prior position (prefix: %s)" prefix-arg)
-        ;; Save current position before command executes
-        (setq my-super-jumps--pre-command-position (point))
-        (setq my-super-jumps--pre-command-file (buffer-file-name))
-        (setq my-super-jumps--pre-command-line (line-number-at-pos))
-        (setq my-super-jumps--jump-intention t)
-        (my-super-jumps-register))))))
+            (prefix-arg (or current-prefix-arg
+                            (and (boundp 'evil-this-motion-count) evil-this-motion-count)
+                            1)))
+        (when (or (string-match-p "consult-buffer" cmd-name)
+                  (string-match-p "find-file" cmd-name)
+                  (string-match-p "evil-goto-first-line" cmd-name)
+                  (string-match-p "evil-goto-line" cmd-name)
+                  (string-match-p "smart-enter" cmd-name)
+                  (string-match-p "lsp-find-definition" cmd-name)
+                  (string-match-p "xref-find-definitions" cmd-name)
+                  (string-match-p "projectile" cmd-name)
+                  ;; Evil line movements with significant digit arguments
+                  (and (or (string-match-p "evil-next-line" cmd-name)
+                           (string-match-p "evil-previous-line" cmd-name))
+                       (>= prefix-arg my-super-jumps-line-threshold)))
+          ;; Save current position before command executes
+          (setq my-super-jumps--pre-command-position (point))
+          (setq my-super-jumps--pre-command-file (buffer-file-name))
+          (setq my-super-jumps--pre-command-line (line-number-at-pos))
+          ;; Force register the BEFORE position (bypass normal check)
+          (when (buffer-file-name)
+            (let ((entry (my-super-jumps--create-entry)))
+              (when entry
+                (my-super-jumps--add-jump entry)
+                (message "Registered BEFORE jump: %s:%d"
+                         (file-name-nondirectory (my-super-jumps-entry-file entry))
+                         (my-super-jumps-entry-line entry))))))))))
 
 (defun my-super-jumps--post-command-hook ()
   "Register jump after certain commands complete, but only if movement is significant."
   (when (and my-super-jumps-mode
-             my-super-jumps--last-command)
-    (let ((cmd-name (symbol-name my-super-jumps--last-command)))
-      ;; Check for navigation commands that might need position validation
-      (when (or (string-match-p "find-file\\|switch-to-buffer\\|projectile\\|evil-goto-first-line\\|evil-goto-line\\|evil-next-line\\|evil-previous-line" cmd-name)
-                (string-match-p "consult\\|vertico\\|ivy" cmd-name)
-                (get my-super-jumps--last-command :jump)) ; Use evil's jump property
-        (message "POST COMMAND HOOK processing for %s" cmd-name)
-        
-        (let ((current-file (buffer-file-name))
-              (current-line (line-number-at-pos)))
-          
-          ;; Only register if we have a valid movement
-          (when (and current-file
-                     (or 
-                      ;; Different file - always register
-                      (not (equal current-file my-super-jumps--pre-command-file))
-                      ;; Same file but significant line difference
-                      (and (equal current-file my-super-jumps--pre-command-file)
-                           my-super-jumps--pre-command-line
-                           (>= (abs (- current-line my-super-jumps--pre-command-line))
-                               my-super-jumps-line-threshold))))
-            (setq my-super-jumps--jump-intention t)
-            (my-super-jumps-register)
-            (message "Registered jump after command: %s (moved %d lines)" 
-                     cmd-name 
+             my-super-jumps--last-command
+             my-super-jumps--pre-command-file)  ; Only process if we saved a before position
+    (let ((cmd-name (symbol-name my-super-jumps--last-command))
+          (current-file (buffer-file-name))
+          (current-line (line-number-at-pos)))
+
+      ;; Only register AFTER position if we actually moved significantly
+      (when (and current-file
+                 (or
+                  ;; Different file - always register
+                  (not (equal current-file my-super-jumps--pre-command-file))
+                  ;; Same file but significant line difference
+                  (and (equal current-file my-super-jumps--pre-command-file)
+                       my-super-jumps--pre-command-line
+                       (>= (abs (- current-line my-super-jumps--pre-command-line))
+                           my-super-jumps-line-threshold))))
+        ;; Force register the AFTER position
+        (let ((entry (my-super-jumps--create-entry)))
+          (when entry
+            (my-super-jumps--add-jump entry)
+            (message "Registered AFTER jump: %s:%d (moved %d lines from %s:%d)"
+                     (file-name-nondirectory current-file)
+                     current-line
                      (if my-super-jumps--pre-command-line
                          (abs (- current-line my-super-jumps--pre-command-line))
-                       0))))))
-    
-    ;; Clear all tracking variables
-    (setq my-super-jumps--last-command nil)
-    (setq my-super-jumps--pre-command-position nil)
-    (setq my-super-jumps--pre-command-file nil)
-    (setq my-super-jumps--pre-command-line nil)))
+                       0)
+                     (file-name-nondirectory my-super-jumps--pre-command-file)
+                     my-super-jumps--pre-command-line))))))
+
+  ;; Always clear tracking variables
+  (setq my-super-jumps--last-command nil)
+  (setq my-super-jumps--pre-command-position nil)
+  (setq my-super-jumps--pre-command-file nil)
+  (setq my-super-jumps--pre-command-line nil))
 
 ;; Named advice functions
 (defun my-super-jumps--on-vertico-exit (&rest _)
