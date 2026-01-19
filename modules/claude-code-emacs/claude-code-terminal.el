@@ -1675,8 +1675,8 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
              (bound-and-true-p claude-code-terminal-id))
     ;; Set font directly using face-remap-add-relative
     (let* ((font-family (if (boundp 'my/font-family) my/font-family "DejaVu Sans Mono"))
-           (font-size (if (boundp 'my/small-font-size) 
-                         (round (* my/small-font-size 0.9))
+           (font-size (if (boundp 'my/small-font-size)
+                         (round (* my/small-font-size 0.7))
                        22)))  ; fallback size
       (face-remap-add-relative 'default 
                               :family font-family 

@@ -288,6 +288,8 @@
 ;; Configure LSP to work optimally with Corfu
 (after! lsp-mode
   (setq lsp-completion-provider :capf)  ;; Use completion-at-point-functions (Corfu)
+  ;; Ensure lsp-completion-mode is enabled for capf integration
+  (add-hook 'lsp-mode-hook #'lsp-completion-mode)
   ;; Ultra-fast LSP responses
   (setq lsp-idle-delay 0.05             ;; Almost immediate LSP responses (50ms)
         lsp-response-timeout 3          ;; Faster timeout (3s instead of 30s)
@@ -418,10 +420,8 @@
 (use-package treesit
   :when (and (fboundp 'treesit-available-p) (treesit-available-p))
   :config
-  ;; Set tree-sitter library directory for Doom Emacs
-  (when (boundp 'treesit-extra-load-path)
-    (add-to-list 'treesit-extra-load-path 
-                 (expand-file-name ".local/etc/tree-sitter/" doom-user-dir)))
+  ;; Set tree-sitter library directory - include system path
+  (setq treesit-extra-load-path '("/usr/lib"))
   
   ;; Customize tree-sitter font-lock by overriding existing face mappings
   (defun my/customize-treesit-faces ()

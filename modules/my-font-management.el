@@ -16,17 +16,17 @@
   :type 'string
   :group 'my-font-management)
 
-(defcustom my/small-font-size 20
+(defcustom my/small-font-size 25
   "Small font size for auxiliary buffers."
   :type 'integer
   :group 'my-font-management)
 
-(defcustom my/medium-font-scale 1.1
+(defcustom my/medium-font-scale 1.8
   "Font scale increase for main code buffers (via text-scale-set)."
   :type 'integer
   :group 'my-font-management)
 
-(defcustom my/large-font-scale 1.6
+(defcustom my/large-font-scale 2.6
   "Font scale increase for main code buffers (via text-scale-set)."
   :type 'integer
   :group 'my-font-management)
