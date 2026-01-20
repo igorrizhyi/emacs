@@ -644,7 +644,9 @@
       "<return>" #'my/smart-enter  ; Smart Enter behavior
       "<tab>" #'evilem-motion-find-char  ; Find char forward
       "<backtab>" #'evilem-motion-find-char-backward  ; Find char backward
-      "C-w" #'kill-current-buffer)  ; Kill buffer with C-w
+      "C-w" #'kill-current-buffer  ; Kill buffer with C-w
+      "S" #'diff-hl-show-hunk  ; Show diff hunk with S
+      "U" #'evil-redo)  ; Redo with U (undo is u)
 
 ;; Configure treemacs to open files in existing splits (most recent window)
 (after! treemacs
@@ -662,7 +664,7 @@
       "o" #'projectile-find-file     ; SPC o
       "n" (lambda () (interactive) (+lookup/definition (read-string "Find definition for: ")))     ; Go to symbol in workspace (like VSCode) - fallback option
       ;; "f" #'consult-ripgrep ; Search in project with preview
-      "f" #'projectile-grep ; Search in project with preview
+      "f" #'project-find-regexp ; Search in project with preview
       "e" #'treemacs               ; Toggle treemacs with SPC-e
       "r" #'my/run-nearest-test-with-class  ; Run nearest test with SPC-r (moved from SPC-e)
       "<escape>" #'my-window-layout-close-auxiliary  ; Close auxiliary windows with SPC-ESC

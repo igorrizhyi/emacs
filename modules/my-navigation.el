@@ -1148,7 +1148,7 @@ WINDOW is the window that was selected."
        :desc "Jump to recent mark" "j" #'my/jump-to-most-recent-mark
        :desc "Create mark" "m" #'my/create-mark
        :desc "Delete mark" "d" #'my/delete-mark
-       :desc "List marks" "l" #'my/goto-jumps-selection
+       :desc "List marks" "L" #'my/goto-jumps-selection
        :desc "View markdown" "v" #'my/view-marks-markdown))
 
 ;; Also bind to convenient keys
