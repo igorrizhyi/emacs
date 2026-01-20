@@ -49,10 +49,44 @@ Uses `beginning-of-defun' with a negative argument to move forward."
       :n "<left>" #'my/prev-defun         ; Previous function
       :n "<right>" #'my/next-defun)       ; Next function
 
-;; Git hunk navigation with SPC up/down
+;; Git hunk navigation with cycling
+(defun my/next-change ()
+  "Jump to next git change, cycling to first if at end."
+  (interactive)
+  (condition-case nil
+      (progn
+        (diff-hl-next-hunk)
+        (recenter))
+    (error
+     ;; No more hunks forward, go to first hunk
+     (goto-char (point-min))
+     (condition-case nil
+         (progn
+           (diff-hl-next-hunk)
+           (recenter)
+           (message "Wrapped to first change"))
+       (error (message "No changes in buffer"))))))
+
+(defun my/previous-change ()
+  "Jump to previous git change, cycling to last if at beginning."
+  (interactive)
+  (condition-case nil
+      (progn
+        (diff-hl-previous-hunk)
+        (recenter))
+    (error
+     ;; No more hunks backward, go to last hunk
+     (goto-char (point-max))
+     (condition-case nil
+         (progn
+           (diff-hl-previous-hunk)
+           (recenter)
+           (message "Wrapped to last change"))
+       (error (message "No changes in buffer"))))))
+
 (map! :leader
-      :desc "Previous change" "<up>" #'+vc-gutter/previous-hunk
-      :desc "Next change" "<down>" #'+vc-gutter/next-hunk)
+      :desc "Previous change" "<up>" #'my/previous-change
+      :desc "Next change" "<down>" #'my/next-change)
 
 ;; Aggressively override Ctrl-Tab from yasnippet
 (after! yasnippet
