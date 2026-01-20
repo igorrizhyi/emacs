@@ -30,7 +30,7 @@
 ;; (require 'my-jumps)
 (require 'my-super-jumps)
 (require 'my-search)
-(require 'my-eshell)
+(require 'my-eshell-funcs)
 (require 'my-magit-utils)
 (require 'text-functions)
 (require' claude-code-emacs)

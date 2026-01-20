@@ -1762,6 +1762,11 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
   :keymap claude-code-terminal-mode-map
   (if claude-code-terminal-mode
       (progn
+        ;; Setup eshell hooks for command stack monitoring
+        (when (derived-mode-p 'eshell-mode)
+          (add-hook 'eshell-pre-command-hook #'claude-code-terminal-eshell-pre-command nil t)
+          (add-hook 'eshell-post-command-hook #'claude-code-terminal-eshell-post-command nil t))
+
         ;; Setup auto-cleanup when eshell process exits
         (when (and (derived-mode-p 'eshell-mode)
                    (get-buffer-process (current-buffer)))
@@ -1795,10 +1800,161 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
           (lambda ()
             (when (bound-and-true-p claude-code-terminal-id)
               (claude-code-terminal-mode 1)
-              (claude-code-terminal-apply-large-font))))
+              (claude-code-terminal-apply-large-font)
+              ;; Set up eshell command hooks for this buffer
+              (claude-code-terminal-setup-eshell-hooks))))
 
 ;; Initialize directory tracking hooks
 (claude-code-terminal-setup-directory-hooks)
+
+;;; Eshell Command Stack Monitoring
+
+(defvar-local claude-code-terminal-eshell-last-input nil
+  "The last command input in this eshell buffer.")
+
+(defun claude-code-terminal-setup-eshell-hooks ()
+  "Set up eshell hooks for command stack monitoring in current buffer.
+Call interactively in an eshell buffer to enable command stack monitoring."
+  (interactive)
+  (if (not (derived-mode-p 'eshell-mode))
+      (message "Not in an eshell buffer!")
+    (add-hook 'eshell-pre-command-hook #'claude-code-terminal-eshell-pre-command nil t)
+    (add-hook 'eshell-post-command-hook #'claude-code-terminal-eshell-post-command nil t)
+    (message "Eshell hooks set up! pre-command-hook now: %s" eshell-pre-command-hook)))
+
+(defun claude-code-terminal-setup-all-hooks ()
+  "Set up eshell hooks on ALL existing claude terminal buffers.
+Run this after reloading the module to enable command monitoring on existing terminals."
+  (interactive)
+  (let ((count 0))
+    (dolist (buffer (buffer-list))
+      (with-current-buffer buffer
+        (when (and (derived-mode-p 'eshell-mode)
+                   (bound-and-true-p claude-code-terminal-id))
+          (add-hook 'eshell-pre-command-hook #'claude-code-terminal-eshell-pre-command nil t)
+          (add-hook 'eshell-post-command-hook #'claude-code-terminal-eshell-post-command nil t)
+          (setq count (1+ count))
+          (message "Set up hooks for: %s" claude-code-terminal-id))))
+    (message "Eshell hooks set up on %d terminal(s)" count)))
+
+(defun claude-code-terminal-eshell-pre-command ()
+  "Called before eshell executes a command.
+Detects monitored commands and starts tracking them."
+  ;; Always log that hook fired (temporary debug)
+  (message "[HOOK] eshell-pre-command fired! terminal-id=%s"
+           (bound-and-true-p claude-code-terminal-id))
+  (when (bound-and-true-p claude-code-terminal-id)
+    (let* ((terminal-id claude-code-terminal-id)
+           (input (and (boundp 'eshell-last-input-start)
+                      (boundp 'eshell-last-input-end)
+                      eshell-last-input-start
+                      eshell-last-input-end
+                      (buffer-substring-no-properties eshell-last-input-start
+                                                      eshell-last-input-end)))
+           (command (when input
+                     (car (split-string (string-trim input))))))
+
+      ;; Store the input for post-command processing
+      (setq claude-code-terminal-eshell-last-input input)
+
+      ;; Always show what we detected
+      (message "[HOOK] input=%s, command=%s, monitored=%s"
+               input command (claude-code-terminal-should-monitor-command-p command))
+
+      ;; If this is a monitored command, push to stack
+      (when (and command (claude-code-terminal-should-monitor-command-p command))
+        (let ((stack (gethash terminal-id claude-code-terminal-shell-stack '()))
+              (eshell-prompt (claude-code-terminal-get-eshell-prompt)))
+          (when claude-code-terminal-debug-mode
+            (message "[DEBUG] Monitored command detected: %s" input)
+            (message "[DEBUG] Current eshell prompt: %s" eshell-prompt))
+
+          ;; Push command to stack with eshell prompt
+          (push (list (string-trim input) eshell-prompt) stack)
+          (puthash terminal-id stack claude-code-terminal-shell-stack)
+          (puthash terminal-id (string-trim input) claude-code-terminal-embedded-shells)
+          (force-mode-line-update)
+
+          ;; Schedule subprocess tracking after command starts
+          (run-at-time 0.1 nil #'claude-code-terminal-track-subprocess terminal-id))))))
+
+(defun claude-code-terminal-eshell-post-command ()
+  "Called after eshell finishes a command.
+For monitored commands (ssh, docker), we DON'T pop immediately.
+The process sentinel will handle that when the subprocess actually exits."
+  (when (bound-and-true-p claude-code-terminal-id)
+    (let* ((terminal-id claude-code-terminal-id)
+           (stack (gethash terminal-id claude-code-terminal-shell-stack))
+           (last-command claude-code-terminal-eshell-last-input)
+           (last-cmd-name (when last-command
+                           (car (split-string (string-trim last-command))))))
+
+      (message "[HOOK] eshell-post-command: stack=%d, last-cmd=%s"
+               (length stack) last-cmd-name)
+
+      ;; DON'T pop if the last command was a monitored one -
+      ;; those are handled by process sentinel when they actually exit
+      (when (and stack
+                 (not (claude-code-terminal-should-monitor-command-p last-cmd-name)))
+        ;; Only pop for non-monitored commands that somehow got on stack
+        (message "[HOOK] Non-monitored command, checking process...")
+        (unless (get-buffer-process (current-buffer))
+          (message "[HOOK] No process, popping context")
+          (claude-code-terminal-pop-embedded-context terminal-id))))))
+
+(defun claude-code-terminal-get-eshell-prompt ()
+  "Get the current eshell prompt string."
+  (when (derived-mode-p 'eshell-mode)
+    (save-excursion
+      (goto-char eshell-last-output-end)
+      (buffer-substring-no-properties (line-beginning-position) (point)))))
+
+(defun claude-code-terminal-track-subprocess (terminal-id)
+  "Track the subprocess created by a monitored command in TERMINAL-ID."
+  (message "[TRACK] track-subprocess called for %s" terminal-id)
+  (if-let ((buffer (claude-code-terminal-get-by-id terminal-id)))
+      (with-current-buffer buffer
+        (let ((proc (get-buffer-process buffer)))
+          (message "[TRACK] buffer=%s, proc=%s" buffer proc)
+          (if proc
+              (progn
+                (message "[TRACK] Adding sentinel to process: %s (status: %s)"
+                         proc (process-status proc))
+                ;; Add sentinel to detect when subprocess exits
+                (let ((original-sentinel (process-sentinel proc)))
+                  (set-process-sentinel
+                   proc
+                   (lambda (process event)
+                     (message "[SENTINEL] Process event: %s, status: %s"
+                              event (process-status process))
+                     ;; Call original sentinel if it exists
+                     (when original-sentinel
+                       (funcall original-sentinel process event))
+                     ;; When process finishes, pop embedded context
+                     (when (memq (process-status process) '(exit signal))
+                       (message "[SENTINEL] Subprocess exited, popping context")
+                       (claude-code-terminal-pop-embedded-context terminal-id))))))
+            (message "[TRACK] No process found! Stack will NOT be tracked."))))
+    (message "[TRACK] Buffer not found for %s" terminal-id)))
+
+(defun claude-code-terminal-pop-embedded-context (terminal-id)
+  "Pop the top embedded context from the stack for TERMINAL-ID."
+  (message "[POP] pop-embedded-context called for %s (from: %s)"
+           terminal-id (backtrace-frame 4))
+  (let ((stack (gethash terminal-id claude-code-terminal-shell-stack)))
+    (message "[POP] current stack: %s" stack)
+    (when stack
+      (let ((new-stack (cdr stack)))
+        (if new-stack
+            (progn
+              (puthash terminal-id new-stack claude-code-terminal-shell-stack)
+              (puthash terminal-id (caar new-stack) claude-code-terminal-embedded-shells)
+              (message "[POP] Popped to: %s" (caar new-stack)))
+          ;; Stack is now empty
+          (remhash terminal-id claude-code-terminal-shell-stack)
+          (remhash terminal-id claude-code-terminal-embedded-shells)
+          (message "[POP] Stack empty, back to base shell"))
+        (force-mode-line-update)))))
 
 ;; Track last focused terminal buffer
 (add-hook 'buffer-list-update-hook 'claude-code-terminal-update-last-focused)
@@ -1926,34 +2082,27 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
 (defun claude-code-terminal-smart-enter ()
   "Send Enter to terminal, or capture MCP output if pending.
 When an MCP command is waiting for output capture, this captures and sends the result.
-Otherwise, sends a normal Enter to the terminal and schedules prompt check."
+Otherwise, sends a normal Enter to the terminal."
   (interactive)
   (if (and (fboundp 'claude-code-mcp-has-pending-capture-p)
            (claude-code-mcp-has-pending-capture-p))
       ;; Capture pending MCP output
       (claude-code-mcp-capture-and-send)
-    ;; Normal Enter - handle return pressed, send to terminal, schedule check
+    ;; Normal Enter - send to eshell (eshell hooks handle command tracking)
     (when (derived-mode-p 'eshell-mode)
-      ;; First detect any new embedded commands
-      (claude-code-terminal-on-return-pressed)
-      ;; Send Enter to eshell
-      (eshell-send-input)
-      ;; Schedule prompt check after 1 second
-      (claude-code-terminal-schedule-prompt-check))))
+      (eshell-send-input))))
 
 (defun claude-code-terminal-send-interrupt ()
-  "Send C-c (interrupt) to eshell and schedule prompt check."
+  "Send C-c (interrupt) to eshell."
   (interactive)
   (when (derived-mode-p 'eshell-mode)
-    (eshell-interrupt-process)
-    (claude-code-terminal-schedule-prompt-check)))
+    (eshell-interrupt-process)))
 
 (defun claude-code-terminal-send-eof ()
-  "Send C-d (EOF) to eshell and schedule prompt check."
+  "Send C-d (EOF) to eshell."
   (interactive)
   (when (derived-mode-p 'eshell-mode)
-    (eshell-send-eof-to-process)
-    (claude-code-terminal-schedule-prompt-check)))
+    (eshell-send-eof-to-process)))
 
 ;; Configure eshell terminal key bindings
 (with-eval-after-load 'eshell
@@ -2026,6 +2175,9 @@ Otherwise, sends a normal Enter to the terminal and schedules prompt check."
 
 ;; Also override in global map for non-evil scenarios
 (global-set-key (kbd "C-u") 'claude-code-terminal-switch)
+
+;; Auto-setup eshell hooks on all existing terminals when module loads
+(run-with-idle-timer 1 nil #'claude-code-terminal-setup-all-hooks)
 
 (provide 'claude-code-terminal)
 ;;; claude-code-terminal.el ends here
