@@ -156,6 +156,7 @@ For edit mode (command not yet executed):
 (declare-function claude-code-terminal-get-sessions "claude-code-terminal" (&optional project-root))
 (declare-function claude-code-terminal-get-by-id "claude-code-terminal" (terminal-id &optional project-root))
 (declare-function claude-code-terminal-get-last-focused "claude-code-terminal" ())
+(declare-function claude-code-terminal-send-string "claude-code-terminal" (buffer string &optional send-newline))
 
 ;;; MCP Tool Handlers
 
@@ -982,11 +983,8 @@ Uses simple Enter-to-capture approach: sends command, waits for user to press En
                                       :command command
                                       :project-root project-root)
                                 claude-code-mcp-pending-capture)
-                       ;; Send command + Enter
-                       (let ((proc (get-buffer-process buffer)))
-                         (when proc
-                           (process-send-string proc command)
-                           (process-send-string proc "\n")))
+                       ;; Send command + Enter (using eshell-compatible helper)
+                       (claude-code-terminal-send-string buffer command t)
                        (message "MCP: Command sent. Press Enter when output is complete.")))))))
 
         ;; User wants to edit - send command WITHOUT newline, set up capture
@@ -1026,9 +1024,7 @@ Uses simple Enter-to-capture approach: sends command, waits for user to press En
                                       :project-root project-root)
                                 claude-code-mcp-pending-capture)
                        ;; Send command WITHOUT Enter - user will edit and press Enter
-                       (let ((proc (get-buffer-process buffer)))
-                         (when proc
-                           (process-send-string proc command)))
+                       (claude-code-terminal-send-string buffer command nil)
                        (message "MCP: Command inserted. Edit, then Enter to run, Enter again to capture.")))))))
 
         ;; User declined - return error indicating cancellation
