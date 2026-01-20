@@ -868,14 +868,107 @@ For eat terminals, uses the eat terminal cursor position."
         (buffer-substring-no-properties (point) end))))))
 
 (defun claude-code-terminal-start-monitoring (terminal-id original-prefix)
-  "Start monitoring for prompt changes to detect when we exit the embedded shell."
+  "Store the original prefix for later prompt checking.
+Instead of continuous monitoring, we now check on keystrokes (Enter, C-c, C-d)."
   (when claude-code-terminal-debug-mode
-    (message "[DEBUG] Starting monitoring for terminal %s, watching for return to prefix: %s" 
+    (message "[DEBUG] Storing original prefix for terminal %s: %s"
              terminal-id original-prefix))
-  
-  ;; Start a timer that periodically checks if we've returned to the original prompt
-  (let ((timer (run-at-time 1.0 1.0 'claude-code-terminal-check-exit terminal-id original-prefix)))
-    (puthash terminal-id timer claude-code-terminal-pending-check)))
+  ;; Store the original prefix for later comparison (no continuous timer)
+  (puthash terminal-id original-prefix claude-code-terminal-pending-check))
+
+(defun claude-code-terminal-schedule-prompt-check ()
+  "Schedule an async prompt check after 1 second.
+Called after Enter, C-c, or C-d keystrokes."
+  (when (and (bound-and-true-p claude-code-terminal-id)
+             (derived-mode-p 'eat-mode))
+    (let ((terminal-id claude-code-terminal-id))
+      (when claude-code-terminal-debug-mode
+        (message "[DEBUG] Scheduling prompt check for terminal %s in 1 second" terminal-id))
+      ;; Cancel any existing scheduled check
+      (let ((existing-timer (gethash terminal-id claude-code-terminal-prompt-check-timers)))
+        (when (timerp existing-timer)
+          (cancel-timer existing-timer)))
+      ;; Schedule new check after 1 second
+      (let ((timer (run-at-time 1.0 nil 'claude-code-terminal-do-prompt-check terminal-id)))
+        (puthash terminal-id timer claude-code-terminal-prompt-check-timers)))))
+
+(defvar claude-code-terminal-prompt-check-timers (make-hash-table :test 'equal)
+  "Hash table storing scheduled prompt check timers per terminal.")
+
+(defun claude-code-terminal-do-prompt-check (terminal-id)
+  "Perform the actual prompt check for TERMINAL-ID."
+  (let* ((terminal-buffer (claude-code-terminal-get-by-id terminal-id))
+         (original-prefix (gethash terminal-id claude-code-terminal-pending-check)))
+
+    (unless terminal-buffer
+      (when claude-code-terminal-debug-mode
+        (message "[DEBUG] Terminal %s buffer no longer exists" terminal-id))
+      (remhash terminal-id claude-code-terminal-prompt-check-timers)
+      (cl-return-from claude-code-terminal-do-prompt-check nil))
+
+    (with-current-buffer terminal-buffer
+      (let* ((current-line (claude-code-terminal-get-current-line))
+             (current-prefix (claude-code-terminal-extract-prompt-prefix current-line))
+             (stack (gethash terminal-id claude-code-terminal-shell-stack)))
+
+        (when claude-code-terminal-debug-mode
+          (message "[DEBUG] Prompt check for terminal %s:" terminal-id)
+          (message "[DEBUG]   Current line: %s" current-line)
+          (message "[DEBUG]   Current prefix: %s" current-prefix)
+          (message "[DEBUG]   Original prefix: %s" original-prefix)
+          (message "[DEBUG]   Stack: %s" stack))
+
+        ;; Check if we've returned to any known prefix in our stack
+        (when (and current-prefix stack)
+          (let ((found-context nil)
+                (index 0))
+
+            ;; Check stack contexts
+            (dolist (context stack)
+              (let ((context-prefix (cadr context)))
+                (when (and context-prefix
+                           (string= current-prefix context-prefix)
+                           (not found-context))
+                  (setq found-context index)))
+              (setq index (1+ index)))
+
+            ;; Also check original prefix
+            (when (and (not found-context) original-prefix (string= current-prefix original-prefix))
+              (setq found-context 'original))
+
+            (when found-context
+              (when claude-code-terminal-debug-mode
+                (message "[DEBUG] Detected return to context: %s" found-context))
+
+              (cond
+               ;; Returned to original shell - clear everything
+               ((eq found-context 'original)
+                (remhash terminal-id claude-code-terminal-shell-stack)
+                (remhash terminal-id claude-code-terminal-embedded-shells)
+                (remhash terminal-id claude-code-terminal-pending-check)
+                (when claude-code-terminal-debug-mode
+                  (message "[DEBUG] Cleared all embedded contexts")))
+
+               ;; Returned to a previous context in stack - pop to that level
+               ((numberp found-context)
+                (let* ((new-stack (nthcdr (1+ found-context) stack))
+                       (current-command (if new-stack (caar new-stack) nil)))
+                  (if new-stack
+                      (progn
+                        (puthash terminal-id new-stack claude-code-terminal-shell-stack)
+                        (puthash terminal-id current-command claude-code-terminal-embedded-shells)
+                        (when claude-code-terminal-debug-mode
+                          (message "[DEBUG] Popped to previous context: %s" current-command)))
+                    ;; Stack is empty, clear everything
+                    (remhash terminal-id claude-code-terminal-shell-stack)
+                    (remhash terminal-id claude-code-terminal-embedded-shells)
+                    (remhash terminal-id claude-code-terminal-pending-check)
+                    (when claude-code-terminal-debug-mode
+                      (message "[DEBUG] Cleared all embedded contexts"))))))
+
+              ;; Update display
+              (force-mode-line-update))))))))
+
 
 (defun claude-code-terminal-check-exit (terminal-id original-prefix)
   "Check if we've exited back to any known shell prompt in our stack."
@@ -1818,16 +1911,37 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
 (defun claude-code-terminal-smart-enter ()
   "Send Enter to terminal, or capture MCP output if pending.
 When an MCP command is waiting for output capture, this captures and sends the result.
-Otherwise, sends a normal Enter to the terminal."
+Otherwise, sends a normal Enter to the terminal and schedules prompt check."
   (interactive)
   (if (and (fboundp 'claude-code-mcp-has-pending-capture-p)
            (claude-code-mcp-has-pending-capture-p))
       ;; Capture pending MCP output
       (claude-code-mcp-capture-and-send)
-    ;; Normal Enter - send to terminal
+    ;; Normal Enter - handle return pressed, send to terminal, schedule check
     (when (and (derived-mode-p 'eat-mode)
                (bound-and-true-p eat-terminal))
-      (eat-term-send-string eat-terminal "\C-m"))))
+      ;; First detect any new embedded commands
+      (claude-code-terminal-on-return-pressed)
+      ;; Send Enter to terminal
+      (eat-term-send-string eat-terminal "\C-m")
+      ;; Schedule prompt check after 1 second
+      (claude-code-terminal-schedule-prompt-check))))
+
+(defun claude-code-terminal-send-interrupt ()
+  "Send C-c to terminal and schedule prompt check."
+  (interactive)
+  (when (and (derived-mode-p 'eat-mode)
+             (bound-and-true-p eat-terminal))
+    (eat-term-send-string eat-terminal "\C-c")
+    (claude-code-terminal-schedule-prompt-check)))
+
+(defun claude-code-terminal-send-eof ()
+  "Send C-d to terminal and schedule prompt check."
+  (interactive)
+  (when (and (derived-mode-p 'eat-mode)
+             (bound-and-true-p eat-terminal))
+    (eat-term-send-string eat-terminal "\C-d")
+    (claude-code-terminal-schedule-prompt-check)))
 
 ;; Configure eat terminal key bindings
 (with-eval-after-load 'eat
@@ -1843,6 +1957,10 @@ Otherwise, sends a normal Enter to the terminal."
   (define-key eat-semi-char-mode-map (kbd "C-u") 'claude-code-terminal-switch)
   ;; Enter key - smart capture or normal
   (define-key eat-semi-char-mode-map (kbd "<return>") 'claude-code-terminal-smart-enter)
+  ;; C-c C-c for interrupt with prompt check (semi-char mode)
+  (define-key eat-semi-char-mode-map (kbd "C-c C-c") 'claude-code-terminal-send-interrupt)
+  ;; C-d for EOF with prompt check (semi-char mode)
+  (define-key eat-semi-char-mode-map (kbd "C-d") 'claude-code-terminal-send-eof)
   ;; Directory-aware find-file keybindings
   (define-key eat-semi-char-mode-map (kbd "s-f") 'claude-code-terminal-find-file-with-terminal-directory)
   (define-key eat-semi-char-mode-map (kbd "C-x C-f") 'claude-code-terminal-find-file-with-terminal-directory)
@@ -1859,6 +1977,10 @@ Otherwise, sends a normal Enter to the terminal."
   (define-key eat-char-mode-map (kbd "s-u") 'claude-code-terminal-switch)
   ;; Enter key - smart capture or normal (s-return for super+enter)
   (define-key eat-char-mode-map (kbd "s-<return>") 'claude-code-terminal-smart-enter)
+  ;; C-c for interrupt with prompt check (char mode)
+  (define-key eat-char-mode-map (kbd "C-c") 'claude-code-terminal-send-interrupt)
+  ;; C-d for EOF with prompt check (char mode)
+  (define-key eat-char-mode-map (kbd "C-d") 'claude-code-terminal-send-eof)
   ;; Directory-aware find-file keybindings
   (define-key eat-char-mode-map (kbd "s-f") 'claude-code-terminal-find-file-with-terminal-directory)
 
