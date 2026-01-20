@@ -49,6 +49,11 @@ Uses `beginning-of-defun' with a negative argument to move forward."
       :n "<left>" #'my/prev-defun         ; Previous function
       :n "<right>" #'my/next-defun)       ; Next function
 
+;; Git hunk navigation with SPC up/down
+(map! :leader
+      :desc "Previous change" "<up>" #'+vc-gutter/previous-hunk
+      :desc "Next change" "<down>" #'+vc-gutter/next-hunk)
+
 ;; Aggressively override Ctrl-Tab from yasnippet
 (after! yasnippet
   ;; First unbind the yasnippet function

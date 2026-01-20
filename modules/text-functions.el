@@ -57,6 +57,11 @@ Takes selected text and converts to item1, item2, ... format."
         (insert result))
     (message "No region selected")))
 
+(defun my/insert-date ()
+  "Insert today's date in YYYY-MM-DD format."
+  (interactive)
+  (insert (format-time-string "%Y-%m-%d")))
+
 ;; Unbind flycheck-mode from SPC t f
 (map! :leader "t f" nil)
 
@@ -66,7 +71,8 @@ Takes selected text and converts to item1, item2, ... format."
        :desc "To Python array [1, 2]"        "p" #'my/selection-to-python-array
        :desc "To Python strings ['a', 'b']"  "s" #'my/selection-to-python-string-array
        :desc "To SQL IN ('a', 'b')"          "q" #'my/selection-to-sql-in
-       :desc "To comma-separated"            "c" #'my/selection-to-comma-separated))
+       :desc "To comma-separated"            "c" #'my/selection-to-comma-separated
+       :desc "Insert date (YYYY-MM-DD)"      "d" #'my/insert-date))
 
 (provide 'text-functions)
 

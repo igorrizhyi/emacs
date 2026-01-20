@@ -694,6 +694,7 @@ Perfect for in-file navigation like jump-up/jump-down."
                   (string-match-p "lsp-find-definition" cmd-name)
                   (string-match-p "xref-find-definitions" cmd-name)
                   (string-match-p "projectile" cmd-name)
+                  (string-match-p "markdown-marks-jump" cmd-name)
                   ;; Evil line movements with significant digit arguments
                   (and (or (string-match-p "evil-next-line" cmd-name)
                            (string-match-p "evil-previous-line" cmd-name))
