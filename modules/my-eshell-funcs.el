@@ -218,7 +218,7 @@ If ENABLE-EAT is non-nil, enable eat-eshell-mode."
           (unless (string-match-p "[$#] $" text)
             ;; Create overlay with fixed boundaries (no extending)
             (let* ((ov (make-overlay start end nil nil nil))
-                   (output-face '(:height 0.85 :inherit nil))
+                   (output-face '(:height 0.85 :inherit nil :background "#372413" :extend t))
                    ;; Make padding have same face
                    (padding (propertize "  " 'face output-face)))
               (overlay-put ov 'face output-face)
