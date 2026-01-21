@@ -197,8 +197,10 @@ If ENABLE-EAT is non-nil, enable eat-eshell-mode."
         my-eshell--output-start-pos nil))
 
 (defvar my-eshell-output-face-spec
-  '(:height 0.85 :inherit nil :background "#372413" :extend t)
-  "Face spec for eshell output styling.")
+  '(:height 0.85 :inherit nil :background "#372413" :extend t))
+
+(defvar my-eshell-output-face-spec-prompt
+  '(:height 0.85 :inherit nil))
 
 (defun my-eshell-mark-command-end ()
   "Mark that command finished and add bottom padding."
@@ -237,7 +239,8 @@ If ENABLE-EAT is non-nil, enable eat-eshell-mode."
                                    (concat "\n"  ; blank line for spacing
                                            (propertize "\n" 'face my-eshell-output-face-spec)))
                 (setq my-eshell--first-output nil
-                      my-eshell--output-start-pos start)))))))))
+                      my-eshell--output-start-pos start))
+              )))))))
 
 (add-hook 'eshell-pre-command-hook #'my-eshell-mark-command-start)
 ;; Use -90 depth to run BEFORE prompt is emitted
