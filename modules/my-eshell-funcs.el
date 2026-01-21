@@ -217,18 +217,15 @@ If ENABLE-EAT is non-nil, enable eat-eshell-mode."
           ;; Skip if this looks like a prompt (ends with "$ " or "# ")
           (unless (string-match-p "[$#] $" text)
             ;; Create overlay with fixed boundaries (no extending)
-            (let ((ov (make-overlay start end nil nil nil))
-                  ;; Make padding have same small height
-                  (padding (propertize "  " 'face '(:height 0.85 :inherit nil))))
-              (overlay-put ov 'face '(:height 0.85 :inherit nil))
+            (let* ((ov (make-overlay start end nil nil nil))
+                   (output-face '(:height 0.85 :inherit nil))
+                   ;; Make padding have same face
+                   (padding (propertize "  " 'face output-face)))
+              (overlay-put ov 'face output-face)
               (overlay-put ov 'line-prefix padding)
               (overlay-put ov 'wrap-prefix padding)
               (overlay-put ov 'evaporate nil)
               (overlay-put ov 'my-eshell-output t)
-              ;; Apply line-height t to use actual text height, not inherited
-              (let ((inhibit-read-only t))
-                (with-silent-modifications
-                  (add-text-properties start end '(line-height t))))
               ;; Add newline before first output chunk
               (when my-eshell--first-output
                 (overlay-put ov 'before-string "\n")
