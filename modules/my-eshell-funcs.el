@@ -187,15 +187,21 @@ If ENABLE-EAT is non-nil, enable eat-eshell-mode."
 (defun my-eshell-fontify-output ()
   "Apply smaller font to command output using overlays."
   (when my-eshell--in-command
-    (let ((start eshell-last-output-start)
-          (end eshell-last-output-end))
+    (let ((start (marker-position eshell-last-output-start))
+          (end (marker-position eshell-last-output-end)))
       (when (and start end (< start end))
-        (let ((ov (make-overlay start end)))
-          (overlay-put ov 'face 'my-eshell-output-face)
-          (overlay-put ov 'my-eshell-output t))))))
+        (let ((text (buffer-substring-no-properties start end)))
+          ;; Skip if this looks like a prompt (ends with "$ " or "# ")
+          (unless (string-match-p "[$#] $" text)
+            ;; Create overlay with fixed boundaries (no extending)
+            (let ((ov (make-overlay start end nil nil nil)))
+              (overlay-put ov 'face 'my-eshell-output-face)
+              (overlay-put ov 'evaporate nil)
+              (overlay-put ov 'my-eshell-output t))))))))
 
 (add-hook 'eshell-pre-command-hook #'my-eshell-mark-command-start)
-(add-hook 'eshell-post-command-hook #'my-eshell-mark-command-end)
+;; Use -90 depth to run BEFORE prompt is emitted
+(add-hook 'eshell-post-command-hook #'my-eshell-mark-command-end -90)
 (add-hook 'eshell-output-filter-functions #'my-eshell-fontify-output)
 
 (provide 'my-eshell-funcs)
