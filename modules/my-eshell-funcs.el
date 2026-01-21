@@ -176,12 +176,35 @@ If ENABLE-EAT is non-nil, enable eat-eshell-mode."
 (defvar-local my-eshell--in-command nil
   "Non-nil when a command is executing.")
 
+(defvar-local my-eshell--first-output t
+  "Non-nil before first output chunk of a command.")
+
+(defvar-local my-eshell--output-start-pos nil
+  "Position where command output started.")
+
+;; Vertical padding height (0.5 = half line)
+(defvar my-eshell-vertical-padding-height 0.5
+  "Height of vertical padding as fraction of line height.")
+
+(defun my-eshell-make-vpad ()
+  "Create vertical padding string."
+  (propertize "\n" 'display `(height ,my-eshell-vertical-padding-height)))
+
 (defun my-eshell-mark-command-start ()
   "Mark that we're executing a command."
-  (setq my-eshell--in-command t))
+  (setq my-eshell--in-command t
+        my-eshell--first-output t
+        my-eshell--output-start-pos nil))
 
 (defun my-eshell-mark-command-end ()
-  "Mark that command finished."
+  "Mark that command finished and add bottom padding."
+  ;; Add newline after output
+  (when my-eshell--output-start-pos
+    (let ((end (marker-position eshell-last-output-start)))
+      (when (and end (> end my-eshell--output-start-pos))
+        (let ((ov (make-overlay (1- end) end nil nil nil)))
+          (overlay-put ov 'after-string "\n")
+          (overlay-put ov 'my-eshell-output t)))))
   (setq my-eshell--in-command nil))
 
 (defun my-eshell-fontify-output ()
@@ -194,10 +217,19 @@ If ENABLE-EAT is non-nil, enable eat-eshell-mode."
           ;; Skip if this looks like a prompt (ends with "$ " or "# ")
           (unless (string-match-p "[$#] $" text)
             ;; Create overlay with fixed boundaries (no extending)
-            (let ((ov (make-overlay start end nil nil nil)))
+            (let ((ov (make-overlay start end nil nil nil))
+                  (padding "  "))  ; 2 spaces left padding
               (overlay-put ov 'face 'my-eshell-output-face)
+              (overlay-put ov 'line-prefix padding)
+              (overlay-put ov 'wrap-prefix padding)
+              (overlay-put ov 'line-spacing 0)  ; no extra spacing between lines
               (overlay-put ov 'evaporate nil)
-              (overlay-put ov 'my-eshell-output t))))))))
+              (overlay-put ov 'my-eshell-output t)
+              ;; Add newline before first output chunk
+              (when my-eshell--first-output
+                (overlay-put ov 'before-string "\n")
+                (setq my-eshell--first-output nil
+                      my-eshell--output-start-pos start)))))))))
 
 (add-hook 'eshell-pre-command-hook #'my-eshell-mark-command-start)
 ;; Use -90 depth to run BEFORE prompt is emitted
