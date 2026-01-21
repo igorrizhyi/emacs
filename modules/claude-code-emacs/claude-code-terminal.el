@@ -1927,13 +1927,16 @@ The process sentinel will handle that when the subprocess actually exits."
                    (lambda (process event)
                      (message "[SENTINEL] Process event: %s, status: %s"
                               event (process-status process))
-                     ;; Call original sentinel if it exists
+                     ;; Call original sentinel if it exists (wrap in ignore-errors)
                      (when original-sentinel
-                       (funcall original-sentinel process event))
+                       (ignore-errors
+                         (funcall original-sentinel process event)))
                      ;; When process finishes, pop embedded context
                      (when (memq (process-status process) '(exit signal))
                        (message "[SENTINEL] Subprocess exited, popping context")
-                       (claude-code-terminal-pop-embedded-context terminal-id))))))
+                       (run-at-time 0.1 nil
+                                    #'claude-code-terminal-pop-embedded-context
+                                    terminal-id))))))
             (message "[TRACK] No process found! Stack will NOT be tracked."))))
     (message "[TRACK] Buffer not found for %s" terminal-id)))
 
@@ -2088,8 +2091,14 @@ Otherwise, sends a normal Enter to the terminal."
            (claude-code-mcp-has-pending-capture-p))
       ;; Capture pending MCP output
       (claude-code-mcp-capture-and-send)
-    ;; Normal Enter - send to eshell (eshell hooks handle command tracking)
+    ;; Normal Enter - send to eshell
     (when (derived-mode-p 'eshell-mode)
+      ;; Check if command needs eat-eshell-mode BEFORE sending
+      (let* ((input (buffer-substring-no-properties eshell-last-output-end (point)))
+             (cmd (car (split-string (string-trim input)))))
+        (when (and cmd (claude-code-terminal-check-eat-command cmd))
+          (message "[EAT] Enabling eat-eshell-mode for: %s" cmd)
+          (claude-code-terminal-enable-eat)))
       (eshell-send-input))))
 
 (defun claude-code-terminal-send-interrupt ()
@@ -2178,6 +2187,66 @@ Otherwise, sends a normal Enter to the terminal."
 
 ;; Auto-setup eshell hooks on all existing terminals when module loads
 (run-with-idle-timer 1 nil #'claude-code-terminal-setup-all-hooks)
+
+;;; Automatic eat-eshell-mode for interactive commands
+
+(defvar claude-code-terminal-eat-commands
+  '("ssh" "docker exec" "kubectl exec")
+  "Command prefixes that should auto-enable eat-eshell-mode.")
+
+(defvar-local claude-code-terminal--eat-was-enabled nil
+  "Track if we enabled eat-eshell-mode for this command.")
+
+(defun claude-code-terminal-enable-eat ()
+  "Enable eat-eshell-mode if available."
+  (when (and (fboundp 'eat-eshell-mode)
+             (not (bound-and-true-p eat-eshell-mode)))
+    (setq claude-code-terminal--eat-was-enabled t)
+    (eat-eshell-mode 1)))
+
+(defun claude-code-terminal-maybe-disable-eat ()
+  "Disable eat-eshell-mode if we enabled it."
+  (when (and claude-code-terminal--eat-was-enabled
+             (bound-and-true-p eat-eshell-mode))
+    ;; Check if ANY process is running (eat checks get-buffer-process)
+    (let ((buf-proc (get-buffer-process (current-buffer))))
+      (message "[EAT] maybe-disable: buf-proc=%s" buf-proc)
+      (if buf-proc
+          ;; Process still running - schedule for later
+          (let ((buf (current-buffer)))
+            (message "[EAT] Process still running, scheduling retry in 0.5s...")
+            (run-with-timer 0.5 nil
+                            (lambda ()
+                              (when (buffer-live-p buf)
+                                (with-current-buffer buf
+                                  (claude-code-terminal-maybe-disable-eat))))))
+        ;; Safe to disable
+        (message "[EAT] Disabling eat-eshell-mode")
+        (condition-case err
+            (progn
+              (eat-eshell-mode -1)
+              (setq claude-code-terminal--eat-was-enabled nil)
+              (message "[EAT] Disabled successfully"))
+          (error
+           (message "[EAT] ERROR: %s - scheduling retry" err)
+           (let ((buf (current-buffer)))
+             (run-with-timer 0.5 nil
+                             (lambda ()
+                               (when (buffer-live-p buf)
+                                 (with-current-buffer buf
+                                   (claude-code-terminal-maybe-disable-eat))))))))))))
+
+(defun claude-code-terminal-check-eat-command (input)
+  "Check if INPUT starts with a command that needs eat-eshell-mode."
+  (cl-some (lambda (prefix)
+             (string-prefix-p prefix input))
+           claude-code-terminal-eat-commands))
+
+(defun claude-code-terminal-post-command-eat-check ()
+  "Disable eat-eshell-mode after interactive command finishes."
+  (claude-code-terminal-maybe-disable-eat))
+
+(add-hook 'eshell-post-command-hook #'claude-code-terminal-post-command-eat-check)
 
 (provide 'claude-code-terminal)
 ;;; claude-code-terminal.el ends here
