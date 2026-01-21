@@ -207,7 +207,10 @@ If ENABLE-EAT is non-nil, enable eat-eshell-mode."
     (let ((end (marker-position eshell-last-output-start)))
       (when (and end (> end my-eshell--output-start-pos))
         (let ((ov (make-overlay (1- end) end nil nil nil)))
-          (overlay-put ov 'after-string (propertize "\n" 'face my-eshell-output-face-spec))
+          ;; One newline with background, one blank line for spacing
+          (overlay-put ov 'after-string
+                       (concat (propertize "\n" 'face my-eshell-output-face-spec)
+                               "\n"))
           (overlay-put ov 'my-eshell-output t)))))
   (setq my-eshell--in-command nil))
 
@@ -230,7 +233,9 @@ If ENABLE-EAT is non-nil, enable eat-eshell-mode."
               (overlay-put ov 'my-eshell-output t)
               ;; Add newline before first output chunk
               (when my-eshell--first-output
-                (overlay-put ov 'before-string (propertize "\n" 'face my-eshell-output-face-spec))
+                (overlay-put ov 'before-string
+                                   (concat "\n"  ; blank line for spacing
+                                           (propertize "\n" 'face my-eshell-output-face-spec)))
                 (setq my-eshell--first-output nil
                       my-eshell--output-start-pos start)))))))))
 
