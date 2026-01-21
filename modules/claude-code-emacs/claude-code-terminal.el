@@ -2197,11 +2197,42 @@ Otherwise, sends a normal Enter to the terminal."
 (defvar-local claude-code-terminal--eat-was-enabled nil
   "Track if we enabled eat-eshell-mode for this command.")
 
+(defvar-local claude-code-terminal--eat-start-marker nil
+  "Marker for where eat output started.")
+
+(defvar-local claude-code-terminal--eat-overlay nil
+  "Overlay for eat output styling.")
+
+(defvar claude-code-terminal-eat-output-face
+  '(:height 0.85 :inherit nil)
+  "Face for eat terminal output.")
+
+(defun claude-code-terminal-eat-update-overlay ()
+  "Update eat overlay to cover current output region."
+  (when (and claude-code-terminal--eat-overlay
+             claude-code-terminal--eat-start-marker)
+    (let ((start (marker-position claude-code-terminal--eat-start-marker))
+          (end (point-max)))
+      (move-overlay claude-code-terminal--eat-overlay start end))))
+
 (defun claude-code-terminal-enable-eat ()
   "Enable eat-eshell-mode if available."
   (when (and (fboundp 'eat-eshell-mode)
              (not (bound-and-true-p eat-eshell-mode)))
     (setq claude-code-terminal--eat-was-enabled t)
+    ;; Mark where eat output will start
+    (setq claude-code-terminal--eat-start-marker (point-marker))
+    ;; Create overlay for styling
+    (let* ((padding (propertize "  " 'face claude-code-terminal-eat-output-face))
+           (ov (make-overlay (point) (point) nil nil nil)))
+      (overlay-put ov 'face claude-code-terminal-eat-output-face)
+      (overlay-put ov 'line-prefix padding)
+      (overlay-put ov 'wrap-prefix padding)
+      (overlay-put ov 'evaporate nil)
+      (overlay-put ov 'claude-eat-output t)
+      (setq claude-code-terminal--eat-overlay ov))
+    ;; Hook to update overlay as output comes
+    (add-hook 'eat-eshell-update-hook #'claude-code-terminal-eat-update-overlay nil t)
     (eat-eshell-mode 1)))
 
 (defun claude-code-terminal-maybe-disable-eat ()
@@ -2225,7 +2256,18 @@ Otherwise, sends a normal Enter to the terminal."
         (condition-case err
             (progn
               (eat-eshell-mode -1)
-              (setq claude-code-terminal--eat-was-enabled nil)
+              ;; Remove update hook
+              (remove-hook 'eat-eshell-update-hook #'claude-code-terminal-eat-update-overlay t)
+              ;; Set final overlay bounds (use current point, not point-max)
+              (when (and claude-code-terminal--eat-overlay
+                         claude-code-terminal--eat-start-marker)
+                (let ((start (marker-position claude-code-terminal--eat-start-marker))
+                      (end (point)))
+                  (move-overlay claude-code-terminal--eat-overlay start end)))
+              ;; Clear tracking vars but keep overlay
+              (setq claude-code-terminal--eat-start-marker nil
+                    claude-code-terminal--eat-overlay nil
+                    claude-code-terminal--eat-was-enabled nil)
               (message "[EAT] Disabled successfully"))
           (error
            (message "[EAT] ERROR: %s - scheduling retry" err)
