@@ -196,14 +196,18 @@ If ENABLE-EAT is non-nil, enable eat-eshell-mode."
         my-eshell--first-output t
         my-eshell--output-start-pos nil))
 
+(defvar my-eshell-output-face-spec
+  '(:height 0.85 :inherit nil :background "#372413" :extend t)
+  "Face spec for eshell output styling.")
+
 (defun my-eshell-mark-command-end ()
   "Mark that command finished and add bottom padding."
-  ;; Add newline after output
+  ;; Add newline after output with same background
   (when my-eshell--output-start-pos
     (let ((end (marker-position eshell-last-output-start)))
       (when (and end (> end my-eshell--output-start-pos))
         (let ((ov (make-overlay (1- end) end nil nil nil)))
-          (overlay-put ov 'after-string "\n")
+          (overlay-put ov 'after-string (propertize "\n" 'face my-eshell-output-face-spec))
           (overlay-put ov 'my-eshell-output t)))))
   (setq my-eshell--in-command nil))
 
@@ -218,17 +222,15 @@ If ENABLE-EAT is non-nil, enable eat-eshell-mode."
           (unless (string-match-p "[$#] $" text)
             ;; Create overlay with fixed boundaries (no extending)
             (let* ((ov (make-overlay start end nil nil nil))
-                   (output-face '(:height 0.85 :inherit nil :background "#372413" :extend t))
-                   ;; Make padding have same face
-                   (padding (propertize "  " 'face output-face)))
-              (overlay-put ov 'face output-face)
+                   (padding (propertize "  " 'face my-eshell-output-face-spec)))
+              (overlay-put ov 'face my-eshell-output-face-spec)
               (overlay-put ov 'line-prefix padding)
               (overlay-put ov 'wrap-prefix padding)
               (overlay-put ov 'evaporate nil)
               (overlay-put ov 'my-eshell-output t)
               ;; Add newline before first output chunk
               (when my-eshell--first-output
-                (overlay-put ov 'before-string "\n")
+                (overlay-put ov 'before-string (propertize "\n" 'face my-eshell-output-face-spec))
                 (setq my-eshell--first-output nil
                       my-eshell--output-start-pos start)))))))))
 
