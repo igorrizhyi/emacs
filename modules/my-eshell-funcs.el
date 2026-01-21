@@ -168,5 +168,35 @@ If ENABLE-EAT is non-nil, enable eat-eshell-mode."
 
 (add-hook 'eshell-mode-hook #'my-eshell-setup-expansion-keys)
 
+;;; Font size customization - smaller output, normal prompt
+(defface my-eshell-output-face
+  '((t (:height 0.85)))
+  "Face for eshell output (smaller than prompt).")
+
+(defvar-local my-eshell--in-command nil
+  "Non-nil when a command is executing.")
+
+(defun my-eshell-mark-command-start ()
+  "Mark that we're executing a command."
+  (setq my-eshell--in-command t))
+
+(defun my-eshell-mark-command-end ()
+  "Mark that command finished."
+  (setq my-eshell--in-command nil))
+
+(defun my-eshell-fontify-output ()
+  "Apply smaller font to command output using overlays."
+  (when my-eshell--in-command
+    (let ((start eshell-last-output-start)
+          (end eshell-last-output-end))
+      (when (and start end (< start end))
+        (let ((ov (make-overlay start end)))
+          (overlay-put ov 'face 'my-eshell-output-face)
+          (overlay-put ov 'my-eshell-output t))))))
+
+(add-hook 'eshell-pre-command-hook #'my-eshell-mark-command-start)
+(add-hook 'eshell-post-command-hook #'my-eshell-mark-command-end)
+(add-hook 'eshell-output-filter-functions #'my-eshell-fontify-output)
+
 (provide 'my-eshell-funcs)
 ;;; my-eshell-funcs.el ends here
