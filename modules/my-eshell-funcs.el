@@ -3,11 +3,16 @@
 ;;; Commentary:
 ;; Command expansion triggered by space - replaces as you type.
 ;; Some commands expand to templates with cursor placement.
-;; Interactive commands auto-enable eat-eshell-mode.
+;; Output styling and eat integration is handled by claude-code-terminal.el
 
 ;;; Code:
 
 (require 'eshell)
+
+;; Forward declarations for claude-code-terminal functions
+(declare-function claude-code-terminal-setup-eat "claude-code-terminal")
+(declare-function claude-code-terminal--is-embedded-command-p "claude-code-terminal")
+(declare-function claude-code-terminal--set-state "claude-code-terminal")
 
 (defvar my-eshell-default-namespace "webpush"
   "Default Kubernetes namespace for kubectl commands.")
@@ -64,16 +69,10 @@
   "Get current input text in eshell."
   (buffer-substring-no-properties eshell-last-output-end (point)))
 
-;; Use eat functions from claude-code-terminal if available
-(declare-function claude-code-terminal-enable-eat "claude-code-terminal")
-
 (defun my-eshell-enable-eat ()
-  "Enable eat-eshell-mode if available."
-  (if (fboundp 'claude-code-terminal-enable-eat)
-      (claude-code-terminal-enable-eat)
-    (when (and (fboundp 'eat-eshell-mode)
-               (not (bound-and-true-p eat-eshell-mode)))
-      (eat-eshell-mode 1))))
+  "Enable eat-eshell-mode globally if not already enabled."
+  (when (fboundp 'claude-code-terminal-setup-eat)
+    (claude-code-terminal-setup-eat)))
 
 (defun my-eshell-expand-template (template &optional enable-eat)
   "Insert TEMPLATE and place cursor at | marker.
@@ -123,7 +122,7 @@ If ENABLE-EAT is non-nil, enable eat-eshell-mode."
   (interactive)
   (let* ((input (string-trim (my-eshell-get-current-input)))
          (simple-entry (assoc input my-eshell-simple-expansions))
-         (cmd (car (split-string input))))
+         (is-embedded nil))
     ;; Handle simple expansions
     (when simple-entry
       (let* ((data (cdr simple-entry))
@@ -133,13 +132,18 @@ If ENABLE-EAT is non-nil, enable eat-eshell-mode."
                             (if (functionp data) (funcall data) data)))
              (eat (and is-plist (plist-get data :eat))))
         (when eat
-          (my-eshell-enable-eat))
+          (setq is-embedded t))
         (delete-region eshell-last-output-end (point))
-        (insert replacement)))
-    ;; Check if raw command needs eat mode (ssh, docker exec, etc)
-    (when (and (fboundp 'claude-code-terminal-check-eat-command)
-               (claude-code-terminal-check-eat-command cmd))
-      (my-eshell-enable-eat)))
+        (insert replacement)
+        ;; Re-read input after expansion for embedded check
+        (setq input (string-trim (my-eshell-get-current-input)))))
+    ;; Check if command needs embedded mode (ssh, docker exec -it, etc)
+    (when (and (fboundp 'claude-code-terminal--is-embedded-command-p)
+               (claude-code-terminal--is-embedded-command-p input))
+      (setq is-embedded t))
+    ;; Set embedded mode state for output styling
+    (when (fboundp 'claude-code-terminal--set-state)
+      (claude-code-terminal--set-state :embedded-mode is-embedded)))
   (eshell-send-input))
 
 ;; Set up keybindings
@@ -167,85 +171,6 @@ If ENABLE-EAT is non-nil, enable eat-eshell-mode."
     (evil-local-set-key 'emacs (kbd "C-r") #'my-eshell-smart-history-search)))
 
 (add-hook 'eshell-mode-hook #'my-eshell-setup-expansion-keys)
-
-;;; Font size customization - smaller output, normal prompt
-(defface my-eshell-output-face
-  '((t (:height 0.75)))
-  "Face for eshell output (smaller than prompt).")
-
-(defvar-local my-eshell--in-command nil
-  "Non-nil when a command is executing.")
-
-(defvar-local my-eshell--first-output t
-  "Non-nil before first output chunk of a command.")
-
-(defvar-local my-eshell--output-start-pos nil
-  "Position where command output started.")
-
-;; Vertical padding height (0.5 = half line)
-(defvar my-eshell-vertical-padding-height 0.5
-  "Height of vertical padding as fraction of line height.")
-
-(defun my-eshell-make-vpad ()
-  "Create vertical padding string."
-  (propertize "\n" 'display `(height ,my-eshell-vertical-padding-height)))
-
-(defun my-eshell-mark-command-start ()
-  "Mark that we're executing a command."
-  (setq my-eshell--in-command t
-        my-eshell--first-output t
-        my-eshell--output-start-pos nil))
-
-(defvar my-eshell-output-face-spec
-  '(:height 0.85 :inherit nil :background "#372413" :extend t))
-
-(defvar my-eshell-output-face-spec-prompt
-  '(:height 0.85 :inherit nil))
-
-(defun my-eshell-mark-command-end ()
-  "Mark that command finished and add bottom padding."
-  ;; Add newline after output with same background
-  (when my-eshell--output-start-pos
-    (let ((end (marker-position eshell-last-output-start)))
-      (when (and end (> end my-eshell--output-start-pos))
-        (let ((ov (make-overlay (1- end) end nil nil nil)))
-          ;; One newline with background, one blank line for spacing
-          (overlay-put ov 'after-string
-                       (concat (propertize "\n" 'face my-eshell-output-face-spec)
-                               "\n"))
-          (overlay-put ov 'my-eshell-output t)))))
-  (setq my-eshell--in-command nil))
-
-(defun my-eshell-fontify-output ()
-  "Apply smaller font to command output using overlays."
-  (when my-eshell--in-command
-    (let ((start (marker-position eshell-last-output-start))
-          (end (marker-position eshell-last-output-end)))
-      (when (and start end (< start end))
-        (let ((text (buffer-substring-no-properties start end)))
-          ;; Skip if this looks like a prompt (ends with "$ " or "# ")
-          (unless (string-match-p "[$#] $" text)
-            ;; Create overlay with fixed boundaries (no extending)
-            (let* ((ov (make-overlay start end nil nil nil))
-                   (padding (propertize "  " 'face my-eshell-output-face-spec)))
-              (overlay-put ov 'face my-eshell-output-face-spec)
-              (overlay-put ov 'line-prefix padding)
-              (overlay-put ov 'wrap-prefix padding)
-              (overlay-put ov 'evaporate nil)
-              (overlay-put ov 'my-eshell-output t)
-              ;; Add newline before first output chunk
-              (when my-eshell--first-output
-                (overlay-put ov 'before-string
-                                   (concat "\n"  ; blank line for spacing
-                                           (propertize "\n" 'face my-eshell-output-face-spec)))
-                (setq my-eshell--first-output nil
-                      my-eshell--output-start-pos start))
-              )))))))
-
-(add-hook 'eshell-pre-command-hook #'my-eshell-mark-command-start)
-;; Use -90 depth to run BEFORE prompt is emitted
-(add-hook 'eshell-post-command-hook #'my-eshell-mark-command-end -90)
-(add-hook 'eshell-output-filter-functions #'my-eshell-fontify-output)
 
 (provide 'my-eshell-funcs)
 ;;; my-eshell-funcs.el ends here

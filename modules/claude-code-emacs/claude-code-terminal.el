@@ -2093,12 +2093,15 @@ Otherwise, sends a normal Enter to the terminal."
       (claude-code-mcp-capture-and-send)
     ;; Normal Enter - send to eshell
     (when (derived-mode-p 'eshell-mode)
-      ;; Check if command needs eat-eshell-mode BEFORE sending
-      (let* ((input (buffer-substring-no-properties eshell-last-output-end (point)))
-             (cmd (car (split-string (string-trim input)))))
-        (when (and cmd (claude-code-terminal-check-eat-command cmd))
-          (message "[EAT] Enabling eat-eshell-mode for: %s" cmd)
-          (claude-code-terminal-enable-eat)))
+      ;; Check if command is embedded (interactive) and set state
+      (let* ((input (string-trim (buffer-substring-no-properties eshell-last-output-end (point))))
+             (cmd (car (split-string input)))
+             (is-embedded (and cmd
+                               (claude-code-terminal--is-embedded-command-p input))))
+        ;; Set embedded mode state for output styling
+        (claude-code-terminal--set-state :embedded-mode is-embedded)
+        (when is-embedded
+          (message "[EMBEDDED] Interactive command: %s" cmd)))
       (eshell-send-input))))
 
 (defun claude-code-terminal-send-interrupt ()
@@ -2188,107 +2191,213 @@ Otherwise, sends a normal Enter to the terminal."
 ;; Auto-setup eshell hooks on all existing terminals when module loads
 (run-with-idle-timer 1 nil #'claude-code-terminal-setup-all-hooks)
 
-;;; Automatic eat-eshell-mode for interactive commands
+;;; Output styling with per-terminal embedded mode tracking
+;;;
+;;; Two modes:
+;;; - Embedded mode (ssh, kubectl exec -it, etc.): font size only, terminal via eat
+;;; - Regular mode (ls, ifconfig, etc.): font size + background + padding
 
-(defvar claude-code-terminal-eat-commands
-  '("ssh" "docker exec" "kubectl exec")
-  "Command prefixes that should auto-enable eat-eshell-mode.")
+;; Per-terminal state using hash table (keyed by terminal-id)
+(defvar claude-code-terminal-output-state (make-hash-table :test 'equal)
+  "Hash table tracking output styling state for each terminal.
+Keys are terminal IDs, values are plists with:
+  :in-command - non-nil when command is executing
+  :first-output - non-nil before first output chunk
+  :output-start-pos - position where output started
+  :embedded-mode - non-nil for interactive commands (ssh, etc.)")
 
-(defvar-local claude-code-terminal--eat-was-enabled nil
-  "Track if we enabled eat-eshell-mode for this command.")
+;; Face specs for different modes
+(defvar claude-code-terminal-output-face-regular
+  '(:height 0.85 :inherit nil :background "#372413" :extend t)
+  "Face for regular command output (with background).")
 
-(defvar-local claude-code-terminal--eat-start-marker nil
-  "Marker for where eat output started.")
-
-(defvar-local claude-code-terminal--eat-overlay nil
-  "Overlay for eat output styling.")
-
-(defvar claude-code-terminal-eat-output-face
+(defvar claude-code-terminal-output-face-embedded
   '(:height 0.85 :inherit nil)
-  "Face for eat terminal output.")
+  "Face for embedded mode output (font size only, no background).")
 
-(defun claude-code-terminal-eat-update-overlay ()
-  "Update eat overlay to cover current output region."
-  (when (and claude-code-terminal--eat-overlay
-             claude-code-terminal--eat-start-marker)
-    (let ((start (marker-position claude-code-terminal--eat-start-marker))
-          (end (point-max)))
-      (move-overlay claude-code-terminal--eat-overlay start end))))
+(defun claude-code-terminal--get-id ()
+  "Get current terminal ID or buffer name as fallback."
+  (or (and (boundp 'claude-code-terminal-id) claude-code-terminal-id)
+      (buffer-name)))
 
-(defun claude-code-terminal-enable-eat ()
-  "Enable eat-eshell-mode if available."
+(defun claude-code-terminal--get-state (key)
+  "Get state KEY for current terminal."
+  (let* ((terminal-id (claude-code-terminal--get-id))
+         (state (gethash terminal-id claude-code-terminal-output-state)))
+    (plist-get state key)))
+
+(defun claude-code-terminal--set-state (key value)
+  "Set state KEY to VALUE for current terminal."
+  (let* ((terminal-id (claude-code-terminal--get-id))
+         (state (gethash terminal-id claude-code-terminal-output-state)))
+    (setq state (plist-put state key value))
+    (puthash terminal-id state claude-code-terminal-output-state)))
+
+(defun claude-code-terminal--is-embedded-command-p (input)
+  "Check if INPUT is an embedded/interactive command."
+  (let ((input-trimmed (string-trim input)))
+    (or
+     ;; ssh
+     (string-prefix-p "ssh " input-trimmed)
+     (string= "ssh" input-trimmed)
+     ;; kubectl exec with -it flag
+     (and (string-prefix-p "kubectl " input-trimmed)
+          (string-match-p "\\bexec\\b.*-[ti]" input-trimmed))
+     ;; docker exec with -it flag
+     (and (string-prefix-p "docker " input-trimmed)
+          (string-match-p "\\bexec\\b.*-[ti]" input-trimmed)))))
+
+(defun claude-code-terminal-mark-command-start ()
+  "Mark that we're executing a command and determine mode."
+  (claude-code-terminal--set-state :in-command t)
+  (claude-code-terminal--set-state :first-output t)
+  (claude-code-terminal--set-state :output-start-pos nil)
+  ;; Don't reset embedded-mode here - it's set in smart-enter before this hook
+  )
+
+(defun claude-code-terminal-mark-command-end ()
+  "Mark that command finished and add bottom padding for regular mode."
+  (let ((output-start-pos (claude-code-terminal--get-state :output-start-pos))
+        (embedded-mode (claude-code-terminal--get-state :embedded-mode)))
+    (if embedded-mode
+        ;; Clean up embedded overlay
+        (claude-code-terminal-cleanup-embedded-overlay)
+      ;; Only add bottom padding for regular mode
+      (when output-start-pos
+        (let ((end (marker-position eshell-last-output-start)))
+          (when (and end (> end output-start-pos))
+            (let ((ov (make-overlay (1- end) end nil nil nil)))
+              (overlay-put ov 'after-string
+                           (concat (propertize "\n" 'face claude-code-terminal-output-face-regular)
+                                   "\n"))
+              (overlay-put ov 'claude-code-terminal-output t)))))))
+  (claude-code-terminal--set-state :in-command nil)
+  (claude-code-terminal--set-state :embedded-mode nil))
+
+(defun claude-code-terminal-fontify-output ()
+  "Apply styling to command output based on mode."
+  (let ((in-command (claude-code-terminal--get-state :in-command))
+        (embedded-mode (claude-code-terminal--get-state :embedded-mode)))
+    (when in-command
+      (let ((start (marker-position eshell-last-output-start))
+            (end (marker-position eshell-last-output-end)))
+        (when (and start end (< start end))
+          (let ((text (buffer-substring-no-properties start end)))
+            ;; Skip if this looks like a prompt
+            (unless (string-match-p "[$#] $" text)
+              (if embedded-mode
+                  ;; Embedded mode: font size only
+                  (let* ((face claude-code-terminal-output-face-embedded)
+                         (padding (propertize "  " 'face face))
+                         (ov (make-overlay start end nil nil nil)))
+                    (overlay-put ov 'face face)
+                    (overlay-put ov 'line-prefix padding)
+                    (overlay-put ov 'wrap-prefix padding)
+                    (overlay-put ov 'claude-code-terminal-output t)
+                    (when (claude-code-terminal--get-state :first-output)
+                      (claude-code-terminal--set-state :first-output nil)
+                      (claude-code-terminal--set-state :output-start-pos start)))
+                ;; Regular mode: font size + background + padding
+                (let* ((face claude-code-terminal-output-face-regular)
+                       (padding (propertize "  " 'face face))
+                       (ov (make-overlay start end nil nil nil)))
+                  (overlay-put ov 'face face)
+                  (overlay-put ov 'line-prefix padding)
+                  (overlay-put ov 'wrap-prefix padding)
+                  (overlay-put ov 'evaporate nil)
+                  (overlay-put ov 'claude-code-terminal-output t)
+                  (when (claude-code-terminal--get-state :first-output)
+                    (overlay-put ov 'before-string
+                                 (concat "\n" (propertize "\n" 'face face)))
+                    (claude-code-terminal--set-state :first-output nil)
+                    (claude-code-terminal--set-state :output-start-pos start)))))))))))
+
+(add-hook 'eshell-pre-command-hook #'claude-code-terminal-mark-command-start)
+(add-hook 'eshell-post-command-hook #'claude-code-terminal-mark-command-end -90)
+(add-hook 'eshell-output-filter-functions #'claude-code-terminal-fontify-output)
+
+;;; Eat integration
+;;; - Enable eat-eshell-mode globally once and never disable
+;;; - Our advice bypasses eat for non-embedded commands
+;;; - Embedded mode uses eat's terminal emulation with overlay styling
+
+;; Per-terminal eat overlay and marker tracking
+(defvar claude-code-terminal-eat-overlays (make-hash-table :test 'equal)
+  "Hash table of eat overlays per terminal.")
+
+(defvar claude-code-terminal-eat-markers (make-hash-table :test 'equal)
+  "Hash table of eat start markers per terminal.")
+
+(defun claude-code-terminal-setup-eat ()
+  "Enable eat-eshell-mode globally if not already enabled."
   (when (and (fboundp 'eat-eshell-mode)
              (not (bound-and-true-p eat-eshell-mode)))
-    (setq claude-code-terminal--eat-was-enabled t)
-    ;; Mark where eat output will start
-    (setq claude-code-terminal--eat-start-marker (point-marker))
-    ;; Create overlay for styling
-    (let* ((padding (propertize "  " 'face claude-code-terminal-eat-output-face))
-           (ov (make-overlay (point) (point) nil nil nil)))
-      (overlay-put ov 'face claude-code-terminal-eat-output-face)
-      (overlay-put ov 'line-prefix padding)
-      (overlay-put ov 'wrap-prefix padding)
-      (overlay-put ov 'evaporate nil)
-      (overlay-put ov 'claude-eat-output t)
-      (setq claude-code-terminal--eat-overlay ov))
-    ;; Hook to update overlay as output comes
-    (add-hook 'eat-eshell-update-hook #'claude-code-terminal-eat-update-overlay nil t)
     (eat-eshell-mode 1)))
 
-(defun claude-code-terminal-maybe-disable-eat ()
-  "Disable eat-eshell-mode if we enabled it."
-  (when (and claude-code-terminal--eat-was-enabled
-             (bound-and-true-p eat-eshell-mode))
-    ;; Check if ANY process is running (eat checks get-buffer-process)
-    (let ((buf-proc (get-buffer-process (current-buffer))))
-      (message "[EAT] maybe-disable: buf-proc=%s" buf-proc)
-      (if buf-proc
-          ;; Process still running - schedule for later
-          (let ((buf (current-buffer)))
-            (message "[EAT] Process still running, scheduling retry in 0.5s...")
-            (run-with-timer 0.5 nil
-                            (lambda ()
-                              (when (buffer-live-p buf)
-                                (with-current-buffer buf
-                                  (claude-code-terminal-maybe-disable-eat))))))
-        ;; Safe to disable
-        (message "[EAT] Disabling eat-eshell-mode")
-        (condition-case err
-            (progn
-              (eat-eshell-mode -1)
-              ;; Remove update hook
-              (remove-hook 'eat-eshell-update-hook #'claude-code-terminal-eat-update-overlay t)
-              ;; Set final overlay bounds (use current point, not point-max)
-              (when (and claude-code-terminal--eat-overlay
-                         claude-code-terminal--eat-start-marker)
-                (let ((start (marker-position claude-code-terminal--eat-start-marker))
-                      (end (point)))
-                  (move-overlay claude-code-terminal--eat-overlay start end)))
-              ;; Clear tracking vars but keep overlay
-              (setq claude-code-terminal--eat-start-marker nil
-                    claude-code-terminal--eat-overlay nil
-                    claude-code-terminal--eat-was-enabled nil)
-              (message "[EAT] Disabled successfully"))
-          (error
-           (message "[EAT] ERROR: %s - scheduling retry" err)
-           (let ((buf (current-buffer)))
-             (run-with-timer 0.5 nil
-                             (lambda ()
-                               (when (buffer-live-p buf)
-                                 (with-current-buffer buf
-                                   (claude-code-terminal-maybe-disable-eat))))))))))))
+;; Enable eat globally when eat.el loads
+(with-eval-after-load 'eat
+  (claude-code-terminal-setup-eat))
 
-(defun claude-code-terminal-check-eat-command (input)
-  "Check if INPUT starts with a command that needs eat-eshell-mode."
-  (cl-some (lambda (prefix)
-             (string-prefix-p prefix input))
-           claude-code-terminal-eat-commands))
+;; Also try on eshell start in case eat loads later
+(add-hook 'eshell-mode-hook #'claude-code-terminal-setup-eat)
 
-(defun claude-code-terminal-post-command-eat-check ()
-  "Disable eat-eshell-mode after interactive command finishes."
-  (claude-code-terminal-maybe-disable-eat))
+(defun claude-code-terminal-setup-embedded-overlay ()
+  "Set up overlay for embedded mode output styling."
+  (let* ((terminal-id (claude-code-terminal--get-id))
+         (face claude-code-terminal-output-face-embedded)
+         (padding (propertize "  " 'face face))
+         (ov (make-overlay (point) (point) nil nil nil)))
+    (overlay-put ov 'face face)
+    (overlay-put ov 'line-prefix padding)
+    (overlay-put ov 'wrap-prefix padding)
+    (overlay-put ov 'evaporate nil)
+    (overlay-put ov 'claude-code-terminal-embedded t)
+    (puthash terminal-id ov claude-code-terminal-eat-overlays)
+    (puthash terminal-id (point-marker) claude-code-terminal-eat-markers)
+    ;; Add hook to update overlay as output comes
+    (add-hook 'eat-eshell-update-hook #'claude-code-terminal-update-embedded-overlay nil t)))
 
-(add-hook 'eshell-post-command-hook #'claude-code-terminal-post-command-eat-check)
+(defun claude-code-terminal-update-embedded-overlay ()
+  "Update embedded overlay to cover current output region."
+  (let* ((terminal-id (claude-code-terminal--get-id))
+         (ov (gethash terminal-id claude-code-terminal-eat-overlays))
+         (marker (gethash terminal-id claude-code-terminal-eat-markers)))
+    (when (and ov marker)
+      (let ((start (marker-position marker))
+            (end (point-max)))
+        (move-overlay ov start end)))))
+
+(defun claude-code-terminal-cleanup-embedded-overlay ()
+  "Clean up embedded overlay after command finishes."
+  (let* ((terminal-id (claude-code-terminal--get-id))
+         (ov (gethash terminal-id claude-code-terminal-eat-overlays))
+         (marker (gethash terminal-id claude-code-terminal-eat-markers)))
+    (when ov
+      ;; Set final bounds
+      (when marker
+        (move-overlay ov (marker-position marker) (point)))
+      ;; Clear tracking
+      (remhash terminal-id claude-code-terminal-eat-overlays)
+      (remhash terminal-id claude-code-terminal-eat-markers))
+    ;; Remove hook
+    (remove-hook 'eat-eshell-update-hook #'claude-code-terminal-update-embedded-overlay t)))
+
+;; Advice to bypass eat's process setup for non-embedded commands
+(defun claude-code-terminal-eat-advice (orig-fn fn command args)
+  "Let eat handle embedded commands, bypass for regular commands."
+  (let ((embedded-mode (claude-code-terminal--get-state :embedded-mode)))
+    (if embedded-mode
+        (progn
+          ;; Set up overlay for embedded mode styling
+          (claude-code-terminal-setup-embedded-overlay)
+          ;; Let eat handle terminal emulation
+          (funcall orig-fn fn command args))
+      ;; Regular mode - bypass eat, use normal eshell output
+      (funcall fn command args))))
+
+(with-eval-after-load 'eat
+  (advice-add #'eat--eshell-adjust-make-process-args :around
+              #'claude-code-terminal-eat-advice))
 
 (provide 'claude-code-terminal)
 ;;; claude-code-terminal.el ends here
