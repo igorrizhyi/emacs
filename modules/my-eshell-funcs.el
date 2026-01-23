@@ -21,8 +21,10 @@
 (defvar my-eshell-simple-expansions
   '(("kpods" . "kubectl -n webpush get pods")
     ("kkafka" . (:cmd my-eshell--kafka-cmd :eat t))
-    ("kprod" . my-eshell--kprod)
-    ("kstaging" . my-eshell--kstaging)
+    ("prod" . my-eshell--kprod)
+    ("stage" . my-eshell--kstaging)
+    ("bts00" . my-eshell--kbts00)
+    ("hel02" . my-eshell--khel02)
     ("kdev" . my-eshell--kdev)
     ("kctx" . my-eshell--kctx))
   "Commands that expand on enter or space.")
@@ -58,12 +60,25 @@
   (setenv "KUBECONFIG" "/home/igorrizhyi/.kube/staging")
   "echo 'Switched to STAGING'")
 
+(defun my-eshell--kbts00 ()
+  (setenv "KUBECONFIG" "/home/igorrizhyi/.kube/bts_00")
+  "echo 'Switched to BTS00'")
+
+(defun my-eshell--khel02 ()
+  (setenv "KUBECONFIG" "/home/igorrizhyi/.kube/hel02")
+  "echo 'Switched to HEL02'")
+
 (defun my-eshell--kdev ()
   (setenv "KUBECONFIG" "/home/igorrizhyi/.kube/dev")
   "echo 'Switched to DEV'")
 
 (defun my-eshell--kctx ()
   (format "echo 'KUBECONFIG=%s'" (or (getenv "KUBECONFIG") "default")))
+
+(defun eshell/grep (&rest args)
+  "Run external grep with -h to suppress filename prefix."
+  (throw 'eshell-replace-command
+         (eshell-parse-command "*grep" (cons "-h" args))))
 
 (defun my-eshell-get-current-input ()
   "Get current input text in eshell."

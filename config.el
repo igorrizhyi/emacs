@@ -733,6 +733,15 @@
 (after! evil
   (define-key evil-normal-state-map (kbd "s") #'save-buffer))
 
+;; C-r in code buffers to revert buffer (reload file from disk)
+;; First unbind C-r from Evil normal state globally, then bind in prog-mode
+(after! evil
+  (define-key evil-normal-state-map (kbd "C-r") nil))
+
+(add-hook 'prog-mode-hook
+          (lambda ()
+            (evil-local-set-key 'normal (kbd "C-r") #'revert-buffer)))
+
 ;; Window layout key bindings with SPC-w prefix (window management)
 (map! :leader
       (:prefix ("w" . "window layout")
