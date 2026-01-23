@@ -80,6 +80,33 @@
   (throw 'eshell-replace-command
          (eshell-parse-command "*grep" (cons "-h" args))))
 
+(defvar my-eshell-dired-return-info nil
+  "Plist with :buffer for eshell to return to after dired quit.")
+
+(defun eshell/d (&optional dir)
+  "Open dired in DIR (default: current directory).
+On quit, return to eshell and cd to dired's final directory."
+  (setq my-eshell-dired-return-info (list :buffer (current-buffer)))
+  (dired (or dir default-directory)))
+
+(defun my-dired-return-to-eshell-advice (orig-fn &rest args)
+  "Advice for dirvish-quit to return to eshell with new directory."
+  (let ((info my-eshell-dired-return-info)
+        (new-dir default-directory))
+    (setq my-eshell-dired-return-info nil)
+    (apply orig-fn args)
+    (when-let* ((eshell-buf (plist-get info :buffer))
+                ((buffer-live-p eshell-buf)))
+      (switch-to-buffer eshell-buf)
+      (goto-char (point-max))
+      (eshell/cd new-dir)
+      (eshell-emit-prompt))))
+
+(when (fboundp 'dirvish-quit)
+  (advice-add 'dirvish-quit :around #'my-dired-return-to-eshell-advice))
+(with-eval-after-load 'dirvish
+  (advice-add 'dirvish-quit :around #'my-dired-return-to-eshell-advice))
+
 (defun my-eshell-get-current-input ()
   "Get current input text in eshell."
   (buffer-substring-no-properties eshell-last-output-end (point)))
