@@ -204,18 +204,40 @@
   ;; Disable evil mode state switching in eat
   (when (featurep 'evil)
 
-    ;; Hook to ensure we stay in insert mode and disable ESC
+    ;; Hook for regular eat terminals - ESC sends to terminal, C-t for normal mode
     (defun my/eat-evil-setup ()
       "Setup evil keybindings for eat to disable ESC switching."
       ;; Force insert state
       (evil-insert-state)
-      ;; Disable ESC in this buffer
+      ;; Disable ESC in this buffer (send to terminal)
       (evil-local-set-key 'insert (kbd "<escape>") #'eat-self-input)
       ;; Add C-t as normal mode switcher
       (evil-local-set-key 'insert (kbd "C-t") #'evil-normal-state)
       (evil-local-set-key 'emacs (kbd "<escape>") #'eat-self-input))
 
-    (add-hook 'eat-mode-hook #'my/eat-evil-setup)))
+    (add-hook 'eat-mode-hook #'my/eat-evil-setup))
+
+  ;; Hook for Claude terminals - ESC for normal mode, C-u for terminal switch
+  (defun my/claude-eat-evil-setup-in-buffer (buffer)
+    "Setup evil keybindings for Claude eat terminals in BUFFER."
+    (when (buffer-live-p buffer)
+      (with-current-buffer buffer
+        (when (and (featurep 'evil) (derived-mode-p 'eat-mode))
+          ;; Force insert state first
+          (evil-insert-state)
+          ;; ESC switches to normal mode
+          (evil-local-set-key 'insert (kbd "<escape>") #'evil-normal-state)
+          (evil-local-set-key 'normal (kbd "<escape>") #'evil-normal-state)
+          ;; C-c ESC sends actual escape to terminal
+          (evil-local-set-key 'insert (kbd "C-c <escape>") #'eat-self-input)
+          ;; C-u switches between Claude terminals
+          (evil-local-set-key 'insert (kbd "C-u") #'claude-code-terminal-switch)))))
+
+  ;; Use claude-code-start-hook with slight delay to ensure eat is ready
+  (add-hook 'claude-code-start-hook
+            (lambda ()
+              (let ((buf (current-buffer)))
+                (run-with-timer 0.1 nil #'my/claude-eat-evil-setup-in-buffer buf)))))
 
 ;; Alternative approach using evil-collection if available
 (after! evil-collection

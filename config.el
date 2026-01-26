@@ -934,3 +934,29 @@
           (lambda ()
             (when (evil-normal-state-p)
               (my/toggle-hl-line-on-evil-state))))
+
+;; Enhanced dired colors with diredfl - retro amber theme
+(use-package! diredfl
+  :hook (dired-mode . diredfl-mode)
+  :config
+  ;; Amber palette for dired
+  (set-face-attribute 'diredfl-dir-name nil :foreground "#ffb000" :weight 'bold)
+  (set-face-attribute 'diredfl-file-name nil :foreground "#fcd498")
+  (set-face-attribute 'diredfl-file-suffix nil :foreground "#c78021")
+  (set-face-attribute 'diredfl-symlink nil :foreground "#00ced1" :slant 'italic)
+  (set-face-attribute 'diredfl-date-time nil :foreground "#8d7c6a")
+  (set-face-attribute 'diredfl-number nil :foreground "#e99f17")
+  (set-face-attribute 'diredfl-dir-heading nil :foreground "#ff7300" :weight 'bold)
+  (set-face-attribute 'diredfl-exec-priv nil :foreground "#ff9d00")
+  (set-face-attribute 'diredfl-read-priv nil :foreground "#ffc677")
+  (set-face-attribute 'diredfl-write-priv nil :foreground "#ff7300")
+  (set-face-attribute 'diredfl-no-priv nil :foreground "#372413")
+  (set-face-attribute 'diredfl-rare-priv nil :foreground "#dda0dd")
+  (set-face-attribute 'diredfl-dir-priv nil :foreground "#ffb000")
+  (set-face-attribute 'diredfl-deletion nil :foreground "#ff0000" :weight 'bold)
+  (set-face-attribute 'diredfl-deletion-file-name nil :foreground "#ff0000")
+  (set-face-attribute 'diredfl-flag-mark nil :foreground "#ff9d00" :weight 'bold)
+  (set-face-attribute 'diredfl-flag-mark-line nil :background "#2e1e13")
+  (set-face-attribute 'diredfl-ignored-file-name nil :foreground "#8d7c6a")
+  (set-face-attribute 'diredfl-compressed-file-name nil :foreground "#e99f17")
+  (set-face-attribute 'diredfl-compressed-file-suffix nil :foreground "#c78021"))
