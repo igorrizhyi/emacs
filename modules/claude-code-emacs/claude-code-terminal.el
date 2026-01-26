@@ -2085,24 +2085,33 @@ The process sentinel will handle that when the subprocess actually exits."
 (defun claude-code-terminal-smart-enter ()
   "Send Enter to terminal, or capture MCP output if pending.
 When an MCP command is waiting for output capture, this captures and sends the result.
+For embedded commands (ssh, etc.), spawns mistty in a bottom split.
 Otherwise, sends a normal Enter to the terminal."
   (interactive)
   (if (and (fboundp 'claude-code-mcp-has-pending-capture-p)
            (claude-code-mcp-has-pending-capture-p))
       ;; Capture pending MCP output
       (claude-code-mcp-capture-and-send)
-    ;; Normal Enter - send to eshell
+    ;; Normal Enter - check for embedded commands first
     (when (derived-mode-p 'eshell-mode)
-      ;; Check if command is embedded (interactive) and set state
       (let* ((input (string-trim (buffer-substring-no-properties eshell-last-output-end (point))))
              (cmd (car (split-string input)))
              (is-embedded (and cmd
+                               (not (string-empty-p input))
                                (claude-code-terminal--is-embedded-command-p input))))
-        ;; Set embedded mode state for output styling
-        (claude-code-terminal--set-state :embedded-mode is-embedded)
-        (when is-embedded
-          (message "[EMBEDDED] Interactive command: %s" cmd)))
-      (eshell-send-input))))
+        (if is-embedded
+            ;; Embedded command - spawn mistty instead
+            (progn
+              (message "[EMBEDDED] Spawning mistty for: %s" cmd)
+              ;; Clear input line and add note
+              (delete-region eshell-last-output-end (point))
+              (insert (format "# Spawning in mistty: %s" input))
+              (eshell-send-input)
+              ;; Spawn mistty with the command
+              (claude-code-terminal-spawn-mistty input))
+          ;; Regular command - run in eshell
+          (claude-code-terminal--set-state :embedded-mode nil)
+          (eshell-send-input))))))
 
 (defun claude-code-terminal-send-interrupt ()
   "Send C-c (interrupt) to eshell."
@@ -2398,6 +2407,186 @@ Keys are terminal IDs, values are plists with:
 (with-eval-after-load 'eat
   (advice-add #'eat--eshell-adjust-make-process-args :around
               #'claude-code-terminal-eat-advice))
+
+;;; Mistty integration for embedded commands
+;;;
+;;; Instead of running embedded commands (ssh, kubectl exec -it, etc.) in
+;;; eshell with eat-eshell-mode, we spawn a mistty buffer in a bottom split.
+;;; This provides better terminal emulation for interactive sessions.
+
+(defvar claude-code-terminal-mistty-buffers (make-hash-table :test 'equal)
+  "Hash table mapping terminal-id to their active mistty buffer.")
+
+(defvar claude-code-terminal-mistty-windows (make-hash-table :test 'equal)
+  "Hash table mapping terminal-id to their mistty window configuration.")
+
+(defvar claude-code-terminal-mistty-eshell-height 6
+  "Number of lines to keep visible for eshell when mistty is active.
+Eshell will be shrunk to this height, mistty takes the rest.")
+
+(defun claude-code-terminal-get-mistty-buffer (&optional terminal-id)
+  "Get active mistty buffer for TERMINAL-ID (defaults to current terminal)."
+  (let ((id (or terminal-id (claude-code-terminal--get-id))))
+    (when-let ((buf (gethash id claude-code-terminal-mistty-buffers)))
+      (when (buffer-live-p buf)
+        buf))))
+
+(defun claude-code-terminal-has-active-mistty-p (&optional terminal-id)
+  "Check if TERMINAL-ID has an active mistty buffer."
+  (not (null (claude-code-terminal-get-mistty-buffer terminal-id))))
+
+(defun claude-code-terminal-spawn-mistty (command)
+  "Spawn mistty in bottom split for COMMAND, executed from current eshell.
+Returns the mistty buffer."
+  (cl-block claude-code-terminal-spawn-mistty
+    (unless (require 'mistty nil t)
+      (user-error "mistty is not installed. Please install it via M-x package-install RET mistty"))
+
+    (let* ((terminal-id (claude-code-terminal--get-id))
+           (eshell-buf (current-buffer))
+           (eshell-win (selected-window))
+           (project-root (or (bound-and-true-p claude-code-terminal-project-root)
+                             default-directory))
+           (our-mistty-buffer-name (format "*mistty:%s:%s*"
+                                           (file-name-nondirectory (directory-file-name project-root))
+                                           terminal-id))
+           mistty-buf)
+
+      ;; Store embedded state
+      (claude-code-terminal--set-state :embedded-mode t)
+      (claude-code-terminal--set-state :mistty-command command)
+
+      ;; Step 1: Create mistty buffer first (let it handle its own creation)
+      (message "[MISTTY] Creating mistty buffer...")
+      (condition-case err
+          (progn
+            ;; Let mistty create however it wants
+            (setq mistty-buf (mistty-create))
+            (message "[MISTTY] mistty-create returned: %s" mistty-buf))
+        (error
+         (message "[MISTTY] Error creating: %s" err)
+         (message "[MISTTY] Error details - type: %s, data: %s" (car err) (cdr err))
+         (claude-code-terminal--set-state :embedded-mode nil)
+         (cl-return-from claude-code-terminal-spawn-mistty nil)))
+
+      (unless (and mistty-buf (buffer-live-p mistty-buf))
+        (message "[MISTTY] Failed to create buffer")
+        (claude-code-terminal--set-state :embedded-mode nil)
+        (cl-return-from claude-code-terminal-spawn-mistty nil))
+
+      (message "[MISTTY] Buffer created: %s" mistty-buf)
+
+      ;; Step 2: mistty-create replaced eshell in current window
+      ;; Now split and put eshell in the small top window
+      (let* ((mistty-win (selected-window))  ;; Current window now shows mistty
+             (eshell-height (min claude-code-terminal-mistty-eshell-height
+                                 (max 4 (/ (window-height) 6))))
+             ;; Split above: create small window on top for eshell
+             (eshell-win (split-window mistty-win eshell-height 'above)))
+
+        ;; Put eshell buffer in the top window
+        (set-window-buffer eshell-win eshell-buf)
+        ;; Stay in mistty window (bottom, large)
+        (select-window mistty-win)
+
+        ;; Rename buffer to our naming scheme
+        (with-current-buffer mistty-buf
+          (rename-buffer our-mistty-buffer-name t))
+
+        ;; Store references
+        (puthash terminal-id mistty-buf claude-code-terminal-mistty-buffers)
+        (puthash terminal-id (cons eshell-win mistty-win) claude-code-terminal-mistty-windows)
+
+        ;; Set up mistty buffer
+        (with-current-buffer mistty-buf
+          (setq-local claude-code-terminal-parent-id terminal-id)
+          (setq-local claude-code-terminal-parent-buffer eshell-buf)
+
+          ;; Add cleanup hook for when mistty process ends
+          (add-hook 'mistty-after-process-end-hook
+                    #'claude-code-terminal-mistty-cleanup nil t))
+
+        ;; Send the command to mistty after shell starts
+        (run-at-time 0.3 nil
+                     (lambda (buf cmd)
+                       (when (buffer-live-p buf)
+                         (with-current-buffer buf
+                           (mistty-send-string cmd)
+                           (mistty-send-command))))
+                     mistty-buf command)
+
+        ;; Return focus to eshell briefly to show the split, then to mistty
+        (select-window eshell-win)
+        (goto-char (point-max))
+        (run-at-time 0.2 nil
+                     (lambda (win)
+                       (when (window-live-p win)
+                         (select-window win)))
+                     mistty-win)
+
+        mistty-buf))))
+
+(defun claude-code-terminal-mistty-cleanup ()
+  "Clean up mistty buffer and restore eshell window."
+  (let* ((parent-id (bound-and-true-p claude-code-terminal-parent-id))
+         (parent-buf (bound-and-true-p claude-code-terminal-parent-buffer))
+         (mistty-buf (current-buffer)))
+
+    (when parent-id
+      ;; Clear state
+      (remhash parent-id claude-code-terminal-mistty-buffers)
+      (remhash parent-id claude-code-terminal-mistty-windows)
+
+      ;; Update parent eshell state
+      (when (buffer-live-p parent-buf)
+        (with-current-buffer parent-buf
+          (claude-code-terminal--set-state :embedded-mode nil)
+          (claude-code-terminal--set-state :mistty-command nil)))
+
+      ;; Close mistty window and kill buffer
+      (run-at-time 0.1 nil
+                   (lambda (mbuf pbuf)
+                     (when-let ((mwin (get-buffer-window mbuf)))
+                       (delete-window mwin))
+                     (when (buffer-live-p mbuf)
+                       (kill-buffer mbuf))
+                     ;; Focus back to eshell
+                     (when (buffer-live-p pbuf)
+                       (switch-to-buffer pbuf)
+                       (goto-char (point-max))))
+                   mistty-buf parent-buf))))
+
+(defun claude-code-terminal-send-to-mistty (string &optional terminal-id)
+  "Send STRING to the active mistty buffer for TERMINAL-ID."
+  (when-let ((mistty-buf (claude-code-terminal-get-mistty-buffer terminal-id)))
+    (with-current-buffer mistty-buf
+      (mistty-send-string string))))
+
+(defun claude-code-terminal-send-command-to-mistty (command &optional terminal-id)
+  "Send COMMAND to the active mistty buffer and execute it."
+  (when-let ((mistty-buf (claude-code-terminal-get-mistty-buffer terminal-id)))
+    (with-current-buffer mistty-buf
+      (mistty-send-string command)
+      (mistty-send-command))))
+
+(defun claude-code-terminal-close-mistty (&optional terminal-id)
+  "Close the mistty buffer associated with TERMINAL-ID."
+  (interactive)
+  (let ((id (or terminal-id (claude-code-terminal--get-id))))
+    (when-let ((mistty-buf (gethash id claude-code-terminal-mistty-buffers)))
+      (when (buffer-live-p mistty-buf)
+        (with-current-buffer mistty-buf
+          ;; Send exit to close gracefully
+          (mistty-send-string "exit")
+          (mistty-send-command))))))
+
+;; Keybinding to close mistty from eshell
+(defun claude-code-terminal-exit-embedded ()
+  "Exit embedded mistty session if active, otherwise do nothing."
+  (interactive)
+  (if (claude-code-terminal-has-active-mistty-p)
+      (claude-code-terminal-close-mistty)
+    (message "No active embedded session")))
 
 (provide 'claude-code-terminal)
 ;;; claude-code-terminal.el ends here

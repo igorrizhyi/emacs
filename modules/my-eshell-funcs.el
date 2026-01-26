@@ -14,6 +14,9 @@
 (declare-function claude-code-terminal--is-embedded-command-p "claude-code-terminal")
 (declare-function claude-code-terminal--set-state "claude-code-terminal")
 (declare-function claude-code-terminal--get-state "claude-code-terminal")
+(declare-function claude-code-terminal-spawn-mistty "claude-code-terminal")
+(declare-function claude-code-terminal-has-active-mistty-p "claude-code-terminal")
+(declare-function claude-code-terminal-send-command-to-mistty "claude-code-terminal")
 
 (defvar my-eshell-default-namespace "webpush"
   "Default Kubernetes namespace for kubectl commands.")
@@ -161,7 +164,8 @@ If ENABLE-EAT is non-nil, enable eat-eshell-mode."
       (insert " ")))))
 
 (defun my-eshell-expand-on-enter ()
-  "Expand and execute on enter."
+  "Expand and execute on enter.
+For embedded commands (ssh, kubectl exec -it, etc.), spawns mistty in a split."
   (interactive)
   (let* ((input (string-trim (my-eshell-get-current-input)))
          (simple-entry (assoc input my-eshell-simple-expansions))
@@ -180,14 +184,28 @@ If ENABLE-EAT is non-nil, enable eat-eshell-mode."
         (insert replacement)
         ;; Re-read input after expansion for embedded check
         (setq input (string-trim (my-eshell-get-current-input)))))
+
     ;; Check if command needs embedded mode (ssh, docker exec -it, etc)
     (when (and (fboundp 'claude-code-terminal--is-embedded-command-p)
                (claude-code-terminal--is-embedded-command-p input))
       (setq is-embedded t))
-    ;; Set embedded mode state for output styling
-    (when (fboundp 'claude-code-terminal--set-state)
-      (claude-code-terminal--set-state :embedded-mode is-embedded)))
-  (eshell-send-input))
+
+    ;; For embedded commands, spawn mistty instead of running in eshell
+    (if (and is-embedded
+             (not (string-empty-p input))
+             (fboundp 'claude-code-terminal-spawn-mistty))
+        (progn
+          ;; Clear the input line (don't execute in eshell)
+          (delete-region eshell-last-output-end (point))
+          ;; Add a note to eshell showing what was spawned
+          (insert (format "# Spawning in mistty: %s" input))
+          (eshell-send-input)
+          ;; Spawn mistty with the command
+          (claude-code-terminal-spawn-mistty input))
+      ;; Regular command - run in eshell
+      (when (fboundp 'claude-code-terminal--set-state)
+        (claude-code-terminal--set-state :embedded-mode is-embedded))
+      (eshell-send-input))))
 
 ;; Set up keybindings
 (defun my-eshell-smart-history-search ()

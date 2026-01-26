@@ -157,6 +157,10 @@ For edit mode (command not yet executed):
 (declare-function claude-code-terminal-get-by-id "claude-code-terminal" (terminal-id &optional project-root))
 (declare-function claude-code-terminal-get-last-focused "claude-code-terminal" ())
 (declare-function claude-code-terminal-send-string "claude-code-terminal" (buffer string &optional send-newline))
+;; Mistty integration
+(declare-function claude-code-terminal-get-mistty-buffer "claude-code-terminal" (&optional terminal-id))
+(declare-function claude-code-terminal-has-active-mistty-p "claude-code-terminal" (&optional terminal-id))
+(declare-function claude-code-terminal-send-command-to-mistty "claude-code-terminal" (command &optional terminal-id))
 
 ;;; MCP Tool Handlers
 
@@ -920,11 +924,13 @@ PARAMS should include 'terminalId' and optionally 'projectRoot'."
 (defun claude-code-mcp-handle-executeTerminalCommandInEmacs (params)
   "Handle executeTerminalCommand request with PARAMS.
 PARAMS should include 'command', and optionally 'terminalId', 'projectRoot'.
-Uses simple Enter-to-capture approach: sends command, waits for user to press Enter to capture output."
-  (let ((command (cdr (assoc 'command params)))
-        (project-root (cdr (assoc 'projectRoot params)))
-        terminal-id
-        buffer)
+Uses simple Enter-to-capture approach: sends command, waits for user to press Enter to capture output.
+If terminal has active mistty buffer, routes command there instead."
+  (cl-block claude-code-mcp-handle-executeTerminalCommandInEmacs
+    (let ((command (cdr (assoc 'command params)))
+          (project-root (cdr (assoc 'projectRoot params)))
+          terminal-id
+          buffer)
 
     ;; Validate required parameters
     (unless command
@@ -943,6 +949,31 @@ Uses simple Enter-to-capture approach: sends command, waits for user to press En
     (setq buffer (claude-code-terminal-get-by-id terminal-id project-root))
     (unless buffer
       (error "Terminal buffer not found for %s" terminal-id))
+
+    ;; Check if terminal has active mistty buffer - route command there
+    (when (and (fboundp 'claude-code-terminal-has-active-mistty-p)
+               (claude-code-terminal-has-active-mistty-p terminal-id))
+      (let ((mistty-buf (claude-code-terminal-get-mistty-buffer terminal-id)))
+        (message "MCP: Routing command to active mistty buffer for terminal %s" terminal-id)
+        ;; For mistty, we send the command directly (no confirmation popup for now)
+        ;; TODO: Add output capture from mistty if needed
+        (with-current-buffer mistty-buf
+          (mistty-send-string command)
+          (mistty-send-command))
+        ;; Return immediate success - mistty doesn't support output capture yet
+        (cl-return-from claude-code-mcp-handle-executeTerminalCommandInEmacs
+          `((success . t)
+            (message . "Command sent to embedded mistty session")
+            (terminalId . ,terminal-id)
+            (command . ,command)
+            (stdout . "[Command sent to embedded mistty session - output not captured]")
+            (stderr . "")
+            (exitCode . 0)
+            (timeout . ,json-false)
+            (interrupted . ,json-false)
+            (largeOutput . ,json-false)
+            (workingDirectory . ,(or project-root default-directory))
+            (error . "")))))
 
     ;; Show confirmation popup before executing
     (let ((user-choice (claude-code-show-command-confirmation-popup command project-root)))
@@ -1040,7 +1071,7 @@ Uses simple Enter-to-capture approach: sends command, waits for user to press En
            (interrupted . nil)
            (largeOutput . nil)
            (workingDirectory . ,(or project-root default-directory))
-           (error . "KeyboardInterrupt: User cancelled command execution")))))))
+           (error . "KeyboardInterrupt: User cancelled command execution"))))))))
 
 (defun claude-code-mcp-handle-getTerminalList (params)
   "Handle getTerminalList request with PARAMS.
