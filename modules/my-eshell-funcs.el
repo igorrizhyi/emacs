@@ -13,6 +13,7 @@
 (declare-function claude-code-terminal-setup-eat "claude-code-terminal")
 (declare-function claude-code-terminal--is-embedded-command-p "claude-code-terminal")
 (declare-function claude-code-terminal--set-state "claude-code-terminal")
+(declare-function claude-code-terminal--get-state "claude-code-terminal")
 
 (defvar my-eshell-default-namespace "webpush"
   "Default Kubernetes namespace for kubectl commands.")
@@ -190,15 +191,17 @@ If ENABLE-EAT is non-nil, enable eat-eshell-mode."
 
 ;; Set up keybindings
 (defun my-eshell-smart-history-search ()
-  "Search history - use terminal C-r if in eat mode, else consult-history."
+  "Search history - use terminal C-r if in embedded mode, else consult-history."
   (interactive)
-  (if (bound-and-true-p eat-eshell-mode)
-      ;; In eat mode (ssh, etc) - send C-r to terminal
-      (eat-self-input 1 ?\C-r)
-    ;; Normal eshell - use consult-history
-    (if (fboundp 'consult-history)
-        (consult-history)
-      (eshell-previous-matching-input-from-input ""))))
+  (let ((embedded (and (fboundp 'claude-code-terminal--get-state)
+                       (claude-code-terminal--get-state :embedded-mode))))
+    (if (and embedded (bound-and-true-p eat-eshell-mode))
+        ;; In embedded mode (ssh, etc) - send C-r to terminal
+        (eat-self-input 1 ?\C-r)
+      ;; Normal eshell - use consult-history
+      (if (fboundp 'consult-history)
+          (consult-history)
+        (eshell-previous-matching-input-from-input "")))))
 
 (defun my-eshell-setup-expansion-keys ()
   "Set up expansion keybindings in eshell."

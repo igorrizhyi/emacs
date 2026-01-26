@@ -15,11 +15,13 @@
      "4b88b7ca61eb48bb22e2a4b589be66ba31ba805860db9ed51b4c484f3ef612a7"
      "8c7e832be864674c220f9a9361c851917a93f921fedb7717b1b5ece47690c098"
      "456697e914823ee45365b843c89fbc79191fdbaff471b29aad9dcbe0ee1d5641"
-     "df6dfd55673f40364b1970440f0b0cb8ba7149282cf415b81aaad2d98b0f0290" default)))
+     "df6dfd55673f40364b1970440f0b0cb8ba7149282cf415b81aaad2d98b0f0290" default))
+ '(package-selected-packages '(mistty)))
 (custom-set-faces
  ;; custom-set-faces was added by Custom.
  ;; If you edit it by hand, you could mess it up, so be careful.
  ;; Your init file should contain only one such instance.
  ;; If there is more than one, they won't work right.
- )
+ '(font-lock-type-face ((t (:weight medium))))
+ '(font-lock-variable-name-face ((t (:weight medium)))))
 (put 'projectile-grep 'disabled nil)
