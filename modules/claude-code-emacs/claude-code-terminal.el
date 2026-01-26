@@ -1688,11 +1688,11 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
   "Font family for eshell prompt and command input.")
 
 (defface claude-code-terminal-prompt-face
-  '((t :family "Perfect DOS VGA 437 Win" :height 0.85 :foreground "#00ff00"))
+  '((t :family "Perfect DOS VGA 437 Win" :height 0.65 :foreground "#00ff00"))
   "Face for eshell prompt with retro hacker font.")
 
 (defface claude-code-terminal-input-face
-  '((t :family "Perfect DOS VGA 437 Win" :height 0.85))
+  '((t :family "Perfect DOS VGA 437 Win" :height 0.65))
   "Face for eshell command input with retro hacker font.")
 
 ;;; Doom-modeline Integration for Colorful Mode Line
@@ -1711,11 +1711,19 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
 
 (declare-function doom-modeline-def-segment "doom-modeline" (name &rest plist))
 
+(defface claude-code-terminal-cwd-face
+  '((t :foreground "#88c0d0" :weight normal))
+  "Face for current working directory in mode line.")
+
 (defun claude-code-terminal-doom-modeline-terminal-id ()
-  "Generate terminal ID segment for doom-modeline."
+  "Generate terminal ID + current directory segment for doom-modeline."
   (when (bound-and-true-p claude-code-terminal-id)
-    (propertize (format " %s " claude-code-terminal-id)
-                'face 'claude-code-terminal-id-face)))
+    (let ((cwd (abbreviate-file-name default-directory)))
+      (concat
+       (propertize (format " %s " claude-code-terminal-id)
+                   'face 'claude-code-terminal-id-face)
+       (propertize (format " %s " cwd)
+                   'face 'claude-code-terminal-cwd-face)))))
 
 (defun claude-code-terminal-doom-modeline-commands ()
   "Generate shell commands segment for doom-modeline."
@@ -2393,8 +2401,9 @@ Keys are terminal IDs, values are plists with:
             (end (marker-position eshell-last-output-end)))
         (when (and start end (< start end))
           (let ((text (buffer-substring-no-properties start end)))
-            ;; Skip if this looks like a prompt
-            (unless (string-match-p "[$#] $" text)
+            ;; Skip if this looks like a prompt (traditional or emoji)
+            (unless (or (string-match-p "[$#] $" text)
+                        (string-match-p (concat "^" (regexp-quote claude-code-terminal-prompt-emoji) " $") text))
               (if embedded-mode
                   ;; Embedded mode: font size only
                   (let* ((face claude-code-terminal-output-face-embedded)
@@ -2464,8 +2473,18 @@ Converts the dynamic input overlay to a fixed overlay covering just the command.
         (overlay-put fixed-ov 'claude-code-terminal-command t)))
     (setq claude-code-terminal-input-overlay nil)))
 
+(defvar claude-code-terminal-prompt-emoji "👾"
+  "Emoji to use as the eshell prompt.")
+
+(defun claude-code-terminal-eshell-prompt ()
+  "Minimal emoji-only eshell prompt."
+  (concat claude-code-terminal-prompt-emoji " "))
+
 (defun claude-code-terminal-setup-prompt-font ()
-  "Set up retro font for eshell prompt."
+  "Set up retro font and emoji prompt for eshell."
+  ;; Set minimal emoji prompt
+  (setq-local eshell-prompt-function #'claude-code-terminal-eshell-prompt)
+  (setq-local eshell-prompt-regexp (concat "^" (regexp-quote claude-code-terminal-prompt-emoji) " "))
   ;; Style prompt via eshell-prompt-face
   (face-remap-add-relative 'eshell-prompt
                            :family claude-code-terminal-prompt-font
@@ -2476,7 +2495,16 @@ Converts the dynamic input overlay to a fixed overlay covering just the command.
   (face-remap-add-relative 'corfu-current
                            :family claude-code-terminal-prompt-font)
   ;; Update input styling on changes
-  (add-hook 'post-command-hook #'claude-code-terminal-style-input nil t))
+  (add-hook 'post-command-hook #'claude-code-terminal-style-input nil t)
+  ;; Refresh prompt to apply new format immediately
+  (when (eq major-mode 'eshell-mode)
+    (run-at-time 0.1 nil
+                 (lambda (buf)
+                   (when (buffer-live-p buf)
+                     (with-current-buffer buf
+                       (goto-char (point-max))
+                       (eshell-emit-prompt))))
+                 (current-buffer))))
 
 (add-hook 'eshell-mode-hook #'claude-code-terminal-setup-prompt-font)
 
