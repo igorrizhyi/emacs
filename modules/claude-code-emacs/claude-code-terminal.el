@@ -1684,15 +1684,15 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
 
 ;;; Prompt and Input Styling
 
-(defvar claude-code-terminal-prompt-font "Chrono Trigger Monospaced"
+(defvar claude-code-terminal-prompt-font "Perfect DOS VGA 437 Win"
   "Font family for eshell prompt and command input.")
 
 (defface claude-code-terminal-prompt-face
-  '((t :family "Chrono Trigger Monospaced" :height 1.0 :foreground "#00ff00"))
+  '((t :family "Perfect DOS VGA 437 Win" :height 0.85 :foreground "#00ff00"))
   "Face for eshell prompt with retro hacker font.")
 
 (defface claude-code-terminal-input-face
-  '((t :family "Chrono Trigger Monospaced" :height 1.0))
+  '((t :family "Perfect DOS VGA 437 Win" :height 0.85))
   "Face for eshell command input with retro hacker font.")
 
 ;;; Doom-modeline Integration for Colorful Mode Line
@@ -2470,6 +2470,11 @@ Converts the dynamic input overlay to a fixed overlay covering just the command.
   (face-remap-add-relative 'eshell-prompt
                            :family claude-code-terminal-prompt-font
                            :foreground "#00ff00")
+  ;; Style corfu completion popup to match
+  (face-remap-add-relative 'corfu-default
+                           :family claude-code-terminal-prompt-font)
+  (face-remap-add-relative 'corfu-current
+                           :family claude-code-terminal-prompt-font)
   ;; Update input styling on changes
   (add-hook 'post-command-hook #'claude-code-terminal-style-input nil t))
 
