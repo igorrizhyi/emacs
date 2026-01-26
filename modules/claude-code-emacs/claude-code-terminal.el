@@ -2652,5 +2652,24 @@ Mistty becomes the main terminal buffer. When it closes, eshell returns."
       (claude-code-terminal-close-mistty)
     (message "No active embedded session")))
 
+;;; Return to terminal after kill-buffer (if previous buffer was terminal)
+
+(defun claude-code-terminal--return-after-kill (orig-fun &rest args)
+  "Advice to return to terminal buffer after killing current buffer.
+Only switches to terminal if the immediate previous buffer was a terminal."
+  (let* ((prev-buf (cadr (buffer-list)))  ; Second buffer = previous
+         (prev-is-terminal (and prev-buf
+                                (buffer-live-p prev-buf)
+                                (with-current-buffer prev-buf
+                                  (bound-and-true-p claude-code-terminal-id)))))
+    (apply orig-fun args)
+    ;; If previous buffer was a terminal and we didn't land on it, switch to it
+    (when (and prev-is-terminal
+               (buffer-live-p prev-buf)
+               (not (eq prev-buf (current-buffer))))
+      (switch-to-buffer prev-buf))))
+
+(advice-add 'kill-current-buffer :around #'claude-code-terminal--return-after-kill)
+
 (provide 'claude-code-terminal)
 ;;; claude-code-terminal.el ends here
