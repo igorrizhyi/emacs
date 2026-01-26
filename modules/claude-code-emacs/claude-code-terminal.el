@@ -2500,6 +2500,7 @@ Mistty becomes the main terminal buffer. When it closes, eshell returns."
            (eshell-buf (current-buffer))
            (eshell-win (selected-window))
            (project-root (bound-and-true-p claude-code-terminal-project-root))
+           (kubeconfig (getenv "KUBECONFIG"))
            mistty-buf)
 
       ;; Store embedded state
@@ -2571,13 +2572,18 @@ Mistty becomes the main terminal buffer. When it closes, eshell returns."
                   #'claude-code-terminal-mistty-cleanup nil t))
 
       ;; Send command after shell starts
-      (run-at-time 0.3 nil
-                   (lambda (buf cmd)
-                     (when (buffer-live-p buf)
-                       (with-current-buffer buf
-                         (mistty-send-string cmd)
-                         (mistty-send-command))))
-                   mistty-buf command)
+      ;; For kubectl commands, prepend KUBECONFIG if set
+      (let ((final-cmd (if (and kubeconfig
+                                (string-match-p "\\bkubectl\\b" command))
+                           (format "KUBECONFIG=%s %s" kubeconfig command)
+                         command)))
+        (run-at-time 0.3 nil
+                     (lambda (buf cmd)
+                       (when (buffer-live-p buf)
+                         (with-current-buffer buf
+                           (mistty-send-string cmd)
+                           (mistty-send-command))))
+                     mistty-buf final-cmd))
 
       mistty-buf)))
 
