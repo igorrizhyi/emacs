@@ -1712,7 +1712,7 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
 (declare-function doom-modeline-def-segment "doom-modeline" (name &rest plist))
 
 (defface claude-code-terminal-cwd-face
-  '((t :foreground "#88c0d0" :weight normal))
+  '((t :background "#3b4252" :foreground "#88c0d0" :weight normal))
   "Face for current working directory in mode line.")
 
 (defun claude-code-terminal-doom-modeline-terminal-id ()
@@ -2055,7 +2055,16 @@ The process sentinel will handle that when the subprocess actually exits."
   (add-hook 'evil-insert-state-exit-hook 'claude-code-terminal-update-header-line)
   (add-hook 'evil-normal-state-entry-hook 'claude-code-terminal-update-header-line)
   (add-hook 'evil-visual-state-entry-hook 'claude-code-terminal-update-header-line)
-  (add-hook 'evil-emacs-state-entry-hook 'claude-code-terminal-update-header-line))
+  (add-hook 'evil-emacs-state-entry-hook 'claude-code-terminal-update-header-line)
+
+  ;; In eshell normal mode, 'i' goes to bottom and enters insert
+  (defun claude-code-terminal-eshell-insert ()
+    "Go to end of buffer and enter insert mode in eshell."
+    (interactive)
+    (goto-char (point-max))
+    (evil-insert-state))
+
+  (evil-define-key 'normal eshell-mode-map (kbd "i") #'claude-code-terminal-eshell-insert))
 
 ;; Popup input for claude commands
 (defun claude-code-send-emacs-terminal-popup ()
@@ -2489,11 +2498,6 @@ Converts the dynamic input overlay to a fixed overlay covering just the command.
   (face-remap-add-relative 'eshell-prompt
                            :family claude-code-terminal-prompt-font
                            :foreground "#00ff00")
-  ;; Style corfu completion popup to match
-  (face-remap-add-relative 'corfu-default
-                           :family claude-code-terminal-prompt-font)
-  (face-remap-add-relative 'corfu-current
-                           :family claude-code-terminal-prompt-font)
   ;; Update input styling on changes
   (add-hook 'post-command-hook #'claude-code-terminal-style-input nil t)
   ;; Refresh prompt to apply new format immediately
@@ -2502,8 +2506,13 @@ Converts the dynamic input overlay to a fixed overlay covering just the command.
                  (lambda (buf)
                    (when (buffer-live-p buf)
                      (with-current-buffer buf
-                       (goto-char (point-max))
-                       (eshell-emit-prompt))))
+                       (let ((inhibit-read-only t))
+                         ;; Delete old prompt line
+                         (goto-char (point-max))
+                         (forward-line 0)
+                         (delete-region (point) (point-max))
+                         ;; Emit new prompt
+                         (eshell-emit-prompt)))))
                  (current-buffer))))
 
 (add-hook 'eshell-mode-hook #'claude-code-terminal-setup-prompt-font)
