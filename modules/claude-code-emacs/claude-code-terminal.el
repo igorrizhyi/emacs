@@ -2195,6 +2195,10 @@ Otherwise, sends a normal Enter to the terminal."
               (claude-code-terminal-spawn-mistty input))
           ;; Regular command - run in eshell
           (claude-code-terminal--set-state :embedded-mode nil)
+          ;; Insert newline before execution to create unstyled gap before output
+          (when (not (string-empty-p input))
+            (goto-char (point-max))
+            (insert "\n"))
           (eshell-send-input))))))
 
 (defun claude-code-terminal-send-interrupt ()
