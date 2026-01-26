@@ -45,6 +45,11 @@
   "Hash table tracking terminal sessions by project root.
 Each value is a list of (buffer-name . terminal-id) pairs.")
 
+(defvar claude-code-terminal-mistty-buffers (make-hash-table :test 'equal)
+  "Hash table mapping terminal-id to active mistty buffer.
+When a terminal is in embedded mode (ssh, docker exec, etc.),
+the mistty buffer takes over and should be used instead of eshell.")
+
 (defvar claude-code-terminal-counter 0
   "Counter for generating unique terminal IDs.")
 
@@ -314,27 +319,37 @@ If no current terminal or no pattern match, creates 'local_1'."
 
 (defun claude-code-terminal-get-by-id (terminal-id &optional project-root)
   "Get terminal buffer by TERMINAL-ID in PROJECT-ROOT.
-First checks registered sessions, then scans all buffers for unregistered terminals."
+First checks registered sessions, then scans all buffers for unregistered terminals.
+If terminal has active mistty (embedded mode), returns mistty buffer instead."
   (let* ((root (or project-root (claude-code-normalize-project-root (projectile-project-root))))
-         (sessions (claude-code-terminal-get-sessions root)))
-    (or
-     ;; First try registered sessions
-     (catch 'found
-       (dolist (session sessions)
-         (when (string= (cdr session) terminal-id)
-           (let ((buffer (get-buffer (car session))))
-             (when (and buffer (buffer-live-p buffer))
-               (throw 'found buffer)))))
-       nil)
-     ;; Fall back to scanning all buffers for unregistered terminals
-     (catch 'found
-       (dolist (buffer (buffer-list))
-         (when (buffer-live-p buffer)
-           (with-current-buffer buffer
-             (when (and (bound-and-true-p claude-code-terminal-id)
-                        (string= claude-code-terminal-id terminal-id))
-               (throw 'found buffer)))))
-       nil))))
+         (sessions (claude-code-terminal-get-sessions root))
+         (eshell-buffer
+          (or
+           ;; First try registered sessions
+           (catch 'found
+             (dolist (session sessions)
+               (when (string= (cdr session) terminal-id)
+                 (let ((buffer (get-buffer (car session))))
+                   (when (and buffer (buffer-live-p buffer))
+                     (throw 'found buffer)))))
+             nil)
+           ;; Fall back to scanning all buffers for unregistered terminals
+           (catch 'found
+             (dolist (buffer (buffer-list))
+               (when (buffer-live-p buffer)
+                 (with-current-buffer buffer
+                   (when (and (bound-and-true-p claude-code-terminal-id)
+                              (string= claude-code-terminal-id terminal-id))
+                     (throw 'found buffer)))))
+             nil))))
+    ;; Check if mistty is active for this terminal
+    (if (and (boundp 'claude-code-terminal-mistty-buffers)
+             (hash-table-p claude-code-terminal-mistty-buffers))
+        (let ((mistty-buf (gethash terminal-id claude-code-terminal-mistty-buffers)))
+          (if (and mistty-buf (buffer-live-p mistty-buf))
+              mistty-buf
+            eshell-buffer))
+      eshell-buffer)))
 
 (defun claude-code-terminal-get-current-id ()
   "Get terminal ID of current buffer if it's a terminal buffer."
@@ -358,22 +373,35 @@ Falls back to current context, last created, or any active terminal."
       (when-let ((active-terminals (claude-code-terminal-list-active)))
         (plist-get (car (last active-terminals)) :terminal-id))))
 
+(defun claude-code-terminal--get-effective-buffer (terminal-id eshell-buffer)
+  "Get the effective buffer for TERMINAL-ID.
+Returns mistty buffer if embedded mode active, otherwise ESHELL-BUFFER."
+  (let ((mistty-buf (gethash terminal-id claude-code-terminal-mistty-buffers)))
+    (if (and mistty-buf (buffer-live-p mistty-buf))
+        mistty-buf
+      eshell-buffer)))
+
 (defun claude-code-terminal-list-active ()
   "List all active terminal buffers with their IDs.
-Also discovers eshell buffers with `claude-code-terminal-mode' that may not be registered."
+Also discovers eshell buffers with `claude-code-terminal-mode' that may not be registered.
+When a terminal has active mistty (embedded mode), returns mistty buffer instead of eshell."
   (interactive)
   (let ((active-terminals '())
         (seen-buffers '()))
     ;; First, get terminals from the registered sessions
     (maphash (lambda (project-root sessions)
                (dolist (session sessions)
-                 (let ((buffer (get-buffer (car session))))
-                   (when (and buffer (buffer-live-p buffer))
-                     (push buffer seen-buffers)
+                 (let* ((eshell-buffer (get-buffer (car session)))
+                        (terminal-id (cdr session))
+                        (effective-buffer (when (and eshell-buffer (buffer-live-p eshell-buffer))
+                                            (claude-code-terminal--get-effective-buffer terminal-id eshell-buffer))))
+                   (when effective-buffer
+                     (push eshell-buffer seen-buffers)  ;; Track eshell as seen
                      (push (list :project-root project-root
                                 :buffer-name (car session)
-                                :terminal-id (cdr session)
-                                :buffer buffer)
+                                :terminal-id terminal-id
+                                :buffer effective-buffer  ;; Use mistty if active
+                                :eshell-buffer eshell-buffer)  ;; Keep reference to eshell
                            active-terminals)))))
              claude-code-terminal-sessions)
     ;; Also scan for unregistered eshell terminal buffers
@@ -385,19 +413,23 @@ Also discovers eshell buffers with `claude-code-terminal-mode' that may not be r
            ;; Case 1: Buffer has claude-code-terminal-mode and ID
            ((and (bound-and-true-p claude-code-terminal-mode)
                  (bound-and-true-p claude-code-terminal-id))
-            (let ((project-root (or (bound-and-true-p claude-code-terminal-project-root)
-                                    default-directory)))
+            (let* ((project-root (or (bound-and-true-p claude-code-terminal-project-root)
+                                     default-directory))
+                   (effective-buffer (claude-code-terminal--get-effective-buffer
+                                      claude-code-terminal-id buffer)))
               (claude-code-terminal-register project-root (buffer-name) claude-code-terminal-id)
               (push (list :project-root project-root
                          :buffer-name (buffer-name)
                          :terminal-id claude-code-terminal-id
-                         :buffer buffer)
+                         :buffer effective-buffer
+                         :eshell-buffer buffer)
                     active-terminals)))
            ;; Case 2: Eshell buffer matching our naming pattern *claude-terminal:*
            ((and (derived-mode-p 'eshell-mode)
                  (string-match "\\*claude-terminal:\\([^:]+\\):\\([^*]+\\)\\*" (buffer-name)))
             (let* ((project-root (match-string 1 (buffer-name)))
-                   (terminal-id (match-string 2 (buffer-name))))
+                   (terminal-id (match-string 2 (buffer-name)))
+                   (effective-buffer (claude-code-terminal--get-effective-buffer terminal-id buffer)))
               ;; Set buffer-local variables and enable mode
               (setq-local claude-code-terminal-id terminal-id)
               (setq-local claude-code-terminal-project-root project-root)
@@ -406,7 +438,8 @@ Also discovers eshell buffers with `claude-code-terminal-mode' that may not be r
               (push (list :project-root project-root
                          :buffer-name (buffer-name)
                          :terminal-id terminal-id
-                         :buffer buffer)
+                         :buffer effective-buffer
+                         :eshell-buffer buffer)
                     active-terminals)))))))
     active-terminals))
 
@@ -2414,16 +2447,6 @@ Keys are terminal IDs, values are plists with:
 ;;; eshell with eat-eshell-mode, we spawn a mistty buffer in a bottom split.
 ;;; This provides better terminal emulation for interactive sessions.
 
-(defvar claude-code-terminal-mistty-buffers (make-hash-table :test 'equal)
-  "Hash table mapping terminal-id to their active mistty buffer.")
-
-(defvar claude-code-terminal-mistty-windows (make-hash-table :test 'equal)
-  "Hash table mapping terminal-id to their mistty window configuration.")
-
-(defvar claude-code-terminal-mistty-eshell-height 6
-  "Number of lines to keep visible for eshell when mistty is active.
-Eshell will be shrunk to this height, mistty takes the rest.")
-
 (defun claude-code-terminal-get-mistty-buffer (&optional terminal-id)
   "Get active mistty buffer for TERMINAL-ID (defaults to current terminal)."
   (let ((id (or terminal-id (claude-code-terminal--get-id))))
@@ -2436,36 +2459,27 @@ Eshell will be shrunk to this height, mistty takes the rest.")
   (not (null (claude-code-terminal-get-mistty-buffer terminal-id))))
 
 (defun claude-code-terminal-spawn-mistty (command)
-  "Spawn mistty in bottom split for COMMAND, executed from current eshell.
-Returns the mistty buffer."
+  "Spawn mistty to replace eshell for embedded COMMAND.
+Mistty becomes the main terminal buffer. When it closes, eshell returns."
   (cl-block claude-code-terminal-spawn-mistty
     (unless (require 'mistty nil t)
-      (user-error "mistty is not installed. Please install it via M-x package-install RET mistty"))
+      (user-error "Mistty is not installed. Install via M-x package-install RET mistty"))
 
     (let* ((terminal-id (claude-code-terminal--get-id))
            (eshell-buf (current-buffer))
            (eshell-win (selected-window))
-           (project-root (or (bound-and-true-p claude-code-terminal-project-root)
-                             default-directory))
-           (our-mistty-buffer-name (format "*mistty:%s:%s*"
-                                           (file-name-nondirectory (directory-file-name project-root))
-                                           terminal-id))
            mistty-buf)
 
       ;; Store embedded state
       (claude-code-terminal--set-state :embedded-mode t)
       (claude-code-terminal--set-state :mistty-command command)
 
-      ;; Step 1: Create mistty buffer first (let it handle its own creation)
-      (message "[MISTTY] Creating mistty buffer...")
+      ;; Create mistty buffer (this replaces current window content)
+      (message "[MISTTY] Creating mistty for terminal %s..." terminal-id)
       (condition-case err
-          (progn
-            ;; Let mistty create however it wants
-            (setq mistty-buf (mistty-create))
-            (message "[MISTTY] mistty-create returned: %s" mistty-buf))
+          (setq mistty-buf (mistty-create))
         (error
          (message "[MISTTY] Error creating: %s" err)
-         (message "[MISTTY] Error details - type: %s, data: %s" (car err) (cdr err))
          (claude-code-terminal--set-state :embedded-mode nil)
          (cl-return-from claude-code-terminal-spawn-mistty nil)))
 
@@ -2474,79 +2488,45 @@ Returns the mistty buffer."
         (claude-code-terminal--set-state :embedded-mode nil)
         (cl-return-from claude-code-terminal-spawn-mistty nil))
 
-      (message "[MISTTY] Buffer created: %s" mistty-buf)
+      ;; mistty-create already displayed mistty in current window - that's what we want!
+      (message "[MISTTY] Mistty now active for %s" terminal-id)
 
-      ;; Step 2: mistty-create replaced eshell in current window
-      ;; Now split: eshell small on top, mistty large on bottom
-      (let* ((current-win (selected-window))  ;; Has mistty buffer
-             (total-height (window-height current-win))
-             (eshell-height (min claude-code-terminal-mistty-eshell-height
-                                 (max 4 (/ total-height 6)))))
+      ;; Store reference for MCP routing
+      (puthash terminal-id mistty-buf claude-code-terminal-mistty-buffers)
 
-        (message "[MISTTY] Total height: %d, eshell-height target: %d" total-height eshell-height)
+      ;; Set up mistty buffer with parent reference
+      (with-current-buffer mistty-buf
+        (setq-local claude-code-terminal-parent-id terminal-id)
+        (setq-local claude-code-terminal-parent-buffer eshell-buf)
+        (setq-local claude-code-terminal-parent-window eshell-win)
 
-        ;; Split below with positive size: original window gets eshell-height lines (small)
-        ;; New window below gets the rest (large, for mistty)
-        (let* ((mistty-win (split-window current-win eshell-height 'below))
-               (eshell-win current-win))  ;; Original window becomes eshell (small, top)
+        ;; Cleanup hook when mistty process ends
+        (add-hook 'mistty-after-process-end-hook
+                  #'claude-code-terminal-mistty-cleanup nil t))
 
-          (message "[MISTTY] After split - eshell-win: %d lines (buf: %s), mistty-win: %d lines (buf: %s)"
-                   (window-height eshell-win) (buffer-name (window-buffer eshell-win))
-                   (window-height mistty-win) (buffer-name (window-buffer mistty-win)))
+      ;; Send command after shell starts
+      (run-at-time 0.3 nil
+                   (lambda (buf cmd)
+                     (when (buffer-live-p buf)
+                       (with-current-buffer buf
+                         (mistty-send-string cmd)
+                         (mistty-send-command))))
+                   mistty-buf command)
 
-          ;; Put eshell in top (original) window, mistty in bottom (new) window
-          (set-window-buffer eshell-win eshell-buf)
-          (set-window-buffer mistty-win mistty-buf)
-          ;; Focus mistty window (bottom, large)
-          (select-window mistty-win)
-
-        ;; Rename buffer to our naming scheme
-        (with-current-buffer mistty-buf
-          (rename-buffer our-mistty-buffer-name t))
-
-        ;; Store references
-        (puthash terminal-id mistty-buf claude-code-terminal-mistty-buffers)
-        (puthash terminal-id (cons eshell-win mistty-win) claude-code-terminal-mistty-windows)
-
-        ;; Set up mistty buffer
-        (with-current-buffer mistty-buf
-          (setq-local claude-code-terminal-parent-id terminal-id)
-          (setq-local claude-code-terminal-parent-buffer eshell-buf)
-
-          ;; Add cleanup hook for when mistty process ends
-          (add-hook 'mistty-after-process-end-hook
-                    #'claude-code-terminal-mistty-cleanup nil t))
-
-        ;; Send the command to mistty after shell starts
-        (run-at-time 0.3 nil
-                     (lambda (buf cmd)
-                       (when (buffer-live-p buf)
-                         (with-current-buffer buf
-                           (mistty-send-string cmd)
-                           (mistty-send-command))))
-                     mistty-buf command)
-
-        ;; Return focus to eshell briefly to show the split, then to mistty
-        (select-window eshell-win)
-        (goto-char (point-max))
-        (run-at-time 0.2 nil
-                     (lambda (win)
-                       (when (window-live-p win)
-                         (select-window win)))
-                     mistty-win)
-
-        mistty-buf)))))
+      mistty-buf)))
 
 (defun claude-code-terminal-mistty-cleanup ()
-  "Clean up mistty buffer and restore eshell window."
+  "Clean up mistty and restore parent eshell buffer."
   (let* ((parent-id (bound-and-true-p claude-code-terminal-parent-id))
          (parent-buf (bound-and-true-p claude-code-terminal-parent-buffer))
+         (parent-win (bound-and-true-p claude-code-terminal-parent-window))
          (mistty-buf (current-buffer)))
 
+    (message "[MISTTY] Cleanup for terminal %s" parent-id)
+
     (when parent-id
-      ;; Clear state
+      ;; Clear mistty reference
       (remhash parent-id claude-code-terminal-mistty-buffers)
-      (remhash parent-id claude-code-terminal-mistty-windows)
 
       ;; Update parent eshell state
       (when (buffer-live-p parent-buf)
@@ -2554,18 +2534,20 @@ Returns the mistty buffer."
           (claude-code-terminal--set-state :embedded-mode nil)
           (claude-code-terminal--set-state :mistty-command nil)))
 
-      ;; Close mistty window and kill buffer
+      ;; Restore eshell in the window and kill mistty
       (run-at-time 0.1 nil
-                   (lambda (mbuf pbuf)
-                     (when-let ((mwin (get-buffer-window mbuf)))
-                       (delete-window mwin))
+                   (lambda (mbuf pbuf pwin tid)
+                     ;; Restore eshell to window
+                     (when (and (buffer-live-p pbuf)
+                                (window-live-p pwin))
+                       (set-window-buffer pwin pbuf)
+                       (select-window pwin)
+                       (goto-char (point-max))
+                       (message "[MISTTY] Restored eshell for terminal %s" tid))
+                     ;; Kill mistty buffer
                      (when (buffer-live-p mbuf)
-                       (kill-buffer mbuf))
-                     ;; Focus back to eshell
-                     (when (buffer-live-p pbuf)
-                       (switch-to-buffer pbuf)
-                       (goto-char (point-max))))
-                   mistty-buf parent-buf))))
+                       (kill-buffer mbuf)))
+                   mistty-buf parent-buf parent-win parent-id))))
 
 (defun claude-code-terminal-send-to-mistty (string &optional terminal-id)
   "Send STRING to the active mistty buffer for TERMINAL-ID."
@@ -2591,7 +2573,6 @@ Returns the mistty buffer."
           (mistty-send-string "exit")
           (mistty-send-command))))))
 
-;; Keybinding to close mistty from eshell
 (defun claude-code-terminal-exit-embedded ()
   "Exit embedded mistty session if active, otherwise do nothing."
   (interactive)
