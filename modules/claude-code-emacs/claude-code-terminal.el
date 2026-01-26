@@ -2477,17 +2477,28 @@ Returns the mistty buffer."
       (message "[MISTTY] Buffer created: %s" mistty-buf)
 
       ;; Step 2: mistty-create replaced eshell in current window
-      ;; Now split and put eshell in the small top window
-      (let* ((mistty-win (selected-window))  ;; Current window now shows mistty
+      ;; Now split: eshell small on top, mistty large on bottom
+      (let* ((current-win (selected-window))  ;; Has mistty buffer
+             (total-height (window-height current-win))
              (eshell-height (min claude-code-terminal-mistty-eshell-height
-                                 (max 4 (/ (window-height) 6))))
-             ;; Split above: create small window on top for eshell
-             (eshell-win (split-window mistty-win eshell-height 'above)))
+                                 (max 4 (/ total-height 6)))))
 
-        ;; Put eshell buffer in the top window
-        (set-window-buffer eshell-win eshell-buf)
-        ;; Stay in mistty window (bottom, large)
-        (select-window mistty-win)
+        (message "[MISTTY] Total height: %d, eshell-height target: %d" total-height eshell-height)
+
+        ;; Split below with positive size: original window gets eshell-height lines (small)
+        ;; New window below gets the rest (large, for mistty)
+        (let* ((mistty-win (split-window current-win eshell-height 'below))
+               (eshell-win current-win))  ;; Original window becomes eshell (small, top)
+
+          (message "[MISTTY] After split - eshell-win: %d lines (buf: %s), mistty-win: %d lines (buf: %s)"
+                   (window-height eshell-win) (buffer-name (window-buffer eshell-win))
+                   (window-height mistty-win) (buffer-name (window-buffer mistty-win)))
+
+          ;; Put eshell in top (original) window, mistty in bottom (new) window
+          (set-window-buffer eshell-win eshell-buf)
+          (set-window-buffer mistty-win mistty-buf)
+          ;; Focus mistty window (bottom, large)
+          (select-window mistty-win)
 
         ;; Rename buffer to our naming scheme
         (with-current-buffer mistty-buf
@@ -2524,7 +2535,7 @@ Returns the mistty buffer."
                          (select-window win)))
                      mistty-win)
 
-        mistty-buf))))
+        mistty-buf)))))
 
 (defun claude-code-terminal-mistty-cleanup ()
   "Clean up mistty buffer and restore eshell window."
