@@ -50,6 +50,9 @@ Each value is a list of (buffer-name . terminal-id) pairs.")
 When a terminal is in embedded mode (ssh, docker exec, etc.),
 the mistty buffer takes over and should be used instead of eshell.")
 
+(defvar-local claude-code-terminal-embedded-command nil
+  "The embedding command that started this mistty session (e.g., ssh, kubectl exec).")
+
 (defvar claude-code-terminal-counter 0
   "Counter for generating unique terminal IDs.")
 
@@ -410,9 +413,10 @@ When a terminal has active mistty (embedded mode), returns mistty buffer instead
                  (not (memq buffer seen-buffers)))
         (with-current-buffer buffer
           (cond
-           ;; Case 1: Buffer has claude-code-terminal-mode and ID
+           ;; Case 1: Buffer has claude-code-terminal-mode and ID (skip mistty embedded buffers)
            ((and (bound-and-true-p claude-code-terminal-mode)
-                 (bound-and-true-p claude-code-terminal-id))
+                 (bound-and-true-p claude-code-terminal-id)
+                 (not (bound-and-true-p claude-code-terminal-embedded-command)))
             (let* ((project-root (or (bound-and-true-p claude-code-terminal-project-root)
                                      default-directory))
                    (effective-buffer (claude-code-terminal--get-effective-buffer
@@ -636,24 +640,30 @@ This demonstrates running a continuous command like 'tail -f' without blocking E
         (buffer-substring-no-properties (point-min) (point-max))))))
 
 (defun claude-code-terminal-send-string (buffer string &optional send-newline)
-  "Send STRING to eshell BUFFER.
+  "Send STRING to terminal BUFFER (eshell or mistty).
 If SEND-NEWLINE is non-nil, also execute the command (send Enter).
-This function handles eshell's text-based input model."
+This function handles eshell's text-based input model and mistty."
   (with-current-buffer buffer
-    (if (derived-mode-p 'eshell-mode)
-        (progn
-          ;; Go to end and insert the command
-          (goto-char (point-max))
-          (insert string)
-          ;; If send-newline, execute the command
-          (when send-newline
-            (eshell-send-input)))
-      ;; Fallback for other terminal types (vterm, etc.)
+    (cond
+     ;; Mistty buffer - use mistty API
+     ((and (bound-and-true-p claude-code-terminal-embedded-command)
+           (fboundp 'mistty-send-string))
+      (mistty-send-string string)
+      (when send-newline
+        (mistty-send-command)))
+     ;; Eshell buffer
+     ((derived-mode-p 'eshell-mode)
+      (goto-char (point-max))
+      (insert string)
+      (when send-newline
+        (eshell-send-input)))
+     ;; Fallback for other terminal types (vterm, etc.)
+     (t
       (let ((proc (get-buffer-process buffer)))
         (when proc
           (process-send-string proc string)
           (when send-newline
-            (process-send-string proc "\n")))))))
+            (process-send-string proc "\n"))))))))
 
 (defun claude-code-terminal-execute-command (terminal-id command &optional project-root timeout async)
   "Execute COMMAND in terminal buffer TERMINAL-ID in PROJECT-ROOT.
@@ -1287,12 +1297,14 @@ Called after Enter, C-c, or C-d keystrokes."
         (kill-buffer buf)))))
 
 ;; Add cleanup hook
-(add-hook 'kill-buffer-hook 
+(add-hook 'kill-buffer-hook
           (lambda ()
             (when (bound-and-true-p claude-code-terminal-id)
-              (claude-code-terminal-unregister 
-               claude-code-terminal-project-root 
-               (buffer-name))
+              ;; Only unregister if this is a real terminal (not mistty embedded)
+              (unless (bound-and-true-p claude-code-terminal-embedded-command)
+                (claude-code-terminal-unregister
+                 (bound-and-true-p claude-code-terminal-project-root)
+                 (buffer-name)))
               ;; Clean up shell nesting context
               (claude-code-terminal-reset-context claude-code-terminal-id))))
 
@@ -1695,8 +1707,13 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
 (defun claude-code-terminal-doom-modeline-commands ()
   "Generate shell commands segment for doom-modeline."
   (when (bound-and-true-p claude-code-terminal-id)
-    (let ((shell-stack (gethash claude-code-terminal-id claude-code-terminal-shell-stack)))
+    (let ((shell-stack (gethash claude-code-terminal-id claude-code-terminal-shell-stack))
+          (embedded-cmd (bound-and-true-p claude-code-terminal-embedded-command)))
       (cond
+       ;; Mistty embedded mode - show the embedding command
+       (embedded-cmd
+        (propertize (format " ⚡%s " embedded-cmd)
+                    'face 'claude-code-terminal-first-command-face))
        ;; No embedded shells
        ((not shell-stack) nil)
        ;; Single embedded shell - use first-command-face to keep consistency
@@ -2114,6 +2131,20 @@ The process sentinel will handle that when the subprocess actually exits."
 (declare-function claude-code-mcp-capture-and-send "claude-code-mcp-tools" ())
 (declare-function claude-code-mcp-has-pending-capture-p "claude-code-mcp-tools" ())
 
+;; Mistty smart Enter - captures MCP output or sends normal enter
+(defun claude-code-terminal-mistty-smart-enter ()
+  "Send Enter to mistty, or capture MCP output if pending.
+When an MCP command is waiting for output capture, this captures and sends the result.
+Otherwise, sends a normal Enter to mistty."
+  (interactive)
+  (if (and (fboundp 'claude-code-mcp-has-pending-capture-p)
+           (claude-code-mcp-has-pending-capture-p))
+      ;; Capture pending MCP output
+      (claude-code-mcp-capture-and-send)
+    ;; Normal Enter - send to mistty
+    (when (fboundp 'mistty-send-command)
+      (mistty-send-command))))
+
 ;; Smart Enter function that captures MCP output if pending
 (defun claude-code-terminal-smart-enter ()
   "Send Enter to terminal, or capture MCP output if pending.
@@ -2468,6 +2499,7 @@ Mistty becomes the main terminal buffer. When it closes, eshell returns."
     (let* ((terminal-id (claude-code-terminal--get-id))
            (eshell-buf (current-buffer))
            (eshell-win (selected-window))
+           (project-root (bound-and-true-p claude-code-terminal-project-root))
            mistty-buf)
 
       ;; Store embedded state
@@ -2494,11 +2526,45 @@ Mistty becomes the main terminal buffer. When it closes, eshell returns."
       ;; Store reference for MCP routing
       (puthash terminal-id mistty-buf claude-code-terminal-mistty-buffers)
 
-      ;; Set up mistty buffer with parent reference
+      ;; Set up mistty buffer with parent reference and terminal features
       (with-current-buffer mistty-buf
+        ;; Parent references for cleanup
         (setq-local claude-code-terminal-parent-id terminal-id)
         (setq-local claude-code-terminal-parent-buffer eshell-buf)
         (setq-local claude-code-terminal-parent-window eshell-win)
+
+        ;; Copy terminal identity so keybindings and lookups work
+        (setq-local claude-code-terminal-id terminal-id)
+        (setq-local claude-code-terminal-project-root project-root)
+        (setq-local claude-code-terminal-embedded-command command)
+
+        ;; Enable terminal mode for keybindings (C-u, C-f, etc.)
+        (claude-code-terminal-mode 1)
+
+        ;; Explicitly set doom-modeline for this buffer (after variables are set)
+        (when (fboundp 'doom-modeline-set-modeline)
+          (doom-modeline-set-modeline 'claude-terminal))
+
+        ;; Add mistty-specific keybindings (same as eshell)
+        (local-set-key (kbd "C-c c") #'claude-code-terminal-create)
+        (local-set-key (kbd "C-c n") #'claude-code-terminal-create-numbered)
+        (local-set-key (kbd "C-c i") #'claude-code-send-emacs-terminal)
+        (local-set-key (kbd "C-c h") #'claude-code-send-emacs-terminal-popup)
+        (local-set-key (kbd "C-c k") #'my-layout-smart-claude-code)
+        (local-set-key (kbd "C-u") #'claude-code-terminal-switch)
+        (local-set-key (kbd "C-f") #'claude-code-terminal-switch-recent)
+        (local-set-key (kbd "s-c") #'claude-code-terminal-create)
+        (local-set-key (kbd "s-n") #'claude-code-terminal-create-numbered)
+        (local-set-key (kbd "s-h") #'claude-code-send-emacs-terminal-popup)
+        (local-set-key (kbd "s-k") #'my-layout-smart-claude-code)
+        (local-set-key (kbd "s-u") #'claude-code-terminal-switch)
+        ;; Enter key - smart capture for MCP or normal enter
+        (local-set-key (kbd "<return>") #'claude-code-terminal-mistty-smart-enter)
+        (local-set-key (kbd "RET") #'claude-code-terminal-mistty-smart-enter)
+
+        ;; doom-modeline handles the modeline via claude-code-terminal-mode hook
+        ;; Force modeline update to pick up the new terminal ID and embedded command
+        (force-mode-line-update)
 
         ;; Cleanup hook when mistty process ends
         (add-hook 'mistty-after-process-end-hook
@@ -2515,7 +2581,7 @@ Mistty becomes the main terminal buffer. When it closes, eshell returns."
 
       mistty-buf)))
 
-(defun claude-code-terminal-mistty-cleanup ()
+(defun claude-code-terminal-mistty-cleanup (&rest _args)
   "Clean up mistty and restore parent eshell buffer."
   (let* ((parent-id (bound-and-true-p claude-code-terminal-parent-id))
          (parent-buf (bound-and-true-p claude-code-terminal-parent-buffer))

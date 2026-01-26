@@ -73,19 +73,33 @@ For edit mode (command not yet executed):
              terminal-id (if pending "yes" "no"))
     (if (not pending)
         ;; No pending capture - just send Enter normally
-        (when (and (derived-mode-p 'eat-mode)
-                   (bound-and-true-p eat-terminal))
+        (cond
+         ;; Mistty buffer
+         ((bound-and-true-p claude-code-terminal-embedded-command)
+          (when (fboundp 'mistty-send-command)
+            (mistty-send-command)))
+         ;; Eat-mode (eshell with eat)
+         ((and (derived-mode-p 'eat-mode)
+               (bound-and-true-p eat-terminal))
           (eat-term-send-string eat-terminal "\C-m"))
+         ;; Eshell fallback
+         ((derived-mode-p 'eshell-mode)
+          (eshell-send-input)))
       ;; We have a pending capture
       (let ((executed (plist-get pending :executed)))
         (if (not executed)
             ;; Command not yet executed (edit mode) - execute it now
             (progn
               (message "MCP DEBUG: Edit mode - executing command now")
-              ;; Send Enter to execute the command
-              (let ((proc (get-buffer-process (current-buffer))))
-                (when proc
-                  (process-send-string proc "\n")))
+              ;; Send Enter to execute the command (mistty or process)
+              (cond
+               ((bound-and-true-p claude-code-terminal-embedded-command)
+                (when (fboundp 'mistty-send-command)
+                  (mistty-send-command)))
+               (t
+                (let ((proc (get-buffer-process (current-buffer))))
+                  (when proc
+                    (process-send-string proc "\n")))))
               ;; Update the pending capture: mark as executed, update start-marker
               (puthash terminal-id
                        (plist-put (plist-put pending :executed t)
@@ -950,30 +964,11 @@ If terminal has active mistty buffer, routes command there instead."
     (unless buffer
       (error "Terminal buffer not found for %s" terminal-id))
 
-    ;; Check if terminal has active mistty buffer - route command there
+    ;; Check if terminal has active mistty buffer - use mistty buffer instead
     (when (and (fboundp 'claude-code-terminal-has-active-mistty-p)
                (claude-code-terminal-has-active-mistty-p terminal-id))
-      (let ((mistty-buf (claude-code-terminal-get-mistty-buffer terminal-id)))
-        (message "MCP: Routing command to active mistty buffer for terminal %s" terminal-id)
-        ;; For mistty, we send the command directly (no confirmation popup for now)
-        ;; TODO: Add output capture from mistty if needed
-        (with-current-buffer mistty-buf
-          (mistty-send-string command)
-          (mistty-send-command))
-        ;; Return immediate success - mistty doesn't support output capture yet
-        (cl-return-from claude-code-mcp-handle-executeTerminalCommandInEmacs
-          `((success . t)
-            (message . "Command sent to embedded mistty session")
-            (terminalId . ,terminal-id)
-            (command . ,command)
-            (stdout . "[Command sent to embedded mistty session - output not captured]")
-            (stderr . "")
-            (exitCode . 0)
-            (timeout . ,json-false)
-            (interrupted . ,json-false)
-            (largeOutput . ,json-false)
-            (workingDirectory . ,(or project-root default-directory))
-            (error . "")))))
+      (setq buffer (claude-code-terminal-get-mistty-buffer terminal-id))
+      (message "MCP: Using active mistty buffer for terminal %s" terminal-id))
 
     ;; Show confirmation popup before executing
     (let ((user-choice (claude-code-show-command-confirmation-popup command project-root)))
