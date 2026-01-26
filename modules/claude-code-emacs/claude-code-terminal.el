@@ -2149,6 +2149,7 @@ Otherwise, sends a normal Enter to mistty."
 (defun claude-code-terminal-smart-enter ()
   "Send Enter to terminal, or capture MCP output if pending.
 When an MCP command is waiting for output capture, this captures and sends the result.
+Handles simple expansions from `my-eshell-simple-expansions'.
 For embedded commands (ssh, etc.), spawns mistty in a bottom split.
 Otherwise, sends a normal Enter to the terminal."
   (interactive)
@@ -2156,17 +2157,36 @@ Otherwise, sends a normal Enter to the terminal."
            (claude-code-mcp-has-pending-capture-p))
       ;; Capture pending MCP output
       (claude-code-mcp-capture-and-send)
-    ;; Normal Enter - check for embedded commands first
+    ;; Normal Enter - check for expansions and embedded commands
     (when (derived-mode-p 'eshell-mode)
       (let* ((input (string-trim (buffer-substring-no-properties eshell-last-output-end (point))))
-             (cmd (car (split-string input)))
-             (is-embedded (and cmd
-                               (not (string-empty-p input))
-                               (claude-code-terminal--is-embedded-command-p input))))
-        (if is-embedded
+             (simple-entry (and (boundp 'my-eshell-simple-expansions)
+                                (assoc input my-eshell-simple-expansions)))
+             (is-embedded nil))
+        ;; Handle simple expansions first
+        (when simple-entry
+          (let* ((data (cdr simple-entry))
+                 (is-plist (and (listp data) (plist-get data :cmd)))
+                 (replacement (if is-plist
+                                  (funcall (plist-get data :cmd))
+                                (if (functionp data) (funcall data) data)))
+                 (eat (and is-plist (plist-get data :eat))))
+            (when eat
+              (setq is-embedded t))
+            (delete-region eshell-last-output-end (point))
+            (insert replacement)
+            ;; Re-read input after expansion
+            (setq input (string-trim (buffer-substring-no-properties eshell-last-output-end (point))))))
+
+        ;; Check if command needs embedded mode
+        (when (and (not (string-empty-p input))
+                   (claude-code-terminal--is-embedded-command-p input))
+          (setq is-embedded t))
+
+        (if (and is-embedded (not (string-empty-p input)))
             ;; Embedded command - spawn mistty instead
             (progn
-              (message "[EMBEDDED] Spawning mistty for: %s" cmd)
+              (message "[EMBEDDED] Spawning mistty for: %s" (car (split-string input)))
               ;; Clear input line and add note
               (delete-region eshell-last-output-end (point))
               (insert (format "# Spawning in mistty: %s" input))
