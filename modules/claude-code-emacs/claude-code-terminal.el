@@ -2342,7 +2342,7 @@ Keys are terminal IDs, values are plists with:
             (let ((ov (make-overlay (1- end) end nil nil nil)))
               (overlay-put ov 'after-string
                            (concat (propertize "\n" 'face claude-code-terminal-output-face-regular)
-                                   "\n"))
+                                   " "))
               (overlay-put ov 'claude-code-terminal-output t)))))))
   (claude-code-terminal--set-state :in-command nil)
   (claude-code-terminal--set-state :embedded-mode nil))
@@ -2381,7 +2381,7 @@ Keys are terminal IDs, values are plists with:
                   (overlay-put ov 'claude-code-terminal-output t)
                   (when (claude-code-terminal--get-state :first-output)
                     (overlay-put ov 'before-string
-                                 (concat "\n" (propertize "\n" 'face face)))
+                                 (concat "" (propertize "\n" 'face face)))
                     (claude-code-terminal--set-state :first-output nil)
                     (claude-code-terminal--set-state :output-start-pos start)))))))))))
 
