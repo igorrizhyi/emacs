@@ -1682,6 +1682,19 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
         (princ (format "  Prefix: %s\n" (claude-code-terminal-extract-prompt-prefix line)))
         (princ (format "  Command: %s\n\n" (claude-code-terminal-extract-command line)))))))
 
+;;; Prompt and Input Styling
+
+(defvar claude-code-terminal-prompt-font "Chrono Trigger Monospaced"
+  "Font family for eshell prompt and command input.")
+
+(defface claude-code-terminal-prompt-face
+  '((t :family "Chrono Trigger Monospaced" :height 1.0 :foreground "#00ff00"))
+  "Face for eshell prompt with retro hacker font.")
+
+(defface claude-code-terminal-input-face
+  '((t :family "Chrono Trigger Monospaced" :height 1.0))
+  "Face for eshell command input with retro hacker font.")
+
 ;;; Doom-modeline Integration for Colorful Mode Line
 
 (defface claude-code-terminal-id-face
@@ -2409,9 +2422,58 @@ Keys are terminal IDs, values are plists with:
                     (claude-code-terminal--set-state :first-output nil)
                     (claude-code-terminal--set-state :output-start-pos start)))))))))))
 
+(add-hook 'eshell-pre-command-hook #'claude-code-terminal-clear-input-overlay)
 (add-hook 'eshell-pre-command-hook #'claude-code-terminal-mark-command-start)
 (add-hook 'eshell-post-command-hook #'claude-code-terminal-mark-command-end -90)
 (add-hook 'eshell-output-filter-functions #'claude-code-terminal-fontify-output)
+
+;;; Prompt and Input Font Styling
+
+(defvar-local claude-code-terminal-input-overlay nil
+  "Overlay for styling command input with retro font.")
+
+(defun claude-code-terminal-style-input ()
+  "Apply retro font to current input line."
+  (when (and (derived-mode-p 'eshell-mode)
+             (bound-and-true-p claude-code-terminal-id)
+             (not (claude-code-terminal--get-state :in-command)))
+    (let ((start eshell-last-output-end)
+          (end (point-max)))
+      (when (< start end)
+        ;; Remove old overlay if exists
+        (when (and claude-code-terminal-input-overlay
+                   (overlay-buffer claude-code-terminal-input-overlay))
+          (delete-overlay claude-code-terminal-input-overlay))
+        ;; Create new overlay for input
+        (setq claude-code-terminal-input-overlay (make-overlay start end nil nil t))
+        (overlay-put claude-code-terminal-input-overlay 'face 'claude-code-terminal-input-face)
+        (overlay-put claude-code-terminal-input-overlay 'claude-code-terminal-input t)))))
+
+(defun claude-code-terminal-clear-input-overlay ()
+  "Finalize input overlay before command execution.
+Converts the dynamic input overlay to a fixed overlay covering just the command."
+  (when (and claude-code-terminal-input-overlay
+             (overlay-buffer claude-code-terminal-input-overlay))
+    ;; Make the overlay non-rear-advancing so it won't grow with output
+    (let ((start (overlay-start claude-code-terminal-input-overlay))
+          (end (overlay-end claude-code-terminal-input-overlay)))
+      (delete-overlay claude-code-terminal-input-overlay)
+      ;; Create fixed overlay for the command text (non-extending)
+      (let ((fixed-ov (make-overlay start end nil nil nil)))
+        (overlay-put fixed-ov 'face 'claude-code-terminal-input-face)
+        (overlay-put fixed-ov 'claude-code-terminal-command t)))
+    (setq claude-code-terminal-input-overlay nil)))
+
+(defun claude-code-terminal-setup-prompt-font ()
+  "Set up retro font for eshell prompt."
+  ;; Style prompt via eshell-prompt-face
+  (face-remap-add-relative 'eshell-prompt
+                           :family claude-code-terminal-prompt-font
+                           :foreground "#00ff00")
+  ;; Update input styling on changes
+  (add-hook 'post-command-hook #'claude-code-terminal-style-input nil t))
+
+(add-hook 'eshell-mode-hook #'claude-code-terminal-setup-prompt-font)
 
 ;;; Eat integration
 ;;; - Enable eat-eshell-mode globally once and never disable
