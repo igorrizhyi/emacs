@@ -84,6 +84,11 @@
   (throw 'eshell-replace-command
          (eshell-parse-command "*grep" (cons "-h" args))))
 
+;; Alias for grep in pipelines (eshell/grep only works for direct calls)
+(add-hook 'eshell-mode-hook
+          (lambda ()
+            (eshell/alias "grep" "*grep -h $*")))
+
 (defvar my-eshell-dired-return-info nil
   "Plist with :buffer for eshell to return to after dired quit.")
 
