@@ -2691,6 +2691,17 @@ Mistty becomes the main terminal buffer. When it closes, eshell returns."
         (local-set-key (kbd "<return>") #'claude-code-terminal-mistty-smart-enter)
         (local-set-key (kbd "RET") #'claude-code-terminal-mistty-smart-enter)
 
+        ;; History navigation - send directly to terminal
+        (local-set-key (kbd "<up>") #'mistty-send-key)
+        (local-set-key (kbd "<down>") #'mistty-send-key)
+        (local-set-key (kbd "C-p") #'mistty-send-key)
+        (local-set-key (kbd "C-n") #'mistty-send-key)
+        ;; C-r for reverse history search - must override evil in insert state
+        (when (bound-and-true-p evil-mode)
+          (evil-local-set-key 'insert (kbd "C-r") #'mistty-send-key)
+          (evil-local-set-key 'normal (kbd "C-r") #'mistty-send-key)
+          (evil-local-set-key 'emacs (kbd "C-r") #'mistty-send-key))
+
         ;; doom-modeline handles the modeline via claude-code-terminal-mode hook
         ;; Force modeline update to pick up the new terminal ID and embedded command
         (force-mode-line-update)
