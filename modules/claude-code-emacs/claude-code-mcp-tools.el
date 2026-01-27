@@ -755,72 +755,71 @@ PARAMS must include \\='file\\=', \\='line\\=', and \\='symbol\\=' parameters."
   "Show confirmation popup for COMMAND execution in PROJECT-ROOT.
 Returns 'execute if user confirms (y), 'edit if user wants to edit (e), nil if declined (n)."
   (let ((buffer-name " *command-confirmation*")
-        (working-dir (or project-root default-directory))
-        (result nil))
+        (result nil)
+        ;; Truncate and pad command to exactly 48 chars
+        (cmd-display (let ((cmd (if (> (length command) 48)
+                                    (concat (substring command 0 45) "...")
+                                  command)))
+                       (concat cmd (make-string (- 48 (length cmd)) ?\s)))))
 
-    ;; Create popup content
-    (with-current-buffer (get-buffer-create buffer-name)
-      (erase-buffer)
-      (insert (propertize "⚡ COMMAND EXECUTION REQUEST" 'face 'warning))
-      (insert "\n\n")
-      (insert (propertize "Command:" 'face 'font-lock-keyword-face))
-      (insert "\n")
-      (insert (propertize command 'face 'font-lock-string-face))
-      (insert "\n\n")
-      (insert (propertize "Execute this command?" 'face 'font-lock-builtin-face))
-      (insert "\n\n")
-      (insert (propertize "[y] Yes    [e] Edit first    [n] No" 'face 'success))
-      (goto-char (point-min)))
-    
-    ;; Show popup using posframe if available, otherwise use pop-to-buffer
-    (unwind-protect
-        (if (fboundp 'posframe-show)
-            ;; Use posframe for better popup experience
-            (progn
-              (posframe-show buffer-name
-                           :poshandler #'posframe-poshandler-frame-top-right-corner
-                           :width (/ (frame-width) 2)
-                           :height 12
-                           :border-width 2
-                           :border-color "#555555"
-                           :background-color (face-background 'default)
-                           :foreground-color (face-foreground 'default)
-                           :internal-border-width 8
-                           :left-fringe 8
-                           :right-fringe 8)
-              
-              ;; Wait for user input
-              (let ((key nil))
-                (while (not (memq key '(?y ?n ?Y ?N ?e ?E ?\C-g)))
-                  (setq key (read-key "Execute command? [y/e/n]: "))
-                  (unless (memq key '(?y ?n ?Y ?N ?e ?E ?\C-g))
-                    (message "Press 'y' to execute, 'e' to edit, 'n' to cancel")))
+    ;; Build ASCII-styled content with fixed-width box (no emojis for alignment)
+    (let ((content (concat "
+╔══════════════════════════════════════════════════════╗
+║                                                      ║
+║          >>> COMMAND EXECUTION REQUEST <<<           ║
+║                                                      ║
+║   Command:                                           ║
+║   " cmd-display "   ║
+║                                                      ║
+║   Execute this command?                              ║
+║                                                      ║
+║      [y] Yes    [e] Edit first    [n] No             ║
+║                                                      ║
+╚══════════════════════════════════════════════════════╝
+")))
 
-                (setq result (cond
-                              ((memq key '(?y ?Y)) 'execute)
-                              ((memq key '(?e ?E)) 'edit)
-                              (t nil))))
+      ;; Show popup using posframe if available
+      (unwind-protect
+          (if (fboundp 'posframe-show)
+              (progn
+                (posframe-show buffer-name
+                               :string (propertize content 'face '(:foreground "#ffb000" :height 1.1))
+                               :poshandler #'posframe-poshandler-frame-top-center
+                               :border-width 2
+                               :border-color "#ffb000"
+                               :background-color "#1a1000"
+                               :internal-border-width 8)
 
-              (posframe-hide buffer-name))
+                ;; Wait for user input
+                (let ((key nil))
+                  (while (not (memq key '(?y ?n ?Y ?N ?e ?E ?\C-g)))
+                    (setq key (read-key)))
 
-          ;; Fallback to regular buffer popup
-          (pop-to-buffer buffer-name)
-          (let ((key nil))
-            (while (not (memq key '(?y ?n ?Y ?N ?e ?E ?\C-g)))
-              (setq key (read-key "Execute command? [y/e/n]: "))
-              (unless (memq key '(?y ?n ?Y ?N ?e ?E ?\C-g))
-                (message "Press 'y' to execute, 'e' to edit, 'n' to cancel")))
+                  (setq result (cond
+                                ((memq key '(?y ?Y)) 'execute)
+                                ((memq key '(?e ?E)) 'edit)
+                                (t nil))))
 
-            (setq result (cond
-                          ((memq key '(?y ?Y)) 'execute)
-                          ((memq key '(?e ?E)) 'edit)
-                          (t nil))))
+                (posframe-hide buffer-name))
 
-          (quit-window t))
-      
-      ;; Cleanup
-      (when (get-buffer buffer-name)
-        (kill-buffer buffer-name)))
+            ;; Fallback to regular buffer popup
+            (with-current-buffer (get-buffer-create buffer-name)
+              (erase-buffer)
+              (insert content))
+            (pop-to-buffer buffer-name)
+            (let ((key nil))
+              (while (not (memq key '(?y ?n ?Y ?N ?e ?E ?\C-g)))
+                (setq key (read-key)))
+
+              (setq result (cond
+                            ((memq key '(?y ?Y)) 'execute)
+                            ((memq key '(?e ?E)) 'edit)
+                            (t nil))))
+            (quit-window t))
+
+        ;; Cleanup
+        (when (get-buffer buffer-name)
+          (kill-buffer buffer-name))))
 
     result))
 
@@ -833,7 +832,7 @@ Positioned at top-center, stays until C-Enter is pressed."
         (content "
 ╔════════════════════════════════════════╗
 ║                                        ║
-║   🤖 AI is waiting for output...       ║
+║   >>> AI is waiting for output <<<     ║
 ║                                        ║
 ║      Press  C-Enter  when ready        ║
 ║                                        ║
