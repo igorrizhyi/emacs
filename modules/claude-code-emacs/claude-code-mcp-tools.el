@@ -69,8 +69,6 @@ For edit mode (command not yet executed):
                         (claude-code-terminal-get-current-id)))
          (pending (when terminal-id
                     (gethash terminal-id claude-code-mcp-pending-capture))))
-    (message "MCP DEBUG: capture-and-send called, terminal-id=%s, has-pending=%s"
-             terminal-id (if pending "yes" "no"))
     (if (not pending)
         ;; No pending capture - just send Enter normally
         (cond
@@ -90,7 +88,6 @@ For edit mode (command not yet executed):
         (if (not executed)
             ;; Command not yet executed (edit mode) - execute it now
             (progn
-              (message "MCP DEBUG: Edit mode - executing command now")
               ;; Send Enter to execute the command (mistty or process)
               (cond
                ((bound-and-true-p claude-code-terminal-embedded-command)
@@ -105,7 +102,7 @@ For edit mode (command not yet executed):
                        (plist-put (plist-put pending :executed t)
                                   :start-marker (point-max))
                        claude-code-mcp-pending-capture)
-              (message "MCP: Command executing. Press Enter when output is complete."))
+)
           ;; Command already executed - capture output
           (let* ((start-marker (plist-get pending :start-marker))
                  (callback (plist-get pending :callback))
@@ -113,12 +110,10 @@ For edit mode (command not yet executed):
                  (project-root (plist-get pending :project-root))
                  (end-pos (point-max))
                  (output (buffer-substring-no-properties start-marker end-pos)))
-            (message "MCP DEBUG: Capturing from %d to %d, output-len=%d, buffer=%s"
-                     start-marker end-pos (length output) (buffer-name))
-            (message "MCP DEBUG: Output preview: %s"
-                     (substring output 0 (min 200 (length output))))
             ;; Clear pending capture
             (remhash terminal-id claude-code-mcp-pending-capture)
+            ;; Hide capture reminder popup
+            (claude-code-mcp-hide-capture-reminder)
             ;; Call callback with result
             (when callback
               (funcall callback
@@ -128,7 +123,7 @@ For edit mode (command not yet executed):
                              :exit-code 0
                              :timeout nil
                              :working-directory (or project-root default-directory))))
-            (message "MCP: Output captured and sent (%d chars)" (length output))))))))
+))))))
 
 (defun claude-code-mcp-has-pending-capture-p ()
   "Return t if there's a pending MCP capture for current terminal."
@@ -829,6 +824,36 @@ Returns 'execute if user confirms (y), 'edit if user wants to edit (e), nil if d
 
     result))
 
+;;; MCP Capture Reminder Popup
+
+(defun claude-code-mcp-show-capture-reminder ()
+  "Show a reminder popup that user needs to press C-Enter to send output to AI.
+Positioned at top-center, stays until C-Enter is pressed."
+  (let ((buffer-name " *mcp-capture-reminder*")
+        (content "
+╔════════════════════════════════════════╗
+║                                        ║
+║   🤖 AI is waiting for output...       ║
+║                                        ║
+║      Press  C-Enter  when ready        ║
+║                                        ║
+╚════════════════════════════════════════╝
+"))
+    ;; Show popup using posframe if available (amber retro theme)
+    (when (fboundp 'posframe-show)
+      (posframe-show buffer-name
+                     :string (propertize content 'face '(:foreground "#ffb000" :height 1.1))
+                     :poshandler #'posframe-poshandler-frame-top-center
+                     :border-width 2
+                     :border-color "#ffb000"
+                     :background-color "#1a1000"
+                     :internal-border-width 8))))
+
+(defun claude-code-mcp-hide-capture-reminder ()
+  "Hide the capture reminder popup."
+  (when (fboundp 'posframe-hide)
+    (posframe-hide " *mcp-capture-reminder*")))
+
 ;;; Terminal Output Size and State Tracking
 
 (defvar claude-code-mcp-output-size-limit 25000
@@ -968,7 +993,7 @@ If terminal has active mistty buffer, routes command there instead."
     (when (and (fboundp 'claude-code-terminal-has-active-mistty-p)
                (claude-code-terminal-has-active-mistty-p terminal-id))
       (setq buffer (claude-code-terminal-get-mistty-buffer terminal-id))
-      (message "MCP: Using active mistty buffer for terminal %s" terminal-id))
+)
 
     ;; Show confirmation popup before executing
     (let ((user-choice (claude-code-show-command-confirmation-popup command project-root)))
@@ -985,7 +1010,6 @@ If terminal has active mistty buffer, routes command there instead."
                    (with-current-buffer buffer
                      ;; Mark current position as integer (won't move with inserted content)
                      (let ((start-marker (point-max)))
-                       (message "MCP DEBUG: Storing start-marker=%d, buffer=%s" start-marker (buffer-name))
                        ;; Store pending capture info
                        (puthash terminal-id
                                 (list :callback
@@ -1011,7 +1035,9 @@ If terminal has active mistty buffer, routes command there instead."
                                 claude-code-mcp-pending-capture)
                        ;; Send command + Enter (using eshell-compatible helper)
                        (claude-code-terminal-send-string buffer command t)
-                       (message "MCP: Command sent. Press Enter when output is complete.")))))))
+                       ;; Show capture reminder popup
+                       (claude-code-mcp-show-capture-reminder)
+))))))
 
         ;; User wants to edit - send command WITHOUT newline, set up capture
         ('edit
@@ -1025,7 +1051,6 @@ If terminal has active mistty buffer, routes command there instead."
                    (with-current-buffer buffer
                      ;; Mark current position as integer (won't move with inserted content)
                      (let ((start-marker (point-max)))
-                       (message "MCP DEBUG: Edit mode - start-marker=%d, buffer=%s" start-marker (buffer-name))
                        ;; Store pending capture info
                        (puthash terminal-id
                                 (list :callback
@@ -1051,7 +1076,9 @@ If terminal has active mistty buffer, routes command there instead."
                                 claude-code-mcp-pending-capture)
                        ;; Send command WITHOUT Enter - user will edit and press Enter
                        (claude-code-terminal-send-string buffer command nil)
-                       (message "MCP: Command inserted. Edit, then Enter to run, Enter again to capture.")))))))
+                       ;; Show capture reminder popup
+                       (claude-code-mcp-show-capture-reminder)
+))))))
 
         ;; User declined - return error indicating cancellation
         (_

@@ -655,7 +655,15 @@ This function handles eshell's text-based input model and mistty."
      ((derived-mode-p 'eshell-mode)
       (goto-char (point-max))
       (insert string)
+      ;; Update input styling for retro font
+      (when (fboundp 'claude-code-terminal-style-input)
+        (claude-code-terminal-style-input))
       (when send-newline
+        ;; Insert newline before execution to create unstyled gap before output
+        ;; (same logic as claude-code-terminal-smart-enter)
+        (when (not (string-empty-p string))
+          (goto-char (point-max))
+          (insert "\n"))
         (eshell-send-input)))
      ;; Fallback for other terminal types (vterm, etc.)
      (t
@@ -1389,13 +1397,24 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
                            (t nil)))))) ; both nil -> preserve order
                (choices (mapcar (lambda (term)
                                   (let* ((id (plist-get term :terminal-id))
+                                         (buf (plist-get term :buffer))
+                                         (cwd (when (buffer-live-p buf)
+                                                (with-current-buffer buf
+                                                  (abbreviate-file-name default-directory))))
                                          (access-time (gethash id claude-code-terminal-access-times nil))
                                          (time-str (if access-time
                                                       (format-time-string "%H:%M:%S" access-time)
                                                     "never"))
                                          (shell-stack (gethash id claude-code-terminal-shell-stack))
-                                         (stack-info 
+                                         ;; Check for mistty embedded command in the buffer
+                                         (embedded-cmd (when (buffer-live-p buf)
+                                                         (with-current-buffer buf
+                                                           (bound-and-true-p claude-code-terminal-embedded-command))))
+                                         (stack-info
                                           (cond
+                                           ;; Mistty embedded command
+                                           (embedded-cmd
+                                            (format " → ⚡%s" embedded-cmd))
                                            ;; No embedded shells
                                            ((not shell-stack) "")
                                            ;; Single embedded shell
@@ -1406,10 +1425,9 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
                                             (let ((first-command (car (car (last shell-stack))))  ; First item (deepest in stack)
                                                   (last-command (caar shell-stack)))              ; Last item (top of stack)
                                               (format " → %s :: %s" first-command last-command))))))
-                                    (cons (format "%s [%s] (%s)%s" 
-                                                 (plist-get term :buffer-name)
-                                                 (plist-get term :terminal-id)
-                                                 time-str
+                                    (cons (format "%s | %s%s"
+                                                 id
+                                                 (or cwd "?")
                                                  stack-info)
                                           term)))
                                sorted-terminals)))
@@ -2161,34 +2179,25 @@ The process sentinel will handle that when the subprocess actually exits."
 (declare-function claude-code-mcp-capture-and-send "claude-code-mcp-tools" ())
 (declare-function claude-code-mcp-has-pending-capture-p "claude-code-mcp-tools" ())
 
-;; Mistty smart Enter - captures MCP output or sends normal enter
+;; Mistty smart Enter - sends normal enter
 (defun claude-code-terminal-mistty-smart-enter ()
-  "Send Enter to mistty, or capture MCP output if pending.
-When an MCP command is waiting for output capture, this captures and sends the result.
-Otherwise, sends a normal Enter to mistty."
+  "Send Enter to mistty.
+Use C-RET to confirm MCP output capture."
   (interactive)
-  (if (and (fboundp 'claude-code-mcp-has-pending-capture-p)
-           (claude-code-mcp-has-pending-capture-p))
-      ;; Capture pending MCP output
-      (claude-code-mcp-capture-and-send)
-    ;; Normal Enter - send to mistty
-    (when (fboundp 'mistty-send-command)
-      (mistty-send-command))))
+  ;; Normal Enter - send to mistty
+  (when (fboundp 'mistty-send-command)
+    (mistty-send-command)))
 
-;; Smart Enter function that captures MCP output if pending
+;; Smart Enter function for normal command execution
 (defun claude-code-terminal-smart-enter ()
-  "Send Enter to terminal, or capture MCP output if pending.
-When an MCP command is waiting for output capture, this captures and sends the result.
+  "Send Enter to terminal.
 Handles simple expansions from `my-eshell-simple-expansions'.
 For embedded commands (ssh, etc.), spawns mistty in a bottom split.
-Otherwise, sends a normal Enter to the terminal."
+Otherwise, sends a normal Enter to the terminal.
+Use C-RET to confirm MCP output capture."
   (interactive)
-  (if (and (fboundp 'claude-code-mcp-has-pending-capture-p)
-           (claude-code-mcp-has-pending-capture-p))
-      ;; Capture pending MCP output
-      (claude-code-mcp-capture-and-send)
-    ;; Normal Enter - check for expansions and embedded commands
-    (when (derived-mode-p 'eshell-mode)
+  ;; Normal Enter - check for expansions and embedded commands
+  (when (derived-mode-p 'eshell-mode)
       (let* ((input (string-trim (buffer-substring-no-properties eshell-last-output-end (point))))
              (simple-entry (and (boundp 'my-eshell-simple-expansions)
                                 (assoc input my-eshell-simple-expansions)))
@@ -2229,7 +2238,7 @@ Otherwise, sends a normal Enter to the terminal."
           (when (not (string-empty-p input))
             (goto-char (point-max))
             (insert "\n"))
-          (eshell-send-input))))))
+          (eshell-send-input)))))
 
 (defun claude-code-terminal-send-interrupt ()
   "Send C-c (interrupt) to eshell."
@@ -2254,8 +2263,10 @@ Otherwise, sends a normal Enter to the terminal."
   (define-key eshell-mode-map (kbd "C-c k") 'my-layout-smart-claude-code)
   (define-key eshell-mode-map (kbd "C-l") 'windmove-right)
   (define-key eshell-mode-map (kbd "C-u") 'claude-code-terminal-switch)
-  ;; Enter key - smart capture or normal
+  ;; Enter key - normal command execution
   (define-key eshell-mode-map (kbd "<return>") 'claude-code-terminal-smart-enter)
+  ;; C-Enter - MCP output capture confirmation
+  (define-key eshell-mode-map (kbd "C-<return>") 'claude-code-mcp-capture-and-send)
   ;; C-c C-c for interrupt with prompt check
   (define-key eshell-mode-map (kbd "C-c C-c") 'claude-code-terminal-send-interrupt)
   ;; C-d for EOF with prompt check
@@ -2687,9 +2698,12 @@ Mistty becomes the main terminal buffer. When it closes, eshell returns."
         (local-set-key (kbd "s-h") #'claude-code-send-emacs-terminal-popup)
         (local-set-key (kbd "s-k") #'my-layout-smart-claude-code)
         (local-set-key (kbd "s-u") #'claude-code-terminal-switch)
-        ;; Enter key - smart capture for MCP or normal enter
+        ;; Enter key - normal command execution
         (local-set-key (kbd "<return>") #'claude-code-terminal-mistty-smart-enter)
         (local-set-key (kbd "RET") #'claude-code-terminal-mistty-smart-enter)
+        ;; C-Enter - MCP output capture confirmation
+        (local-set-key (kbd "C-<return>") #'claude-code-mcp-capture-and-send)
+        (local-set-key (kbd "C-RET") #'claude-code-mcp-capture-and-send)
 
         ;; History navigation - send directly to terminal
         (local-set-key (kbd "<up>") #'mistty-send-key)

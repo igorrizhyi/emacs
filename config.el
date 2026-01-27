@@ -35,6 +35,9 @@
 (require 'text-functions)
 (require' claude-code-emacs)
 
+;; Suppress messages in echo area (still logged to *Messages* buffer)
+(setq inhibit-message t)
+
 ;; File associations
 (add-to-list 'auto-mode-alist '("\\.jstxt\\'" . js-mode))
 
