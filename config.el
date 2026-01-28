@@ -749,7 +749,9 @@
 
 (add-hook 'prog-mode-hook
           (lambda ()
-            (evil-local-set-key 'normal (kbd "C-r") #'revert-buffer)))
+            (evil-local-set-key 'normal (kbd "C-r") #'revert-buffer)
+            (evil-local-set-key 'normal (kbd "C-t") #'magit-status)
+            (evil-local-set-key 'insert (kbd "C-t") #'magit-status)))
 
 ;; Window layout key bindings with SPC-w prefix (window management)
 (map! :leader
@@ -1016,6 +1018,8 @@
   (evil-define-key 'normal dirvish-mode-map (kbd "s") 'dired-narrow)
   ;; ESC resets filter
   (evil-define-key 'normal dirvish-mode-map (kbd "<escape>") 'my-dired-reset-filter)
+  ;; C-t for magit
+  (evil-define-key 'normal dirvish-mode-map (kbd "C-t") 'magit-status)
   ;; Arrow keys for navigation
   (evil-define-key 'normal dirvish-mode-map (kbd "<right>") 'dired-find-file)
   (evil-define-key 'normal dirvish-mode-map (kbd "<left>") 'dired-up-directory)
@@ -1026,6 +1030,7 @@
   ;; Fallback for non-dirvish dired buffers
   (evil-define-key 'normal dired-mode-map (kbd "s") 'dired-narrow)
   (evil-define-key 'normal dired-mode-map (kbd "<escape>") 'my-dired-reset-filter)
+  (evil-define-key 'normal dired-mode-map (kbd "C-t") 'magit-status)
   (evil-define-key 'normal dired-mode-map (kbd "<right>") 'dired-find-file)
   (evil-define-key 'normal dired-mode-map (kbd "<left>") 'dired-up-directory)
   (evil-define-key 'normal dired-mode-map (kbd "<down>") 'dired-next-line)
