@@ -972,12 +972,44 @@
 
 ;; Dired keybindings and filtering (nnn-style)
 (use-package! dired-narrow
-  :after dired)
+  :after dired
+  :config
+  ;; Override dired-narrow to use our custom keymap with arrow navigation
+  (advice-add 'dired-narrow--internal :around
+              (lambda (orig-fun &rest args)
+                (minibuffer-with-setup-hook
+                    (lambda ()
+                      (use-local-map my-dired-narrow-minibuffer-map))
+                  (apply orig-fun args)))))
 
 (defun my-dired-reset-filter ()
   "Reset dired-narrow filter by reverting buffer."
   (interactive)
   (revert-buffer))
+
+(defun my-dired-narrow-exit-and-next ()
+  "Exit dired-narrow minibuffer and move to next line."
+  (interactive)
+  (exit-minibuffer)
+  (run-at-time 0.01 nil (lambda ()
+                          (when (derived-mode-p 'dired-mode)
+                            (dired-next-line 1)))))
+
+(defun my-dired-narrow-exit-and-prev ()
+  "Exit dired-narrow minibuffer and move to previous line."
+  (interactive)
+  (exit-minibuffer)
+  (run-at-time 0.01 nil (lambda ()
+                          (when (derived-mode-p 'dired-mode)
+                            (dired-previous-line 1)))))
+
+(defvar my-dired-narrow-minibuffer-map
+  (let ((map (make-sparse-keymap)))
+    (set-keymap-parent map minibuffer-local-map)
+    (define-key map (kbd "<down>") 'my-dired-narrow-exit-and-next)
+    (define-key map (kbd "<up>") 'my-dired-narrow-exit-and-prev)
+    map)
+  "Keymap for dired-narrow minibuffer with arrow navigation.")
 
 (after! dirvish
   ;; Override dirvish 's' prefix with dired-narrow filter
