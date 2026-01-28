@@ -969,3 +969,32 @@
   (set-face-attribute 'diredfl-ignored-file-name nil :foreground "#8d7c6a")
   (set-face-attribute 'diredfl-compressed-file-name nil :foreground "#e99f17")
   (set-face-attribute 'diredfl-compressed-file-suffix nil :foreground "#c78021"))
+
+;; Dired keybindings and filtering (nnn-style)
+(use-package! dired-narrow
+  :after dired)
+
+(defun my-dired-reset-filter ()
+  "Reset dired-narrow filter by reverting buffer."
+  (interactive)
+  (revert-buffer))
+
+(after! dirvish
+  ;; Override dirvish 's' prefix with dired-narrow filter
+  (evil-define-key 'normal dirvish-mode-map (kbd "s") 'dired-narrow)
+  ;; ESC resets filter
+  (evil-define-key 'normal dirvish-mode-map (kbd "<escape>") 'my-dired-reset-filter)
+  ;; Arrow keys for navigation
+  (evil-define-key 'normal dirvish-mode-map (kbd "<right>") 'dired-find-file)
+  (evil-define-key 'normal dirvish-mode-map (kbd "<left>") 'dired-up-directory)
+  (evil-define-key 'normal dirvish-mode-map (kbd "<down>") 'dired-next-line)
+  (evil-define-key 'normal dirvish-mode-map (kbd "<up>") 'dired-previous-line))
+
+(after! dired
+  ;; Fallback for non-dirvish dired buffers
+  (evil-define-key 'normal dired-mode-map (kbd "s") 'dired-narrow)
+  (evil-define-key 'normal dired-mode-map (kbd "<escape>") 'my-dired-reset-filter)
+  (evil-define-key 'normal dired-mode-map (kbd "<right>") 'dired-find-file)
+  (evil-define-key 'normal dired-mode-map (kbd "<left>") 'dired-up-directory)
+  (evil-define-key 'normal dired-mode-map (kbd "<down>") 'dired-next-line)
+  (evil-define-key 'normal dired-mode-map (kbd "<up>") 'dired-previous-line))
