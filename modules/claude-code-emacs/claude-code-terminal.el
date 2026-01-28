@@ -2226,10 +2226,14 @@ Use C-RET to confirm MCP output capture."
             ;; Embedded command - spawn mistty instead
             (progn
               (message "[EMBEDDED] Spawning mistty for: %s" (car (split-string input)))
-              ;; Clear input line and add note
+              ;; Add command to eshell history before redirecting
+              (when (and (boundp 'eshell-history-ring) eshell-history-ring)
+                (ring-insert eshell-history-ring input))
+              ;; Clear input line and add note (without adding to history)
               (delete-region eshell-last-output-end (point))
               (insert (format "# Spawning in mistty: %s" input))
-              (eshell-send-input)
+              (let ((eshell-input-filter (lambda (_) nil)))  ; Temporarily disable history
+                (eshell-send-input))
               ;; Spawn mistty with the command
               (claude-code-terminal-spawn-mistty input))
           ;; Regular command - run in eshell
@@ -2262,7 +2266,15 @@ Use C-RET to confirm MCP output capture."
   (define-key eshell-mode-map (kbd "C-c 1") 'claude-code-send-1)
   (define-key eshell-mode-map (kbd "C-c k") 'my-layout-smart-claude-code)
   (define-key eshell-mode-map (kbd "C-l") 'windmove-right)
+  (define-key eshell-mode-map (kbd "C-1") (lambda () (interactive)
+                                            (goto-char (point-max))
+                                            (insert "d")
+                                            (eshell-send-input)))
+  (define-key eshell-mode-map (kbd "C-t") 'magit-status)
   (define-key eshell-mode-map (kbd "C-u") 'claude-code-terminal-switch)
+  ;; Evil bindings for C-t (overrides transpose-chars)
+  (evil-define-key 'insert eshell-mode-map (kbd "C-t") 'magit-status)
+  (evil-define-key 'normal eshell-mode-map (kbd "C-t") 'magit-status)
   ;; Enter key - normal command execution
   (define-key eshell-mode-map (kbd "<return>") 'claude-code-terminal-smart-enter)
   ;; C-Enter - MCP output capture confirmation
@@ -2346,7 +2358,7 @@ Keys are terminal IDs, values are plists with:
 
 ;; Face specs for different modes
 (defvar claude-code-terminal-output-face-regular
-  '(:height 0.85 :inherit nil :background "#372413" :extend t)
+  '(:family "SF Mono" :height 0.85 :inherit nil :background "#372413" :extend t)
   "Face for regular command output (with background).")
 
 (defvar claude-code-terminal-output-face-embedded
@@ -2680,6 +2692,9 @@ Mistty becomes the main terminal buffer. When it closes, eshell returns."
 
         ;; Enable terminal mode for keybindings (C-u, C-f, etc.)
         (claude-code-terminal-mode 1)
+
+        ;; Apply SF Mono font to mistty buffer
+        (face-remap-add-relative 'default :family "SF Mono" :height 0.85)
 
         ;; Explicitly set doom-modeline for this buffer (after variables are set)
         (when (fboundp 'doom-modeline-set-modeline)

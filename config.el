@@ -36,7 +36,13 @@
 (require' claude-code-emacs)
 
 ;; Suppress messages in echo area (still logged to *Messages* buffer)
-(setq inhibit-message t)
+;; Use advice to ensure messages only go to *Messages* buffer, not echo area
+(defun my-suppress-echo-area-message (orig-fun format-string &rest args)
+  "Log message to *Messages* buffer but don't show in echo area."
+  (let ((inhibit-message t))
+    (apply orig-fun format-string args)))
+
+(advice-add 'message :around #'my-suppress-echo-area-message)
 
 ;; File associations
 (add-to-list 'auto-mode-alist '("\\.jstxt\\'" . js-mode))
