@@ -117,6 +117,15 @@
 (when (fboundp 'auto-save-visited-mode)
   (auto-save-visited-mode -1))
 
+(use-package window-stool
+  :config
+  (add-hook 'prog-mode-hook #'window-stool-mode))
+
+(use-package markdown-mode
+  :hook (markdown-mode . lsp)
+  :config
+  (require 'lsp-marksman))
+
 ;; Configure DAP (Debug Adapter Protocol) for debugging
 (use-package! dap-mode
   :after lsp-mode
@@ -300,13 +309,13 @@
         lsp-enable-file-watchers t
         lsp-file-watch-threshold 2000   ;; Faster file watching
         lsp-eldoc-render-all nil)       ;; Don't render everything for speed
-  ;; Breadcrumb configuration
-  (setq lsp-headerline-breadcrumb-enable t ;; Enable breadcrumb navigation in header
-        lsp-headerline-breadcrumb-icons-enable nil ;; Disable icons for speed
-        lsp-headerline-breadcrumb-enable-symbol-numbers nil
-        lsp-headerline-breadcrumb-segments '(symbols) ;; Only show symbols, no path
-        lsp-headerline-breadcrumb-enable-diagnostics nil ;; Disable diagnostics in breadcrumb
-        lsp-headerline-breadcrumb-enable-project-prefix nil) ;; No project prefix
+  ;; ;; Breadcrumb configuration
+  ;; (setq lsp-headerline-breadcrumb-enable t ;; Enable breadcrumb navigation in header
+  ;;       lsp-headerline-breadcrumb-icons-enable nil ;; Disable icons for speed
+  ;;       lsp-headerline-breadcrumb-enable-symbol-numbers nil
+  ;;       lsp-headerline-breadcrumb-segments '(symbols) ;; Only show symbols, no path
+  ;;       lsp-headerline-breadcrumb-enable-diagnostics nil ;; Disable diagnostics in breadcrumb
+  ;;       lsp-headerline-breadcrumb-enable-project-prefix nil) ;; No project prefix
   
   ;; Enable LSP semantic highlighting for method calls and variables
   (setq lsp-semantic-tokens-enable t
@@ -749,6 +758,15 @@
 ;; Override s key to perform search instead of substitute
 (after! evil
   (define-key evil-normal-state-map (kbd "s") #'save-buffer))
+
+;; C-r in code buffers to revert buffer (reload file from disk)
+;; First unbind C-r from Evil normal state globally, then bind in prog-mode
+(after! evil
+  (define-key evil-normal-state-map (kbd "C-r") nil))
+
+(add-hook 'prog-mode-hook
+          (lambda ()
+            (evil-local-set-key 'normal (kbd "C-r") #'revert-buffer)))
 
 ;; Window layout key bindings with SPC-w prefix (window management)
 (map! :leader

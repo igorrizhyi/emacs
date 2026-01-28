@@ -100,6 +100,8 @@
 
 (package! evil-snipe :disable t)
 
+(package! window-stool :recipe (:host github :repo "jaszhe/window-stool" :files ("*.el")))
+
 ;; Doom's packages are pinned to a specific commit and updated from release to
 ;; release. The `unpin!' macro allows you to unpin single packages...
 ;; (unpin! pinned-package)
