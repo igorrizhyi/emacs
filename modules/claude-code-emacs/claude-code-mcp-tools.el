@@ -69,29 +69,40 @@ For edit mode (command not yet executed):
                         (claude-code-terminal-get-current-id)))
          (pending (when terminal-id
                     (gethash terminal-id claude-code-mcp-pending-capture))))
-    (message "MCP DEBUG: capture-and-send called, terminal-id=%s, has-pending=%s"
-             terminal-id (if pending "yes" "no"))
     (if (not pending)
         ;; No pending capture - just send Enter normally
-        (when (and (derived-mode-p 'eat-mode)
-                   (bound-and-true-p eat-terminal))
+        (cond
+         ;; Mistty buffer
+         ((bound-and-true-p claude-code-terminal-embedded-command)
+          (when (fboundp 'mistty-send-command)
+            (mistty-send-command)))
+         ;; Eat-mode (eshell with eat)
+         ((and (derived-mode-p 'eat-mode)
+               (bound-and-true-p eat-terminal))
           (eat-term-send-string eat-terminal "\C-m"))
+         ;; Eshell fallback
+         ((derived-mode-p 'eshell-mode)
+          (eshell-send-input)))
       ;; We have a pending capture
       (let ((executed (plist-get pending :executed)))
         (if (not executed)
             ;; Command not yet executed (edit mode) - execute it now
             (progn
-              (message "MCP DEBUG: Edit mode - executing command now")
-              ;; Send Enter to execute the command
-              (let ((proc (get-buffer-process (current-buffer))))
-                (when proc
-                  (process-send-string proc "\n")))
+              ;; Send Enter to execute the command (mistty or process)
+              (cond
+               ((bound-and-true-p claude-code-terminal-embedded-command)
+                (when (fboundp 'mistty-send-command)
+                  (mistty-send-command)))
+               (t
+                (let ((proc (get-buffer-process (current-buffer))))
+                  (when proc
+                    (process-send-string proc "\n")))))
               ;; Update the pending capture: mark as executed, update start-marker
               (puthash terminal-id
                        (plist-put (plist-put pending :executed t)
                                   :start-marker (point-max))
                        claude-code-mcp-pending-capture)
-              (message "MCP: Command executing. Press Enter when output is complete."))
+)
           ;; Command already executed - capture output
           (let* ((start-marker (plist-get pending :start-marker))
                  (callback (plist-get pending :callback))
@@ -99,12 +110,10 @@ For edit mode (command not yet executed):
                  (project-root (plist-get pending :project-root))
                  (end-pos (point-max))
                  (output (buffer-substring-no-properties start-marker end-pos)))
-            (message "MCP DEBUG: Capturing from %d to %d, output-len=%d, buffer=%s"
-                     start-marker end-pos (length output) (buffer-name))
-            (message "MCP DEBUG: Output preview: %s"
-                     (substring output 0 (min 200 (length output))))
             ;; Clear pending capture
             (remhash terminal-id claude-code-mcp-pending-capture)
+            ;; Hide capture reminder popup
+            (claude-code-mcp-hide-capture-reminder)
             ;; Call callback with result
             (when callback
               (funcall callback
@@ -114,7 +123,7 @@ For edit mode (command not yet executed):
                              :exit-code 0
                              :timeout nil
                              :working-directory (or project-root default-directory))))
-            (message "MCP: Output captured and sent (%d chars)" (length output))))))))
+))))))
 
 (defun claude-code-mcp-has-pending-capture-p ()
   "Return t if there's a pending MCP capture for current terminal."
@@ -156,6 +165,11 @@ For edit mode (command not yet executed):
 (declare-function claude-code-terminal-get-sessions "claude-code-terminal" (&optional project-root))
 (declare-function claude-code-terminal-get-by-id "claude-code-terminal" (terminal-id &optional project-root))
 (declare-function claude-code-terminal-get-last-focused "claude-code-terminal" ())
+(declare-function claude-code-terminal-send-string "claude-code-terminal" (buffer string &optional send-newline))
+;; Mistty integration
+(declare-function claude-code-terminal-get-mistty-buffer "claude-code-terminal" (&optional terminal-id))
+(declare-function claude-code-terminal-has-active-mistty-p "claude-code-terminal" (&optional terminal-id))
+(declare-function claude-code-terminal-send-command-to-mistty "claude-code-terminal" (command &optional terminal-id))
 
 ;;; MCP Tool Handlers
 
@@ -741,74 +755,103 @@ PARAMS must include \\='file\\=', \\='line\\=', and \\='symbol\\=' parameters."
   "Show confirmation popup for COMMAND execution in PROJECT-ROOT.
 Returns 'execute if user confirms (y), 'edit if user wants to edit (e), nil if declined (n)."
   (let ((buffer-name " *command-confirmation*")
-        (working-dir (or project-root default-directory))
-        (result nil))
+        (result nil)
+        ;; Truncate and pad command to exactly 48 chars
+        (cmd-display (let ((cmd (if (> (length command) 48)
+                                    (concat (substring command 0 45) "...")
+                                  command)))
+                       (concat cmd (make-string (- 48 (length cmd)) ?\s)))))
 
-    ;; Create popup content
-    (with-current-buffer (get-buffer-create buffer-name)
-      (erase-buffer)
-      (insert (propertize "⚡ COMMAND EXECUTION REQUEST" 'face 'warning))
-      (insert "\n\n")
-      (insert (propertize "Command:" 'face 'font-lock-keyword-face))
-      (insert "\n")
-      (insert (propertize command 'face 'font-lock-string-face))
-      (insert "\n\n")
-      (insert (propertize "Execute this command?" 'face 'font-lock-builtin-face))
-      (insert "\n\n")
-      (insert (propertize "[y] Yes    [e] Edit first    [n] No" 'face 'success))
-      (goto-char (point-min)))
-    
-    ;; Show popup using posframe if available, otherwise use pop-to-buffer
-    (unwind-protect
-        (if (fboundp 'posframe-show)
-            ;; Use posframe for better popup experience
-            (progn
-              (posframe-show buffer-name
-                           :poshandler #'posframe-poshandler-frame-top-right-corner
-                           :width (/ (frame-width) 2)
-                           :height 12
-                           :border-width 2
-                           :border-color "#555555"
-                           :background-color (face-background 'default)
-                           :foreground-color (face-foreground 'default)
-                           :internal-border-width 8
-                           :left-fringe 8
-                           :right-fringe 8)
-              
-              ;; Wait for user input
-              (let ((key nil))
-                (while (not (memq key '(?y ?n ?Y ?N ?e ?E ?\C-g)))
-                  (setq key (read-key "Execute command? [y/e/n]: "))
-                  (unless (memq key '(?y ?n ?Y ?N ?e ?E ?\C-g))
-                    (message "Press 'y' to execute, 'e' to edit, 'n' to cancel")))
+    ;; Build ASCII-styled content with fixed-width box (no emojis for alignment)
+    (let ((content (concat "
+╔══════════════════════════════════════════════════════╗
+║                                                      ║
+║          >>> COMMAND EXECUTION REQUEST <<<           ║
+║                                                      ║
+║   Command:                                           ║
+║   " cmd-display "   ║
+║                                                      ║
+║   Execute this command?                              ║
+║                                                      ║
+║      [y] Yes    [e] Edit first    [n] No             ║
+║                                                      ║
+╚══════════════════════════════════════════════════════╝
+")))
 
-                (setq result (cond
-                              ((memq key '(?y ?Y)) 'execute)
-                              ((memq key '(?e ?E)) 'edit)
-                              (t nil))))
+      ;; Show popup using posframe if available
+      (unwind-protect
+          (if (fboundp 'posframe-show)
+              (progn
+                (posframe-show buffer-name
+                               :string (propertize content 'face '(:foreground "#ffb000" :height 1.1))
+                               :poshandler #'posframe-poshandler-frame-top-center
+                               :border-width 2
+                               :border-color "#ffb000"
+                               :background-color "#1a1000"
+                               :internal-border-width 8)
 
-              (posframe-hide buffer-name))
+                ;; Wait for user input
+                (let ((key nil))
+                  (while (not (memq key '(?y ?n ?Y ?N ?e ?E ?\C-g)))
+                    (setq key (read-key)))
 
-          ;; Fallback to regular buffer popup
-          (pop-to-buffer buffer-name)
-          (let ((key nil))
-            (while (not (memq key '(?y ?n ?Y ?N ?e ?E ?\C-g)))
-              (setq key (read-key "Execute command? [y/e/n]: "))
-              (unless (memq key '(?y ?n ?Y ?N ?e ?E ?\C-g))
-                (message "Press 'y' to execute, 'e' to edit, 'n' to cancel")))
+                  (setq result (cond
+                                ((memq key '(?y ?Y)) 'execute)
+                                ((memq key '(?e ?E)) 'edit)
+                                (t nil))))
 
-            (setq result (cond
-                          ((memq key '(?y ?Y)) 'execute)
-                          ((memq key '(?e ?E)) 'edit)
-                          (t nil))))
+                (posframe-hide buffer-name))
 
-          (quit-window t))
-      
-      ;; Cleanup
-      (when (get-buffer buffer-name)
-        (kill-buffer buffer-name)))
+            ;; Fallback to regular buffer popup
+            (with-current-buffer (get-buffer-create buffer-name)
+              (erase-buffer)
+              (insert content))
+            (pop-to-buffer buffer-name)
+            (let ((key nil))
+              (while (not (memq key '(?y ?n ?Y ?N ?e ?E ?\C-g)))
+                (setq key (read-key)))
+
+              (setq result (cond
+                            ((memq key '(?y ?Y)) 'execute)
+                            ((memq key '(?e ?E)) 'edit)
+                            (t nil))))
+            (quit-window t))
+
+        ;; Cleanup
+        (when (get-buffer buffer-name)
+          (kill-buffer buffer-name))))
 
     result))
+
+;;; MCP Capture Reminder Popup
+
+(defun claude-code-mcp-show-capture-reminder ()
+  "Show a reminder popup that user needs to press C-Enter to send output to AI.
+Positioned at top-center, stays until C-Enter is pressed."
+  (let ((buffer-name " *mcp-capture-reminder*")
+        (content "
+╔════════════════════════════════════════╗
+║                                        ║
+║   >>> AI is waiting for output <<<     ║
+║                                        ║
+║      Press  C-Enter  when ready        ║
+║                                        ║
+╚════════════════════════════════════════╝
+"))
+    ;; Show popup using posframe if available (amber retro theme)
+    (when (fboundp 'posframe-show)
+      (posframe-show buffer-name
+                     :string (propertize content 'face '(:foreground "#ffb000" :height 1.1))
+                     :poshandler #'posframe-poshandler-frame-top-center
+                     :border-width 2
+                     :border-color "#ffb000"
+                     :background-color "#1a1000"
+                     :internal-border-width 8))))
+
+(defun claude-code-mcp-hide-capture-reminder ()
+  "Hide the capture reminder popup."
+  (when (fboundp 'posframe-hide)
+    (posframe-hide " *mcp-capture-reminder*")))
 
 ;;; Terminal Output Size and State Tracking
 
@@ -919,11 +962,13 @@ PARAMS should include 'terminalId' and optionally 'projectRoot'."
 (defun claude-code-mcp-handle-executeTerminalCommandInEmacs (params)
   "Handle executeTerminalCommand request with PARAMS.
 PARAMS should include 'command', and optionally 'terminalId', 'projectRoot'.
-Uses simple Enter-to-capture approach: sends command, waits for user to press Enter to capture output."
-  (let ((command (cdr (assoc 'command params)))
-        (project-root (cdr (assoc 'projectRoot params)))
-        terminal-id
-        buffer)
+Uses simple Enter-to-capture approach: sends command, waits for user to press Enter to capture output.
+If terminal has active mistty buffer, routes command there instead."
+  (cl-block claude-code-mcp-handle-executeTerminalCommandInEmacs
+    (let ((command (cdr (assoc 'command params)))
+          (project-root (cdr (assoc 'projectRoot params)))
+          terminal-id
+          buffer)
 
     ;; Validate required parameters
     (unless command
@@ -943,6 +988,12 @@ Uses simple Enter-to-capture approach: sends command, waits for user to press En
     (unless buffer
       (error "Terminal buffer not found for %s" terminal-id))
 
+    ;; Check if terminal has active mistty buffer - use mistty buffer instead
+    (when (and (fboundp 'claude-code-terminal-has-active-mistty-p)
+               (claude-code-terminal-has-active-mistty-p terminal-id))
+      (setq buffer (claude-code-terminal-get-mistty-buffer terminal-id))
+)
+
     ;; Show confirmation popup before executing
     (let ((user-choice (claude-code-show-command-confirmation-popup command project-root)))
       (pcase user-choice
@@ -958,7 +1009,6 @@ Uses simple Enter-to-capture approach: sends command, waits for user to press En
                    (with-current-buffer buffer
                      ;; Mark current position as integer (won't move with inserted content)
                      (let ((start-marker (point-max)))
-                       (message "MCP DEBUG: Storing start-marker=%d, buffer=%s" start-marker (buffer-name))
                        ;; Store pending capture info
                        (puthash terminal-id
                                 (list :callback
@@ -982,12 +1032,11 @@ Uses simple Enter-to-capture approach: sends command, waits for user to press En
                                       :command command
                                       :project-root project-root)
                                 claude-code-mcp-pending-capture)
-                       ;; Send command + Enter
-                       (let ((proc (get-buffer-process buffer)))
-                         (when proc
-                           (process-send-string proc command)
-                           (process-send-string proc "\n")))
-                       (message "MCP: Command sent. Press Enter when output is complete.")))))))
+                       ;; Send command + Enter (using eshell-compatible helper)
+                       (claude-code-terminal-send-string buffer command t)
+                       ;; Show capture reminder popup
+                       (claude-code-mcp-show-capture-reminder)
+))))))
 
         ;; User wants to edit - send command WITHOUT newline, set up capture
         ('edit
@@ -1001,7 +1050,6 @@ Uses simple Enter-to-capture approach: sends command, waits for user to press En
                    (with-current-buffer buffer
                      ;; Mark current position as integer (won't move with inserted content)
                      (let ((start-marker (point-max)))
-                       (message "MCP DEBUG: Edit mode - start-marker=%d, buffer=%s" start-marker (buffer-name))
                        ;; Store pending capture info
                        (puthash terminal-id
                                 (list :callback
@@ -1026,10 +1074,10 @@ Uses simple Enter-to-capture approach: sends command, waits for user to press En
                                       :project-root project-root)
                                 claude-code-mcp-pending-capture)
                        ;; Send command WITHOUT Enter - user will edit and press Enter
-                       (let ((proc (get-buffer-process buffer)))
-                         (when proc
-                           (process-send-string proc command)))
-                       (message "MCP: Command inserted. Edit, then Enter to run, Enter again to capture.")))))))
+                       (claude-code-terminal-send-string buffer command nil)
+                       ;; Show capture reminder popup
+                       (claude-code-mcp-show-capture-reminder)
+))))))
 
         ;; User declined - return error indicating cancellation
         (_
@@ -1044,7 +1092,7 @@ Uses simple Enter-to-capture approach: sends command, waits for user to press En
            (interrupted . nil)
            (largeOutput . nil)
            (workingDirectory . ,(or project-root default-directory))
-           (error . "KeyboardInterrupt: User cancelled command execution")))))))
+           (error . "KeyboardInterrupt: User cancelled command execution"))))))))
 
 (defun claude-code-mcp-handle-getTerminalList (params)
   "Handle getTerminalList request with PARAMS.

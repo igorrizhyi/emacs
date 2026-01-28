@@ -30,11 +30,20 @@
 ;; (require 'my-jumps)
 (require 'my-super-jumps)
 (require 'my-search)
-(require 'my-eshell)
+(require 'my-eshell-funcs)
 (require 'my-magit-utils)
 (require 'my-dired-extension)
 (require 'text-functions)
 (require' claude-code-emacs)
+
+;; Suppress messages in echo area (still logged to *Messages* buffer)
+;; Use advice to ensure messages only go to *Messages* buffer, not echo area
+(defun my-suppress-echo-area-message (orig-fun format-string &rest args)
+  "Log message to *Messages* buffer but don't show in echo area."
+  (let ((inhibit-message t))
+    (apply orig-fun format-string args)))
+
+(advice-add 'message :around #'my-suppress-echo-area-message)
 
 ;; File associations
 (add-to-list 'auto-mode-alist '("\\.jstxt\\'" . js-mode))
@@ -50,26 +59,26 @@
 ;; Manual project control - completely disable automatic project detection
 (after! projectile
   (remove-hook 'find-file-hook #'projectile-find-file-hook-function)
-  
+
   ;; Store manually set project
   (defvar my/manual-project-root nil "Manually set project root.")
-  
+
   ;; Store the locked project root
   (setq my/manual-project-root (when (projectile-project-p) (projectile-project-root)))
-  
+
   ;; Simple override: return locked project for buffer-local queries
   (advice-add 'projectile-project-root :around
               (lambda (orig-fn &optional dir)
                 (if (and my/manual-project-root (not dir))
                     my/manual-project-root
                   (funcall orig-fn dir))))
-  
+
   ;; Hook into project switching to update our locked project
   (advice-add 'projectile-switch-project-by-name :after
               (lambda (project-to-switch &optional arg)
                 (setq my/manual-project-root project-to-switch)
                 (message "Locked project to: %s" project-to-switch)))
-  
+
   ;; Function to manually change project
   (defun my/set-project-root (dir)
     "Manually set the project root."
@@ -260,11 +269,11 @@
         (when (file-directory-p venv-path)
           (pyvenv-activate venv-path)
           (message "Activated venv: %s" venv-path)))))
-  
+
   ;; Hook to auto-activate venv
   (add-hook 'python-mode-hook #'my/auto-activate-venv)
   (add-hook 'python-ts-mode-hook #'my/auto-activate-venv)
-  
+
   ;; Also activate when switching projects
   (add-hook 'projectile-after-switch-project-hook #'my/auto-activate-venv))
 
@@ -283,7 +292,7 @@
 ;;   ;; Use system pyright-langserver
 ;;   ;; (setq lsp-pyright-langserver-command "/usr/bin/pyright-langserver")
 ;;   (setq lsp-pyright-langserver-command "basedpyright")
-;;   
+;;
 ;;   ;; Configure pyright settings for better type checking
 ;;   (setq lsp-pyright-diagnostic-mode "workspace"
 ;;         lsp-pyright-type-checking-mode "basic"
@@ -316,12 +325,12 @@
   ;;       lsp-headerline-breadcrumb-segments '(symbols) ;; Only show symbols, no path
   ;;       lsp-headerline-breadcrumb-enable-diagnostics nil ;; Disable diagnostics in breadcrumb
   ;;       lsp-headerline-breadcrumb-enable-project-prefix nil) ;; No project prefix
-  
+
   ;; Enable LSP semantic highlighting for method calls and variables
   (setq lsp-semantic-tokens-enable t
         lsp-enable-semantic-highlighting t
         lsp-semantic-tokens-apply-modifiers t)
-  
+
   ;; Map semantic tokens to faces for method call highlighting and bold variables
   (setq lsp-semantic-tokens-faces
         '(("method" . font-lock-function-call-face)
@@ -350,7 +359,7 @@
          (all-faces (delq nil (list text-face font-lock-face face-at-point))))
     (when overlay-faces
       (setq all-faces (append all-faces overlay-faces)))
-    (message "Faces at point: %s\nText property: %s\nFont-lock: %s\nOverlays: %s\nFace-at-point: %s" 
+    (message "Faces at point: %s\nText property: %s\nFont-lock: %s\nOverlays: %s\nFace-at-point: %s"
              all-faces text-face font-lock-face overlay-faces face-at-point)))
 
 ;; Bind to F12 for easy access
@@ -375,7 +384,7 @@
 (defun my/what-treesit-face ()
   "Show tree-sitter specific face information at point."
   (interactive)
-  (if (and (fboundp 'treesit-available-p) (treesit-available-p) 
+  (if (and (fboundp 'treesit-available-p) (treesit-available-p)
            (treesit-parser-list))
       (let* ((node (treesit-node-at (point)))
              (node-type (when node (treesit-node-type node)))
@@ -384,7 +393,7 @@
              (font-lock-face (get-text-property (point) 'font-lock-face))
              (face-prop (get-text-property (point) 'face)))
         (message "Tree-sitter info:\nNode: %s\nType: %s\nText: %s\nTreesit face: %s\nFont-lock face: %s\nFace prop: %s"
-                 node node-type (if (> (length node-text) 50) 
+                 node node-type (if (> (length node-text) 50)
                                    (concat (substring node-text 0 47) "...")
                                  node-text)
                  treesit-face font-lock-face face-prop))
@@ -430,9 +439,9 @@
   :config
   ;; Set tree-sitter library directory for Doom Emacs
   (when (boundp 'treesit-extra-load-path)
-    (add-to-list 'treesit-extra-load-path 
+    (add-to-list 'treesit-extra-load-path
                  (expand-file-name ".local/etc/tree-sitter/" doom-user-dir)))
-  
+
   ;; Customize tree-sitter font-lock by overriding existing face mappings
   (defun my/customize-treesit-faces ()
     "Customize tree-sitter face mappings for keyword arguments."
@@ -458,10 +467,10 @@
                              (assignment right: (false) @font-lock-variable-name-face)
                              (assignment right: (none) @font-lock-variable-name-face)
                              (class_definition name: (identifier) @font-lock-keyword-face)))))))
-  
+
   ;; Apply after tree-sitter mode is enabled
   (add-hook 'python-ts-mode-hook #'my/customize-treesit-faces)
-  
+
   ;; Configure tree-sitter language sources
   (setq treesit-language-source-alist
         '((python "https://github.com/tree-sitter/tree-sitter-python")
@@ -477,7 +486,7 @@
           (go "https://github.com/tree-sitter/tree-sitter-go")
           (cpp "https://github.com/tree-sitter/tree-sitter-cpp")
           (elisp "https://github.com/Wilfred/tree-sitter-elisp")))
-  
+
   ;; Auto-install missing grammars
   (defun my/treesit-install-all-languages ()
     "Install all tree-sitter language grammars."
@@ -487,7 +496,7 @@
         (unless (treesit-language-available-p lang-name)
           (message "Installing tree-sitter grammar for %s..." lang-name)
           (treesit-install-language-grammar lang-name)))))
-  
+
   ;; Enable tree-sitter modes automatically
   (add-to-list 'major-mode-remap-alist '(python-mode . python-ts-mode))
   (add-to-list 'major-mode-remap-alist '(javascript-mode . js-ts-mode))
@@ -554,7 +563,7 @@
         corfu-popupinfo-delay 0.0 ;; Show info immediately
         ;; Enable Tab completion
         tab-always-indent 'complete)
-  
+
   ;; Key bindings for corfu
   (map! :map corfu-map
         :desc "Complete" "TAB" #'corfu-complete
@@ -617,7 +626,7 @@
     "Set up word boundaries: underscores as word constituents, hyphens as separators."
     (modify-syntax-entry ?_ "w")  ; underscore = word constituent
     (modify-syntax-entry ?- ".")) ; hyphen = punctuation (separator)
-  
+
   ;; Apply to both Python modes - runs for every Python buffer
   (add-hook 'python-mode-hook #'my/setup-word-boundaries)
   (add-hook 'python-ts-mode-hook #'my/setup-word-boundaries))
@@ -702,7 +711,7 @@
   (define-key evil-insert-state-map (kbd "C-v") #'yank)
   (define-key evil-emacs-state-map (kbd "C-v") #'yank)
   ;; For normal state, we might want to enter insert mode and paste
-  (define-key evil-normal-state-map (kbd "C-v") 
+  (define-key evil-normal-state-map (kbd "C-v")
     (lambda () (interactive) (evil-insert-state) (yank)))
   ;; Fix C-v in Evil search mode (/)
   (define-key evil-ex-search-keymap (kbd "C-v") #'yank)
@@ -729,23 +738,23 @@
    ((and (string-match-p "COMMIT_EDITMSG" (buffer-name)))
     (progn
       (evil-ex "wq")))
-   
+
    ;; In magit log buffer, quit magit
    ((derived-mode-p 'magit-log-mode 'magit-status-mode 'magit-diff-mode)
     (magit-mode-bury-buffer))
-   
+
    ;; In help buffers, quit window
    ((derived-mode-p 'help-mode 'helpful-mode)
     (quit-window))
-   
+
    ;; In compilation buffers, quit window
    ((derived-mode-p 'compilation-mode)
     (quit-window))
-   
+
    ;; In special buffers (start with *), quit window
    ((string-match-p "^\\*" (buffer-name))
     (delete-window))
-   
+
    ;; Default: delete window (like :q in Vim)
    (t
     (delete-window))))
@@ -766,7 +775,9 @@
 
 (add-hook 'prog-mode-hook
           (lambda ()
-            (evil-local-set-key 'normal (kbd "C-r") #'revert-buffer)))
+            (evil-local-set-key 'normal (kbd "C-r") #'revert-buffer)
+            (evil-local-set-key 'normal (kbd "C-t") #'magit-status)
+            (evil-local-set-key 'insert (kbd "C-t") #'magit-status)))
 
 ;; Window layout key bindings with SPC-w prefix (window management)
 (map! :leader
@@ -791,12 +802,12 @@
   ;; this will allow you to override the runners on your .dir-locals.el
   (put 'testrun-runners 'safe-local-variable #'listp)
   (put 'testrun-mode-alist 'safe-local-variable #'listp)
-  
+
   ;; Configure testrun to use project root and local venv
   ;; (setq testrun-runners
   ;;       '((python-mode . ("python" "-m" "pytest" "-v"))
   ;;         (python-ts-mode . ("python" "-m" "pytest" "-v"))))
-  ;; 
+  ;;
   ;; ;; Function to find and activate local venv
   ;; (defun my/testrun-setup-venv ()
   ;;   "Setup virtual environment for testrun."
@@ -807,11 +818,11 @@
   ;;       (setq-local testrun-runners
   ;;                   `((python-mode . (,python-path "-m" "pytest" "-v"))
   ;;                     (python-ts-mode . (,python-path "-m" "pytest" "-v")))))))
-  ;; 
+  ;;
   ;; ;; Hook to setup venv when entering python files
   ;; (add-hook 'python-mode-hook #'my/testrun-setup-venv)
   ;; (add-hook 'python-ts-mode-hook #'my/testrun-setup-venv)
-  
+
   ;; Global keybindings with C-c t prefix
   (global-set-key
    (kbd "C-c t")
@@ -838,7 +849,7 @@
      "h" 'dap-hydra                       ; Debug controls (built-in)
      "r" 'dap-debug-restart               ; Restart debug session (built-in)
      ))
-  
+
   ;; Leader key mappings
   (map! :leader
         (:prefix ("t" . "test")
@@ -855,7 +866,7 @@
   :config
   ;; Increase max file size for Copilot completions (default is 100000)
   (setq copilot-max-char 1000000)  ; 1 million characters (~500-1000 lines of code)
-  
+
   ;; Add indentation settings for modes that don't have them in copilot-indentation-alist
   (add-to-list 'copilot-indentation-alist '(prog-mode 4))
   (add-to-list 'copilot-indentation-alist '(text-mode 4))
@@ -929,13 +940,13 @@
 
   ;; Configure claude-code to use our custom display function
   (setq claude-code-display-window-fn #'my-claude-display-top-split)
-  
+
   ;; Override find-file behavior when called from claude-code contexts
   (defun my/claude-code-find-file-advice (orig-fun &rest args)
     "Advice to show files opened by claude-code in main center split."
     (let ((result (apply orig-fun args)))
       ;; If we're in a claude-code context and opened a file buffer
-      (when (and result 
+      (when (and result
                  (bufferp result)
                  (buffer-file-name result)
                  (or (string-match-p "claude" (buffer-name (current-buffer)))
@@ -943,7 +954,7 @@
         ;; Show the file in main center split
         (my-layout-show-in-main-center result))
       result))
-  
+
   (advice-add 'find-file :around #'my/claude-code-find-file-advice)
   (advice-add 'find-file-noselect :around #'my/claude-code-find-file-advice)
 
@@ -960,3 +971,114 @@
           (lambda ()
             (when (evil-normal-state-p)
               (my/toggle-hl-line-on-evil-state))))
+
+;; Enhanced dired colors with diredfl - retro amber theme
+(use-package! diredfl
+  :hook (dired-mode . diredfl-mode)
+  :config
+  ;; Amber palette for dired
+  (set-face-attribute 'diredfl-dir-name nil :foreground "#ffb000" :weight 'bold)
+  (set-face-attribute 'diredfl-file-name nil :foreground "#fcd498")
+  (set-face-attribute 'diredfl-file-suffix nil :foreground "#c78021")
+  (set-face-attribute 'diredfl-symlink nil :foreground "#00ced1" :slant 'italic)
+  (set-face-attribute 'diredfl-date-time nil :foreground "#8d7c6a")
+  (set-face-attribute 'diredfl-number nil :foreground "#e99f17")
+  (set-face-attribute 'diredfl-dir-heading nil :foreground "#ff7300" :weight 'bold)
+  (set-face-attribute 'diredfl-exec-priv nil :foreground "#ff9d00")
+  (set-face-attribute 'diredfl-read-priv nil :foreground "#ffc677")
+  (set-face-attribute 'diredfl-write-priv nil :foreground "#ff7300")
+  (set-face-attribute 'diredfl-no-priv nil :foreground "#372413")
+  (set-face-attribute 'diredfl-rare-priv nil :foreground "#dda0dd")
+  (set-face-attribute 'diredfl-dir-priv nil :foreground "#ffb000")
+  (set-face-attribute 'diredfl-deletion nil :foreground "#ff0000" :weight 'bold)
+  (set-face-attribute 'diredfl-deletion-file-name nil :foreground "#ff0000")
+  (set-face-attribute 'diredfl-flag-mark nil :foreground "#ff9d00" :weight 'bold)
+  (set-face-attribute 'diredfl-flag-mark-line nil :background "#2e1e13")
+  (set-face-attribute 'diredfl-ignored-file-name nil :foreground "#8d7c6a")
+  (set-face-attribute 'diredfl-compressed-file-name nil :foreground "#e99f17")
+  (set-face-attribute 'diredfl-compressed-file-suffix nil :foreground "#c78021"))
+
+;; Dired keybindings and filtering (nnn-style)
+(use-package! dired-narrow
+  :after dired
+  :config
+  ;; Override dired-narrow to use our custom keymap with arrow navigation
+  (advice-add 'dired-narrow--internal :around
+              (lambda (orig-fun &rest args)
+                (minibuffer-with-setup-hook
+                    (lambda ()
+                      (use-local-map my-dired-narrow-minibuffer-map))
+                  (apply orig-fun args)))))
+
+(defun my-dired-reset-filter ()
+  "Reset dired-narrow filter by reverting buffer."
+  (interactive)
+  (revert-buffer))
+
+(defun my-dired-narrow-exit-and-next ()
+  "Exit dired-narrow minibuffer and move to next line."
+  (interactive)
+  (exit-minibuffer)
+  (run-at-time 0.01 nil (lambda ()
+                          (when (derived-mode-p 'dired-mode)
+                            (dired-next-line 1)))))
+
+(defun my-dired-narrow-exit-and-prev ()
+  "Exit dired-narrow minibuffer and move to previous line."
+  (interactive)
+  (exit-minibuffer)
+  (run-at-time 0.01 nil (lambda ()
+                          (when (derived-mode-p 'dired-mode)
+                            (dired-previous-line 1)))))
+
+(defvar my-dired-narrow-minibuffer-map
+  (let ((map (make-sparse-keymap)))
+    (set-keymap-parent map minibuffer-local-map)
+    (define-key map (kbd "<down>") 'my-dired-narrow-exit-and-next)
+    (define-key map (kbd "<up>") 'my-dired-narrow-exit-and-prev)
+    map)
+  "Keymap for dired-narrow minibuffer with arrow navigation.")
+
+(after! dirvish
+  ;; Override dirvish 's' prefix with dired-narrow filter
+  (evil-define-key 'normal dirvish-mode-map (kbd "s") 'dired-narrow)
+  ;; ESC resets filter
+  (evil-define-key 'normal dirvish-mode-map (kbd "<escape>") 'my-dired-reset-filter)
+  ;; C-t for magit
+  (evil-define-key 'normal dirvish-mode-map (kbd "C-t") 'magit-status)
+  ;; Arrow keys for navigation
+  (evil-define-key 'normal dirvish-mode-map (kbd "<right>") 'dired-find-file)
+  (evil-define-key 'normal dirvish-mode-map (kbd "<left>") 'dired-up-directory)
+  (evil-define-key 'normal dirvish-mode-map (kbd "<down>") 'dired-next-line)
+  (evil-define-key 'normal dirvish-mode-map (kbd "<up>") 'dired-previous-line))
+
+(after! dired
+  ;; Fallback for non-dirvish dired buffers
+  (evil-define-key 'normal dired-mode-map (kbd "s") 'dired-narrow)
+  (evil-define-key 'normal dired-mode-map (kbd "<escape>") 'my-dired-reset-filter)
+  (evil-define-key 'normal dired-mode-map (kbd "C-t") 'magit-status)
+  (evil-define-key 'normal dired-mode-map (kbd "<right>") 'dired-find-file)
+  (evil-define-key 'normal dired-mode-map (kbd "<left>") 'dired-up-directory)
+  (evil-define-key 'normal dired-mode-map (kbd "<down>") 'dired-next-line)
+  (evil-define-key 'normal dired-mode-map (kbd "<up>") 'dired-previous-line))
+
+;; Dired modeline with CWD (same styling as terminal)
+(defun my-dired-doom-modeline-cwd ()
+  "Generate current directory segment for dired doom-modeline."
+  (when (derived-mode-p 'dired-mode)
+    (let ((cwd (abbreviate-file-name default-directory)))
+      (propertize (format " %s " cwd)
+                  'face 'claude-code-terminal-cwd-face))))
+
+(with-eval-after-load 'doom-modeline
+  (doom-modeline-def-segment dired-cwd
+    "Display current directory in dired."
+    (my-dired-doom-modeline-cwd))
+
+  (doom-modeline-def-modeline 'my-dired
+    '(bar workspace-name window-number matches dired-cwd)
+    '(misc-info minor-modes major-mode))
+
+  (add-hook 'dired-mode-hook
+            (lambda ()
+              (doom-modeline-set-modeline 'my-dired))))
