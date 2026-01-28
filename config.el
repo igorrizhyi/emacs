@@ -1035,3 +1035,24 @@
   (evil-define-key 'normal dired-mode-map (kbd "<left>") 'dired-up-directory)
   (evil-define-key 'normal dired-mode-map (kbd "<down>") 'dired-next-line)
   (evil-define-key 'normal dired-mode-map (kbd "<up>") 'dired-previous-line))
+
+;; Dired modeline with CWD (same styling as terminal)
+(defun my-dired-doom-modeline-cwd ()
+  "Generate current directory segment for dired doom-modeline."
+  (when (derived-mode-p 'dired-mode)
+    (let ((cwd (abbreviate-file-name default-directory)))
+      (propertize (format " %s " cwd)
+                  'face 'claude-code-terminal-cwd-face))))
+
+(with-eval-after-load 'doom-modeline
+  (doom-modeline-def-segment dired-cwd
+    "Display current directory in dired."
+    (my-dired-doom-modeline-cwd))
+
+  (doom-modeline-def-modeline 'my-dired
+    '(bar workspace-name window-number matches dired-cwd)
+    '(misc-info minor-modes major-mode))
+
+  (add-hook 'dired-mode-hook
+            (lambda ()
+              (doom-modeline-set-modeline 'my-dired))))
