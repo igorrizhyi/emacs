@@ -214,17 +214,28 @@ For embedded commands (ssh, kubectl exec -it, etc.), spawns mistty in a split."
 
 ;; Set up keybindings
 (defun my-eshell-smart-history-search ()
-  "Search history - use terminal C-r if in embedded mode, else consult-history."
+  "Search history - use terminal C-r if in embedded mode, else consult-history.
+Disables preview to avoid font styling issues."
   (interactive)
   (let ((embedded (and (fboundp 'claude-code-terminal--get-state)
                        (claude-code-terminal--get-state :embedded-mode))))
     (if (and embedded (bound-and-true-p eat-eshell-mode))
         ;; In embedded mode (ssh, etc) - send C-r to terminal
         (eat-self-input 1 ?\C-r)
-      ;; Normal eshell - use consult-history
-      (if (fboundp 'consult-history)
-          (consult-history)
-        (eshell-previous-matching-input-from-input "")))))
+      ;; Normal eshell - use consult-history with preview disabled
+      (let ((consult-preview-key nil))
+        (if (fboundp 'consult-history)
+            (consult-history)
+          (eshell-previous-matching-input-from-input "")))
+      ;; After selection, strip face properties and apply retro font styling
+      (when (and (derived-mode-p 'eshell-mode)
+                 (boundp 'eshell-last-output-end)
+                 (fboundp 'claude-code-terminal-style-input))
+        (let ((start eshell-last-output-end)
+              (end (point-max)))
+          (when (< start end)
+            (remove-text-properties start end '(face nil font-lock-face nil))))
+        (claude-code-terminal-style-input)))))
 
 (defun my-eshell-setup-expansion-keys ()
   "Set up expansion keybindings in eshell."

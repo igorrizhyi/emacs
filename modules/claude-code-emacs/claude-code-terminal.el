@@ -2275,6 +2275,7 @@ Use C-RET to confirm MCP output capture."
   ;; Evil bindings for C-t (overrides transpose-chars)
   (evil-define-key 'insert eshell-mode-map (kbd "C-t") 'magit-status)
   (evil-define-key 'normal eshell-mode-map (kbd "C-t") 'magit-status)
+  ;; C-r handled by my-eshell-funcs.el (my-eshell-smart-history-search)
   ;; Enter key - normal command execution
   (define-key eshell-mode-map (kbd "<return>") 'claude-code-terminal-smart-enter)
   ;; C-Enter - MCP output capture confirmation
