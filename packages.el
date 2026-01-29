@@ -96,6 +96,7 @@
 
 (package! ultra-scroll)
 (package! eat)
+(package! mistty)
 (package! telephone-line)
 
 (package! evil-snipe :disable t)
@@ -105,6 +106,11 @@
 (package! diredfl)
 ;; Filter dired items interactively (like nnn)
 (package! dired-narrow)
+
+;; AI-powered git commit messages
+(package! llm)
+(package! magit-gptcommit
+  :recipe (:host github :repo "douo/magit-gptcommit"))
 
 ;; Doom's packages are pinned to a specific commit and updated from release to
 ;; ?release. The `unpin!' macro allows you to unpin single packages... (unpin!

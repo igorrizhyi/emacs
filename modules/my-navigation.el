@@ -51,38 +51,48 @@ Uses `beginning-of-defun' with a negative argument to move forward."
 
 ;; Git hunk navigation with cycling
 (defun my/next-change ()
-  "Jump to next git change, cycling to first if at end."
+  "Jump to next git change, cycling to first if at end.
+Does nothing if there are no changes in the buffer."
   (interactive)
-  (condition-case nil
-      (progn
-        (diff-hl-next-hunk)
-        (recenter))
-    (error
-     ;; No more hunks forward, go to first hunk
-     (goto-char (point-min))
-     (condition-case nil
-         (progn
-           (diff-hl-next-hunk)
-           (recenter)
-           (message "Wrapped to first change"))
-       (error (message "No changes in buffer"))))))
+  (let ((original-pos (point)))
+    (condition-case nil
+        (progn
+          (diff-hl-next-hunk)
+          (recenter))
+      (error
+       ;; No more hunks forward, try to wrap to first hunk
+       (goto-char (point-min))
+       (condition-case nil
+           (progn
+             (diff-hl-next-hunk)
+             (recenter)
+             (message "Wrapped to first change"))
+         (error
+          ;; No changes at all - restore original position
+          (goto-char original-pos)
+          (message "No changes in buffer")))))))
 
 (defun my/previous-change ()
-  "Jump to previous git change, cycling to last if at beginning."
+  "Jump to previous git change, cycling to last if at beginning.
+Does nothing if there are no changes in the buffer."
   (interactive)
-  (condition-case nil
-      (progn
-        (diff-hl-previous-hunk)
-        (recenter))
-    (error
-     ;; No more hunks backward, go to last hunk
-     (goto-char (point-max))
-     (condition-case nil
-         (progn
-           (diff-hl-previous-hunk)
-           (recenter)
-           (message "Wrapped to last change"))
-       (error (message "No changes in buffer"))))))
+  (let ((original-pos (point)))
+    (condition-case nil
+        (progn
+          (diff-hl-previous-hunk)
+          (recenter))
+      (error
+       ;; No more hunks backward, try to wrap to last hunk
+       (goto-char (point-max))
+       (condition-case nil
+           (progn
+             (diff-hl-previous-hunk)
+             (recenter)
+             (message "Wrapped to last change"))
+         (error
+          ;; No changes at all - restore original position
+          (goto-char original-pos)
+          (message "No changes in buffer")))))))
 
 (map! :leader
       :desc "Previous change" "<up>" #'my/previous-change

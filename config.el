@@ -177,6 +177,19 @@
   (map! :map magit-mode-map
         :n "<backtab>" #'magit-section-show-level-2-all))
 
+;; AI-powered git commit messages with OpenAI
+(after! magit
+  (use-package! magit-gptcommit
+    :init
+    (require 'llm-openai)
+    :config
+    (setq magit-gptcommit-llm-provider
+          (make-llm-openai
+           :key "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"
+           :chat-model "gpt-4o-mini"))
+    (magit-gptcommit-mode 1)
+    (magit-gptcommit-status-buffer-setup)))
+
 ;; Some functionality uses this to identify you, e.g. GPG configuration, email
 ;; clients, file templates and snippets. It is optional.
 ;; (setq user-full-name "John Doe"
@@ -277,6 +290,29 @@
   ;; Also activate when switching projects
   (add-hook 'projectile-after-switch-project-hook #'my/auto-activate-venv))
 
+;; Simple eshell venv activation for project-local .venv
+(defun eshell/venv (&optional path)
+  "Activate venv. Usage: venv [path]. Default: .venv in current dir."
+  (let* ((venv-path (expand-file-name (or path ".venv")))
+         (bin-dir (concat venv-path "/bin")))
+    (if (file-directory-p bin-dir)
+        (progn
+          (setenv "VIRTUAL_ENV" venv-path)
+          (setenv "PATH" (concat bin-dir ":" (getenv "PATH")))
+          (eshell-set-path (getenv "PATH"))
+          (format "Activated: %s" venv-path))
+      (format "Not found: %s" venv-path))))
+
+(defun eshell/deactivate ()
+  "Deactivate current venv."
+  (when-let ((venv (getenv "VIRTUAL_ENV")))
+    (let* ((bin-dir (concat venv "/bin"))
+           (paths (split-string (getenv "PATH") ":"))
+           (new-path (string-join (remove bin-dir paths) ":")))
+      (setenv "PATH" new-path)
+      (setenv "VIRTUAL_ENV")
+      (eshell-set-path new-path)
+      "Deactivated")))
 
 ;; Configure lsp-pyright for superior pyright integration
 (lsp-register-client
@@ -679,6 +715,15 @@
       "C-w" #'kill-current-buffer  ; Kill buffer with C-w
       "S" #'diff-hl-show-hunk  ; Show diff hunk with S
       "U" #'evil-redo)  ; Redo with U (undo is u)
+
+;; Global C-1 to open dired in current directory (override numeric arg)
+(define-key global-map (kbd "C-1") nil)  ; Unbind numeric arg
+(global-set-key (kbd "C-1") #'dired-jump)
+;; Also override in Evil states
+(after! evil
+  (define-key evil-normal-state-map (kbd "C-1") #'dired-jump)
+  (define-key evil-insert-state-map (kbd "C-1") #'dired-jump)
+  (define-key evil-motion-state-map (kbd "C-1") #'dired-jump))
 
 ;; Configure treemacs to open files in existing splits (most recent window)
 (after! treemacs
