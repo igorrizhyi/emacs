@@ -1706,11 +1706,11 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
   "Font family for eshell prompt and command input.")
 
 (defface claude-code-terminal-prompt-face
-  '((t :family "Perfect DOS VGA 437 Win" :height 0.65 :foreground "#00ff00"))
+  '((t :family "Perfect DOS VGA 437 Win" :height 0.5 :foreground "#00ff00"))
   "Face for eshell prompt with retro hacker font.")
 
 (defface claude-code-terminal-input-face
-  '((t :family "Perfect DOS VGA 437 Win" :height 0.65))
+  '((t :family "Perfect DOS VGA 437 Win" :height 0.5))
   "Face for eshell command input with retro hacker font.")
 
 ;;; Doom-modeline Integration for Colorful Mode Line
@@ -1809,10 +1809,19 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
 ;;; Mode Definition
 
 (defun claude-code-terminal-send-C-c ()
-  "Send C-c to the terminal process."
+  "Send C-c to the terminal process (eshell or mistty)."
   (interactive)
-  (when-let ((proc (get-buffer-process (current-buffer))))
-    (process-send-string proc "\C-c")))
+  (cond
+   ((derived-mode-p 'mistty-mode)
+    (if (fboundp 'mistty-send-string)
+        (mistty-send-string "\C-c")
+      (when-let ((proc (get-buffer-process (current-buffer))))
+        (process-send-string proc "\C-c"))))
+   ((derived-mode-p 'eshell-mode)
+    (eshell-interrupt-process))
+   (t
+    (when-let ((proc (get-buffer-process (current-buffer))))
+      (process-send-string proc "\C-c")))))
 
 (defvar claude-code-terminal-mode-map
   (let ((map (make-sparse-keymap)))
@@ -2238,17 +2247,29 @@ Use C-RET to confirm MCP output capture."
               (claude-code-terminal-spawn-mistty input))
           ;; Regular command - run in eshell
           (claude-code-terminal--set-state :embedded-mode nil)
-          ;; Insert newline before execution to create unstyled gap before output
           (when (not (string-empty-p input))
+            ;; Manually add clean command to history (without newline)
+            (when (and (boundp 'eshell-history-ring) eshell-history-ring)
+              (ring-insert eshell-history-ring input))
+            ;; Insert newline before execution to create unstyled gap before output
             (goto-char (point-max))
-            (insert "\n"))
-          (eshell-send-input)))))
+            (insert "\n")
+            ;; Send input with history disabled (we already added it)
+            (let ((eshell-input-filter (lambda (_) nil)))
+              (eshell-send-input)))
+          ;; Empty input - just send
+          (when (string-empty-p input)
+            (eshell-send-input))))))
 
 (defun claude-code-terminal-send-interrupt ()
-  "Send C-c (interrupt) to eshell."
+  "Send C-c (interrupt) to eshell or mistty."
   (interactive)
-  (when (derived-mode-p 'eshell-mode)
-    (eshell-interrupt-process)))
+  (cond
+   ((derived-mode-p 'eshell-mode)
+    (eshell-interrupt-process))
+   ((derived-mode-p 'mistty-mode)
+    (when (fboundp 'mistty-send-key)
+      (mistty-send-key 1 ?\C-c)))))
 
 (defun claude-code-terminal-send-eof ()
   "Send C-d (EOF) to eshell."
@@ -2720,6 +2741,8 @@ Mistty becomes the main terminal buffer. When it closes, eshell returns."
         ;; C-Enter - MCP output capture confirmation
         (local-set-key (kbd "C-<return>") #'claude-code-mcp-capture-and-send)
         (local-set-key (kbd "C-RET") #'claude-code-mcp-capture-and-send)
+        ;; C-c C-c for interrupt - send directly to terminal
+        (local-set-key (kbd "C-c C-c") #'mistty-send-key)
 
         ;; History navigation - send directly to terminal
         (local-set-key (kbd "<up>") #'mistty-send-key)

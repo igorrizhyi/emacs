@@ -223,10 +223,16 @@ Disables preview to avoid font styling issues."
         ;; In embedded mode (ssh, etc) - send C-r to terminal
         (eat-self-input 1 ?\C-r)
       ;; Normal eshell - use consult-history with preview disabled
-      (let ((consult-preview-key nil))
-        (if (fboundp 'consult-history)
-            (consult-history)
-          (eshell-previous-matching-input-from-input "")))
+      (let ((old-preview-key (and (boundp 'consult-preview-key) consult-preview-key)))
+        (unwind-protect
+            (progn
+              (when (boundp 'consult-preview-key)
+                (setq consult-preview-key nil))
+              (if (fboundp 'consult-history)
+                  (consult-history)
+                (eshell-previous-matching-input-from-input "")))
+          (when (boundp 'consult-preview-key)
+            (setq consult-preview-key old-preview-key))))
       ;; After selection, strip face properties and apply retro font styling
       (when (and (derived-mode-p 'eshell-mode)
                  (boundp 'eshell-last-output-end)

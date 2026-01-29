@@ -1273,7 +1273,9 @@ This is called from `post-command-hook'."
   (or (buffer-file-name buffer)                           ; File buffers
       (and (featurep 'claude-code)                        ; Terminal buffers (any type)
            (fboundp 'claude-code--is-terminal-buffer-p)
-           (claude-code--is-terminal-buffer-p buffer))))
+           (claude-code--is-terminal-buffer-p buffer))
+      (with-current-buffer buffer                         ; Mistty buffers
+        (derived-mode-p 'mistty-mode))))
 
 (defun monet--send-selection (client)
   "Send current selection to CLIENT if buffer is valid and live."

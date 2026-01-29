@@ -824,6 +824,11 @@
             (evil-local-set-key 'normal (kbd "C-t") #'magit-status)
             (evil-local-set-key 'insert (kbd "C-t") #'magit-status)))
 
+(add-hook 'markdown-mode-hook
+          (lambda ()
+            (evil-local-set-key 'normal (kbd "C-t") #'magit-status)
+            (evil-local-set-key 'insert (kbd "C-t") #'magit-status)))
+
 ;; Window layout key bindings with SPC-w prefix (window management)
 (map! :leader
       (:prefix ("w" . "window layout")
@@ -1098,6 +1103,8 @@
   (evil-define-key 'normal dirvish-mode-map (kbd "<up>") 'dired-previous-line))
 
 (after! dired
+  ;; Sort by modification time, newest first
+  (setq dired-listing-switches "-alht")  ; -t = sort by time, -h = human readable sizes
   ;; Fallback for non-dirvish dired buffers
   (evil-define-key 'normal dired-mode-map (kbd "s") 'dired-narrow)
   (evil-define-key 'normal dired-mode-map (kbd "<escape>") 'my-dired-reset-filter)
