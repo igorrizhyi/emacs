@@ -1016,6 +1016,25 @@
 
 (spacious-padding-mode)
 
+;; Agent shell - AI coding agents in Emacs (Claude Code, Gemini CLI, etc.)
+(use-package! acp
+  :defer t)
+
+(use-package! agent-shell
+  :after acp
+  :commands (agent-shell agent-shell-with-config))
+
+;; Bridge agent-shell with our Emacs MCP server
+(add-to-list 'load-path (expand-file-name "modules" doom-user-dir))
+(autoload 'agent-shell-emacs-mcp "agent-shell-emacs-mcp" "Start Claude with Emacs MCP integration." t)
+
+(after! agent-shell
+  ;; Require MCP tools for the stdio server
+  (require 'claude-code-mcp-tools nil t)
+  ;; Keybinding for quick access
+  (map! :leader
+        :desc "Claude (Emacs MCP)" "c c" #'agent-shell-emacs-mcp))
+
 ;; Initial setup - enable for normal mode by default
 (add-hook 'evil-mode-hook
           (lambda ()

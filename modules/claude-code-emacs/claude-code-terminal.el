@@ -36,8 +36,8 @@
 (require 'esh-mode)
 (require 'em-prompt)
 
-;; Forward declaration for functions from claude-code.el
-(declare-function claude-code--do-send-command "claude-code" (cmd))
+;; Forward declarations for functions from claude-code-core.el
+(declare-function claude-code-send-string "claude-code-core" (string &optional paste-p))
 
 ;;; Variables
 
@@ -2142,8 +2142,28 @@ The process sentinel will handle that when the subprocess actually exits."
       
       ;; Evil mode keybindings if available
       (when (featurep 'evil)
-        (evil-local-set-key 'normal (kbd "q") 
-                           (lambda () 
+        ;; Insert state - Enter to send, Shift+Enter for newlines
+        (evil-local-set-key 'insert (kbd "<return>")
+                           (lambda ()
+                             (interactive)
+                             (claude-code-send-command-from-popup)))
+        (evil-local-set-key 'insert (kbd "RET")
+                           (lambda ()
+                             (interactive)
+                             (claude-code-send-command-from-popup)))
+        (evil-local-set-key 'insert (kbd "S-<return>") 'newline)
+        (evil-local-set-key 'insert (kbd "<escape>")
+                           (lambda ()
+                             (interactive)
+                             (delete-frame)
+                             (message "Claude command cancelled")))
+        ;; Normal state
+        (evil-local-set-key 'normal (kbd "<return>")
+                           (lambda ()
+                             (interactive)
+                             (claude-code-send-command-from-popup)))
+        (evil-local-set-key 'normal (kbd "q")
+                           (lambda ()
                              (interactive)
                              (delete-frame))))
       
@@ -2175,14 +2195,40 @@ The process sentinel will handle that when the subprocess actually exits."
           (command-lines '()))
       (dolist (line lines)
         (unless (or (string-prefix-p "#" line)
-                   (string-empty-p (string-trim line)))
+                    (string-prefix-p "<" line)  ; Skip HTML comments
+                    (string-empty-p (string-trim line)))
           (push line command-lines)))
       (let ((command (string-join (reverse command-lines) "\n")))
         (when (not (string-empty-p (string-trim command)))
-          ;; Send to claude using the same format as the original function
-          (claude-code--do-send-command (format "/emacs-terminal %s" command))
-          (delete-frame)
-          (message "Command sent to Claude"))))))
+          ;; Try agent-shell first, fallback to claude-code
+          (let ((agent-buffer (claude-code--find-agent-shell-buffer)))
+            (if agent-buffer
+                (progn
+                  (delete-frame)
+                  (with-current-buffer agent-buffer
+                    (goto-char (point-max))
+                    ;; Use /emacs-terminal to trigger MCP integration
+                    (insert (format "/emacs-terminal %s" command))
+                    (when (fboundp 'shell-maker-submit)
+                      (shell-maker-submit)))
+                  (display-buffer agent-buffer)
+                  (message "Command sent to agent-shell"))
+              ;; Fallback to claude-code session
+              (claude-code-send-string command)
+              (delete-frame)
+              (message "Command sent to Claude"))))))))
+
+(defun claude-code--find-agent-shell-buffer ()
+  "Find an active agent-shell buffer.
+Looks for buffers with shell-maker--config set (shell-maker buffers)
+or buffer names containing 'Claude'."
+  (seq-find (lambda (buf)
+              (with-current-buffer buf
+                (or (and (boundp 'shell-maker--config)
+                         shell-maker--config)
+                    (and (derived-mode-p 'comint-mode)
+                         (string-match-p "Claude" (buffer-name buf))))))
+            (buffer-list)))
 
 ;; Forward declaration for MCP capture function
 (declare-function claude-code-mcp-capture-and-send "claude-code-mcp-tools" ())

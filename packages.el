@@ -112,6 +112,12 @@
 (package! magit-gptcommit
   :recipe (:host github :repo "douo/magit-gptcommit"))
 
+;; Agent shell - AI coding agents in Emacs
+(package! shell-maker)
+(package! acp)
+(package! agent-shell
+  :recipe (:host github :repo "xenodium/agent-shell"))
+
 ;; Doom's packages are pinned to a specific commit and updated from release to
 ;; ?release. The `unpin!' macro allows you to unpin single packages... (unpin!
 ;; pinned-package) ...or multiple packages (unpin! pinned-package
