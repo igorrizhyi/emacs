@@ -90,7 +90,22 @@
             (eshell/alias "grep" "*grep -h $*")))
 
 (defvar my-eshell-dired-return-info nil
-  "Plist with :buffer for eshell to return to after dired quit.")
+  "Plist with :buffer for terminal to return to after dired quit.")
+
+(defun my-dired--is-terminal-buffer-p (buffer)
+  "Check if BUFFER is a terminal buffer (eshell, eat, vterm, mistty)."
+  (when (and buffer (buffer-live-p buffer))
+    (with-current-buffer buffer
+      (or (derived-mode-p 'eshell-mode)
+          (derived-mode-p 'eat-mode)
+          (derived-mode-p 'vterm-mode)
+          (derived-mode-p 'term-mode)
+          (derived-mode-p 'mistty-mode)))))
+
+(defun my-dired--record-source-buffer ()
+  "Record current buffer if it's a terminal, for dired return."
+  (when (my-dired--is-terminal-buffer-p (current-buffer))
+    (setq my-eshell-dired-return-info (list :buffer (current-buffer)))))
 
 (defun eshell/d (&optional dir)
   "Open dired in DIR (default: current directory).
@@ -98,23 +113,82 @@ On quit, return to eshell and cd to dired's final directory."
   (setq my-eshell-dired-return-info (list :buffer (current-buffer)))
   (dired (or dir default-directory)))
 
-(defun my-dired-return-to-eshell-advice (orig-fn &rest args)
-  "Advice for dirvish-quit to return to eshell with new directory."
+;; Advice dired-jump to record source terminal buffer
+(defun my-dired-jump-record-source (orig-fn &rest args)
+  "Record source terminal buffer before opening dired."
+  (my-dired--record-source-buffer)
+  (apply orig-fn args))
+
+(advice-add 'dired-jump :around #'my-dired-jump-record-source)
+
+(defun my-dired-return-to-terminal ()
+  "Return to source terminal buffer and cd to dired's directory."
   (let ((info my-eshell-dired-return-info)
         (new-dir default-directory))
     (setq my-eshell-dired-return-info nil)
-    (apply orig-fn args)
-    (when-let* ((eshell-buf (plist-get info :buffer))
-                ((buffer-live-p eshell-buf)))
-      (switch-to-buffer eshell-buf)
-      (goto-char (point-max))
-      (eshell/cd new-dir)
-      (eshell-emit-prompt))))
+    (when-let* ((term-buf (plist-get info :buffer))
+                ((buffer-live-p term-buf)))
+      (switch-to-buffer term-buf)
+      (cond
+       ;; Eshell - use eshell/cd
+       ((derived-mode-p 'eshell-mode)
+        (goto-char (point-max))
+        (eshell/cd new-dir)
+        (eshell-emit-prompt))
+       ;; Eat/vterm/mistty - send cd command
+       ((derived-mode-p 'eat-mode)
+        (eat-term-send-string eat-terminal (format "cd %s\n" (shell-quote-argument new-dir))))
+       ((derived-mode-p 'vterm-mode)
+        (vterm-send-string (format "cd %s\n" (shell-quote-argument new-dir))))
+       ((derived-mode-p 'mistty-mode)
+        (mistty-send-text (format "cd %s" (shell-quote-argument new-dir)))
+        (mistty-send-key 'return))
+       ((derived-mode-p 'term-mode)
+        (term-send-raw-string (format "cd %s\n" (shell-quote-argument new-dir))))))))
 
+(defun my-dired-return-to-terminal-advice (orig-fn &rest args)
+  "Advice to return to terminal after dired quit."
+  (let ((info my-eshell-dired-return-info)
+        (new-dir default-directory)
+        (was-dired (derived-mode-p 'dired-mode)))
+    (apply orig-fn args)
+    (when (and was-dired info)
+      (setq my-eshell-dired-return-info nil)
+      (when-let* ((term-buf (plist-get info :buffer))
+                  ((buffer-live-p term-buf)))
+        (switch-to-buffer term-buf)
+        (cond
+         ((with-current-buffer term-buf (derived-mode-p 'eshell-mode))
+          (goto-char (point-max))
+          (eshell/cd new-dir)
+          (eshell-emit-prompt))
+         ((with-current-buffer term-buf (derived-mode-p 'eat-mode))
+          (eat-term-send-string eat-terminal (format "cd %s\n" (shell-quote-argument new-dir))))
+         ((with-current-buffer term-buf (derived-mode-p 'vterm-mode))
+          (vterm-send-string (format "cd %s\n" (shell-quote-argument new-dir))))
+         ((with-current-buffer term-buf (derived-mode-p 'mistty-mode))
+          (mistty-send-text (format "cd %s" (shell-quote-argument new-dir)))
+          (mistty-send-key 'return))
+         ((with-current-buffer term-buf (derived-mode-p 'term-mode))
+          (term-send-raw-string (format "cd %s\n" (shell-quote-argument new-dir)))))))))
+
+;; Advice for dirvish-quit
 (when (fboundp 'dirvish-quit)
-  (advice-add 'dirvish-quit :around #'my-dired-return-to-eshell-advice))
+  (advice-add 'dirvish-quit :around #'my-dired-return-to-terminal-advice))
 (with-eval-after-load 'dirvish
-  (advice-add 'dirvish-quit :around #'my-dired-return-to-eshell-advice))
+  (advice-add 'dirvish-quit :around #'my-dired-return-to-terminal-advice))
+
+;; Advice for kill-current-buffer when in dired
+(defun my-dired-kill-buffer-advice (orig-fn &rest args)
+  "Advice to return to terminal when killing dired buffer."
+  (if (derived-mode-p 'dired-mode)
+      (my-dired-return-to-terminal-advice orig-fn args)
+    (apply orig-fn args)))
+
+(advice-add 'kill-current-buffer :around #'my-dired-kill-buffer-advice)
+
+;; Also handle quit-window
+(advice-add 'quit-window :around #'my-dired-return-to-terminal-advice)
 
 (defun my-eshell-get-current-input ()
   "Get current input text in eshell."

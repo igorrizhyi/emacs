@@ -182,12 +182,13 @@
   (use-package! magit-gptcommit
     :init
     (require 'llm-openai)
+    (setq llm-warn-on-nonfree nil)  ; Suppress "not free software" warning
     :config
     (setq magit-gptcommit-llm-provider
           (make-llm-openai
            :key "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"
            :chat-model "gpt-4o-mini"))
-    (magit-gptcommit-mode 1)
+    ;; (magit-gptcommit-mode 1)  ; Disabled - enable with M-x magit-gptcommit-mode
     (magit-gptcommit-status-buffer-setup)))
 
 ;; Some functionality uses this to identify you, e.g. GPG configuration, email
@@ -829,6 +830,12 @@
             (evil-local-set-key 'normal (kbd "C-t") #'magit-status)
             (evil-local-set-key 'insert (kbd "C-t") #'magit-status)))
 
+(add-hook 'org-mode-hook
+          (lambda ()
+            (evil-local-set-key 'normal (kbd "C-r") #'revert-buffer)
+            (evil-local-set-key 'normal (kbd "C-t") #'magit-status)
+            (evil-local-set-key 'insert (kbd "C-t") #'magit-status)))
+
 ;; Window layout key bindings with SPC-w prefix (window management)
 (map! :leader
       (:prefix ("w" . "window layout")
@@ -907,7 +914,8 @@
          :desc "Run all tests" "a" #'my/testrun-all)))
 
 (use-package! copilot
-  :hook (prog-mode . copilot-mode)
+  :hook ((prog-mode . copilot-mode)
+         (markdown-mode . copilot-mode))
   :bind (:map copilot-completion-map
               ("<tab>" . 'copilot-accept-completion)
               ("TAB" . 'copilot-accept-completion)

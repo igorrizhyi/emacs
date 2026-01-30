@@ -16,7 +16,7 @@
   "Hash table storing window handles for each split.")
 
 (defconst my-layout--splits
-  '(left-sidebar main-center top-chat bottom-bar)
+  '(left-sidebar main-center top-chat bottom-bar right-sidebar)
   "Available window splits in the layout.")
 
 (defvar my-layout--claude-started nil
@@ -158,6 +158,43 @@
       (my-layout--set-state 'bottom-bar 'hidden)
       (my-layout--set-window 'bottom-bar nil))))
 
+(defun my-layout-show-in-right-sidebar (buffer)
+  "Show BUFFER in the right sidebar split (50% of frame width)."
+  (interactive)
+  (let ((existing-window (my-layout--get-window 'right-sidebar)))
+    ;; Clean up stale window handle
+    (when (and existing-window (not (window-live-p existing-window)))
+      (my-layout--set-window 'right-sidebar nil)
+      (my-layout--set-state 'right-sidebar 'hidden)
+      (setq existing-window nil))
+    (if (and existing-window (window-live-p existing-window))
+        ;; Right sidebar already exists, just switch buffer
+        (progn
+          (select-window existing-window)
+          (switch-to-buffer buffer))
+      ;; Create new right sidebar
+      (let* ((main-window (selected-window))
+             (sidebar-width (/ (window-width) 2)))
+        ;; Split horizontally, new window appears on the right
+        (let ((sidebar-window (split-window-horizontally (- sidebar-width))))
+          ;; sidebar-window is now the right window, switch to it
+          (select-window sidebar-window)
+          (switch-to-buffer buffer)
+          (my-layout--set-window 'right-sidebar (selected-window))
+          (my-layout--set-state 'right-sidebar 'visible)
+          ;; Return to main window
+          (select-window main-window)
+          (my-layout--set-window 'main-center main-window))))))
+
+(defun my-layout-hide-right-sidebar ()
+  "Hide the right sidebar."
+  (interactive)
+  (let ((window (my-layout--get-window 'right-sidebar)))
+    (when (and window (window-live-p window))
+      (delete-window window)
+      (my-layout--set-state 'right-sidebar 'hidden)
+      (my-layout--set-window 'right-sidebar nil))))
+
 (defun my-layout-toggle-bottom-bar ()
   "Toggle the bottom bar visibility."
   (interactive)
@@ -211,7 +248,7 @@
   (let ((current-window (selected-window)))
     (condition-case nil
         (windmove-left)
-      (error 
+      (error
        (when (my-layout--get-window 'left-sidebar)
          (select-window (my-layout--get-window 'left-sidebar)))))))
 
@@ -228,7 +265,7 @@
   (interactive)
   (condition-case nil
       (windmove-up)
-    (error 
+    (error
      (when (my-layout--get-window 'top-chat)
        (select-window (my-layout--get-window 'top-chat))))))
 
@@ -237,7 +274,7 @@
   (interactive)
   (condition-case nil
       (windmove-down)
-    (error 
+    (error
      (when (my-layout--get-window 'bottom-bar)
        (select-window (my-layout--get-window 'bottom-bar))))))
 
@@ -262,19 +299,19 @@
   (let ((claude-buffer (seq-find (lambda (buf)
                                    (string-match-p "^\\*claude:" (buffer-name buf)))
                                  (buffer-list))))
-    
+
     (cond
      ;; Case 1: Claude never started - start it
      ((not my-layout--claude-started)
       (claude-code)
       (setq my-layout--claude-started t)
       (message "Started Claude Code"))
-     
+
      ;; Case 2: Claude buffer exists - show it in main-center
      (claude-buffer
       (my-layout-show-in-main-center claude-buffer)
       (message "Showing Claude Code in main window"))
-     
+
      ;; Fallback: start Claude Code
      (t
       (claude-code)
@@ -321,13 +358,13 @@
     (when (window-live-p left-window)
       (with-selected-window left-window
         (window-resize left-window (- 60 (window-width)) t))))
-  
+
   (when-let ((top-window (my-layout--get-window 'top-chat)))
     (when (window-live-p top-window)
       (with-selected-window top-window
         (let ((target-height (floor (* (frame-height) 0.3))))
           (window-resize top-window (- target-height (window-height)) nil)))))
-  
+
   (when-let ((bottom-window (my-layout--get-window 'bottom-bar)))
     (when (window-live-p bottom-window)
       (with-selected-window bottom-window
@@ -354,8 +391,8 @@
     (run-with-idle-timer 0.1 nil #'my-layout--restore-window-sizes)))
 
 ;; Install the window deletion hook
-(add-hook 'window-selection-change-functions 
-          (lambda (frame) 
+(add-hook 'window-selection-change-functions
+          (lambda (frame)
             (my-layout--restore-window-sizes)))
 
 ;; Visual focus indication for top chat
@@ -376,7 +413,7 @@
         (with-selected-window window
           (when my-layout-focused-window-overlay
             (delete-overlay my-layout-focused-window-overlay))
-          (setq my-layout-focused-window-overlay 
+          (setq my-layout-focused-window-overlay
                 (make-overlay (window-start) (window-end)))
           ;; (overlay-put my-layout-focused-window-overlay 'face 'my-layout-focused-window-face)
           (overlay-put my-layout-focused-window-overlay 'window window))))))
@@ -393,7 +430,7 @@
   (my-layout-highlight-top-chat))
 
 ;; Hook to update focus indication
-(add-hook 'window-selection-change-functions 
+(add-hook 'window-selection-change-functions
           (lambda (frame) (my-layout-update-chat-focus)))
 (add-hook 'buffer-list-update-hook #'my-layout-update-chat-focus)
 
@@ -407,13 +444,15 @@
 
 ;; Compatibility aliases for existing code
 (defalias 'my/show-file-main-right 'my-layout-show-file-top-chat)
-(defalias 'my-window-layout-show-with-layout 
+(defalias 'my-window-layout-show-with-layout
   (lambda (split buffer)
     (pcase split
       ('bottom-bar (my-layout-show-in-bottom-bar buffer))
       ('left-sidebar (my-layout-show-in-left-sidebar buffer))
       ('top-chat (my-layout-show-in-top-chat buffer))
       ('main-center (my-layout-show-in-main-center buffer))
+      ('right-sidebar (my-layout-show-in-right-sidebar buffer))
+      ('right-chat (my-layout-show-in-right-sidebar buffer))
       (_ (switch-to-buffer buffer)))))
 
 (defalias 'my-window-layout--get-window 'my-layout--get-window)
