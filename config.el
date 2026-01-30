@@ -186,7 +186,6 @@
     :config
     (setq magit-gptcommit-llm-provider
           (make-llm-openai
-           :key "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"
            :chat-model "gpt-4o-mini"))
     ;; (magit-gptcommit-mode 1)  ; Disabled - enable with M-x magit-gptcommit-mode
     (magit-gptcommit-status-buffer-setup)))
