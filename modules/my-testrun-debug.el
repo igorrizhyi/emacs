@@ -97,7 +97,7 @@ Uses the directory containing .venv if found, otherwise project root."
       ;; Search backwards for any function definition
       (while (and (not func-name) (not (bobp)))
         (beginning-of-line)
-        (when (looking-at "^\\s-*def\\s-+\\([A-Za-z_][A-Za-z0-9_]*\\)")
+        (when (looking-at "^\\s-*\\(?:async\\s-+\\)?def\\s-+\\([A-Za-z_][A-Za-z0-9_]*\\)")
           (setq func-name (match-string 1)))
         (unless func-name
           (forward-line -1)))
@@ -108,25 +108,36 @@ Uses the directory containing .venv if found, otherwise project root."
   (interactive)
   (save-excursion
     (let ((start-pos (point))
+          (start-line (line-number-at-pos))
           (test-function nil))
+      (message "DEBUG find-nearest-test: Starting search from line %d, pos %d" start-line start-pos)
+
       ;; First try to find a test function at or before current position
       (while (and (not test-function) (not (bobp)))
         (beginning-of-line)
-        (when (looking-at "^\\s-*def\\s-+\\(test_[^(]+\\)")
-          (setq test-function (match-string 1)))
-        (unless test-function
-          (forward-line -1)))
+        (let ((line-text (buffer-substring-no-properties
+                          (line-beginning-position) (line-end-position))))
+          (when (looking-at "^\\s-*\\(?:async\\s-+\\)?def\\s-+\\(test_[^(]+\\)")
+            (setq test-function (string-trim (match-string 1)))
+            (message "DEBUG find-nearest-test: MATCHED at line %d: '%s' (raw match: '%s')"
+                     (line-number-at-pos) test-function (match-string 1)))
+          (unless test-function
+            (forward-line -1))))
 
       ;; If no test found before, try searching forward
       (unless test-function
+        (message "DEBUG find-nearest-test: No test found backward, trying forward...")
         (goto-char start-pos)
         (while (and (not test-function) (not (eobp)))
           (beginning-of-line)
-          (when (looking-at "^\\s-*def\\s-+\\(test_[^(]+\\)")
-            (setq test-function (match-string 1)))
+          (when (looking-at "^\\s-*\\(?:async\\s-+\\)?def\\s-+\\(test_[^(]+\\)")
+            (setq test-function (string-trim (match-string 1)))
+            (message "DEBUG find-nearest-test: MATCHED forward at line %d: '%s'"
+                     (line-number-at-pos) test-function))
           (unless test-function
             (forward-line 1))))
 
+      (message "DEBUG find-nearest-test: Final result: '%s'" test-function)
       (if test-function
           (progn
             (when (called-interactively-p 'interactive)
@@ -161,13 +172,21 @@ Otherwise, finds the nearest test function and runs it with class context."
   (interactive)
   (let* ((file-path (buffer-file-name))
          (pytest-root (my/get-pytest-root))
-         (relative-path (file-relative-name file-path pytest-root)))
+         (relative-path (file-relative-name file-path pytest-root))
+         (original-pos (point))
+         (original-line (line-number-at-pos)))
+    (message "DEBUG: Starting test detection at line %d, pos %d" original-line original-pos)
+    (message "DEBUG: file=%s pytest-root=%s" file-path pytest-root)
     (when file-path
       (save-excursion
         ;; First check if we're on a test class definition
         (beginning-of-line)
+        (let ((current-line-text (buffer-substring-no-properties
+                                  (line-beginning-position) (line-end-position))))
+          (message "DEBUG: Current line text: '%s'" current-line-text))
         (if (and (looking-at "^class\\s-+\\([A-Za-z][A-Za-z0-9_]*\\)")
                  (let ((class-name (match-string 1)))
+                   (message "DEBUG: On class definition line: %s" class-name)
                    (or (string-match-p "Test" class-name)
                        (string-prefix-p "Test" class-name))))
             ;; We're on a test class - run the entire class
@@ -180,19 +199,29 @@ Otherwise, finds the nearest test function and runs it with class context."
               (my/run-pytest-with-output-parsing pytest-cmd test-spec))
 
           ;; Not on a class line - find nearest test function
+          (message "DEBUG: Not on class line, calling my/find-nearest-test-function...")
           (let ((test-func (my/find-nearest-test-function)))
-            (when test-func
+            (message "DEBUG: my/find-nearest-test-function returned: '%s'" test-func)
+            (if (not test-func)
+                (message "ERROR: No test function found near cursor position!")
               (let ((class-name nil))
                 ;; Find the class this test belongs to
+                (message "DEBUG: Searching for class containing '%s'..." test-func)
                 (goto-char (point-min))
-                (while (re-search-forward (format "def %s" test-func) nil t)
-                  (save-excursion
-                    (beginning-of-line)
-                    (while (and (not class-name) (not (bobp)))
-                      (forward-line -1)
-                      (when (looking-at "^class\\s-+\\([A-Za-z][A-Za-z0-9_]*\\)")
-                        (setq class-name (match-string 1))))))
+                (let ((search-pattern (format "def %s\\b" test-func)))
+                  (message "DEBUG: Using search pattern: '%s'" search-pattern)
+                  (while (re-search-forward search-pattern nil t)
+                    (message "DEBUG: Found 'def %s' at line %d" test-func (line-number-at-pos))
+                    (save-excursion
+                      (beginning-of-line)
+                      (while (and (not class-name) (not (bobp)))
+                        (forward-line -1)
+                        (when (looking-at "^class\\s-+\\([A-Za-z][A-Za-z0-9_]*\\)")
+                          (setq class-name (match-string 1))
+                          (message "DEBUG: Found containing class '%s' at line %d"
+                                   class-name (line-number-at-pos)))))))
 
+                (message "DEBUG: Final result - class: '%s', test: '%s'" class-name test-func)
                 (let* ((test-spec (if class-name
                                      (format "%s::%s::%s" relative-path class-name test-func)
                                    (format "%s::%s" relative-path test-func)))
@@ -308,9 +337,9 @@ Otherwise, finds the nearest test function and runs it with class context."
     (select-window current-window)))
 
 (defun my/show-success-popup (output-text test-spec)
-  "Show a concise success popup with only essential information."
+  "Show a concise success popup with only essential information.
+Uses amber/retro style matching Claude MCP popups."
   (let ((timing-info "")
-        (test-count "")
         (passed-count ""))
 
     ;; Extract key information from output
@@ -320,53 +349,58 @@ Otherwise, finds the nearest test function and runs it with class context."
        ((string-match "=+ \\([0-9]+\\) passed.* in \\([0-9.]+s\\) =+" line)
         (setq passed-count (match-string 1 line))
         (setq timing-info (match-string 2 line)))
-       ;; Extract test count from collection line
-       ((string-match "collected \\([0-9]+\\) items?" line)
-        (setq test-count (match-string 1 line)))
        ;; Fallback: Extract passed count if not found in summary line
        ((and (string-empty-p passed-count) (string-match "\\([0-9]+\\) passed" line))
         (setq passed-count (match-string 1 line)))))
 
-    ;; Create concise popup content
-    (let ((candidates
-           (list
-            (propertize (format "✅ TEST PASSED: %s" test-spec) 'face 'success)
-            ""
-            (propertize (format "📊 %s test%s completed"
-                               (if (string-empty-p passed-count) "1" passed-count)
-                               (if (and (not (string-empty-p passed-count))
-                                       (not (string= passed-count "1"))) "s" ""))
-                       'face 'font-lock-keyword-face)
-            (when (not (string-empty-p timing-info))
-              (propertize (format "⏱️  Execution time: %s" timing-info)
-                         'face 'font-lock-comment-face)))))
+    ;; Truncate test-spec if too long
+    (let* ((spec-display (if (> (length test-spec) 44)
+                             (concat (substring test-spec 0 41) "...")
+                           test-spec))
+           (spec-padded (concat spec-display (make-string (max 0 (- 44 (length spec-display))) ?\s)))
+           (count-str (if (string-empty-p passed-count) "1" passed-count))
+           (time-str (if (string-empty-p timing-info) "---" timing-info))
+           (content (concat "
++----------------------------------------------------+
+|                                                    |
+|            >>> TEST PASSED <<<                     |
+|                                                    |
+|   " spec-padded "   |
+|                                                    |
+|   Tests: " (format "%-5s" count-str) "                 Time: " (format "%-10s" time-str) "   |
+|                                                    |
+|        [x/ESC] close    [o] show output            |
+|                                                    |
++----------------------------------------------------+
+")))
 
-      ;; Remove nil entries and empty strings except the deliberate separator
-      (setq candidates (delq nil candidates))
-
-      ;; Show using direct posframe - centered
+      ;; Show using posframe with amber/retro style
       (let ((buffer-name " *test-results*"))
-        (with-current-buffer (get-buffer-create buffer-name)
-          (erase-buffer)
-          (insert (mapconcat 'identity candidates "\n"))
-          (goto-char (point-min)))
-
-        ;; Show centered posframe with appropriate height
-        (posframe-show buffer-name
-                       :poshandler #'posframe-poshandler-frame-center
-                       :width 60
-                       :height (+ 2 (length candidates))
-                       :border-width 2
-                       :border-color "#555555"
-                       :background-color (face-background 'default)
-                       :foreground-color (face-foreground 'default)
-                       :internal-border-width 8
-                       :left-fringe 8
-                       :right-fringe 8)
-
-        ;; Wait for user input then hide
         (unwind-protect
-            (read-key "Press any key to close...")
+            (progn
+              (posframe-show buffer-name
+                             :string (propertize content 'face '(:foreground "#ffb000" :height 1.1))
+                             :poshandler #'posframe-poshandler-frame-top-center
+                             :border-width 2
+                             :border-color "#ffb000"
+                             :background-color "#1a1000"
+                             :internal-border-width 8)
+              ;; Wait for specific keys only
+              (let ((done nil)
+                    (show-output nil))
+                (while (not done)
+                  (let ((key (read-key)))
+                    (cond
+                     ;; x or ESC - close popup
+                     ((or (eq key ?x) (eq key ?X) (eq key 27))
+                      (setq done t))
+                     ;; o - show output buffer
+                     ((or (eq key ?o) (eq key ?O))
+                      (setq done t)
+                      (setq show-output t)))))
+                ;; After closing, show output if requested
+                (when show-output
+                  (pop-to-buffer "*pytest-output*"))))
           (posframe-hide buffer-name)
           (kill-buffer buffer-name))))))
 

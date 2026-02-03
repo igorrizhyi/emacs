@@ -31,6 +31,9 @@
 (require 'my-super-jumps)
 (require 'my-search)
 (require 'my-eshell-funcs)
+(after! eshell
+  (setq eshell-history-size 10000
+        eshell-save-history-on-exit t))
 (require 'my-magit-utils)
 (require 'my-dired-extension)
 (require 'text-functions)
@@ -186,6 +189,7 @@
     :config
     (setq magit-gptcommit-llm-provider
           (make-llm-openai
+           :key "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"
            :chat-model "gpt-4o-mini"))
     ;; (magit-gptcommit-mode 1)  ; Disabled - enable with M-x magit-gptcommit-mode
     (magit-gptcommit-status-buffer-setup)))

@@ -9,6 +9,9 @@
 
 (require 'eshell)
 
+;; Suppress dynamic binding warning in lexical-binding file
+(defvar consult-preview-key)
+
 ;; Forward declarations for claude-code-terminal functions
 (declare-function claude-code-terminal-setup-eat "claude-code-terminal")
 (declare-function claude-code-terminal--is-embedded-command-p "claude-code-terminal")
@@ -297,16 +300,11 @@ Disables preview to avoid font styling issues."
         ;; In embedded mode (ssh, etc) - send C-r to terminal
         (eat-self-input 1 ?\C-r)
       ;; Normal eshell - use consult-history with preview disabled
-      (let ((old-preview-key (and (boundp 'consult-preview-key) consult-preview-key)))
-        (unwind-protect
-            (progn
-              (when (boundp 'consult-preview-key)
-                (setq consult-preview-key nil))
-              (if (fboundp 'consult-history)
-                  (consult-history)
-                (eshell-previous-matching-input-from-input "")))
-          (when (boundp 'consult-preview-key)
-            (setq consult-preview-key old-preview-key))))
+      ;; Use let-binding for consult-preview-key to ensure automatic restoration
+      (if (fboundp 'consult-history)
+          (let ((consult-preview-key nil))
+            (consult-history))
+        (eshell-previous-matching-input-from-input ""))
       ;; After selection, strip face properties and apply retro font styling
       (when (and (derived-mode-p 'eshell-mode)
                  (boundp 'eshell-last-output-end)
