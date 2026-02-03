@@ -100,6 +100,8 @@
 (package! telephone-line)
 
 (package! evil-snipe :disable t)
+(package! company-box)
+(package! esh-autosuggest)
 
 (package! window-stool :recipe (:host github :repo "jaszhe/window-stool" :files ("*.el")))
 ;; Enhanced dired font-lock for better file listing colors

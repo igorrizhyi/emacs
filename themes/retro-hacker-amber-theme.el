@@ -188,7 +188,24 @@
    `(company-tooltip-annotation ((,class (:foreground ,fg-dim))))
    `(company-scrollbar-bg ((,class (:background ,bg-alt))))
    `(company-scrollbar-fg ((,class (:background ,amber-dark))))
-   
+   `(company-preview ((,class (:foreground ,fg-dim :background nil))))
+   `(company-preview-common ((,class (:foreground ,fg-dim :background nil))))
+
+   ;; Corfu
+   `(corfu-default ((,class (:background ,bg-highlight :foreground ,fg-main))))
+   `(corfu-current ((,class (:background "#4a3018" :foreground ,amber-bright :weight bold))))
+   `(corfu-bar ((,class (:background ,amber-dark))))
+   `(corfu-border ((,class (:background ,border))))
+   `(corfu-annotations ((,class (:foreground ,fg-dim))))
+   `(corfu-deprecated ((,class (:foreground ,fg-dim :strike-through t))))
+   `(corfu-popupinfo ((,class (:background ,bg-highlight :foreground ,fg-main))))
+
+   ;; Orderless (matched characters in corfu/completions)
+   `(orderless-match-face-0 ((,class (:foreground ,amber-orange :weight bold))))
+   `(orderless-match-face-1 ((,class (:foreground ,amber-orange :weight bold))))
+   `(orderless-match-face-2 ((,class (:foreground ,amber-orange :weight bold))))
+   `(orderless-match-face-3 ((,class (:foreground ,amber-orange :weight bold))))
+
    ;; Flycheck
    `(flycheck-error ((,class (:underline (:style wave :color ,error)))))
    `(flycheck-info ((,class (:underline (:style wave :color ,amber-bright)))))

@@ -153,21 +153,29 @@ If TRANSIENT is non-nil, mark this as a transient jump."
 ;;; Ring management
 
 (defun my-super-jumps--add-jump (entry)
-  "Add ENTRY to the current project's jump ring."
-  (let ((ring (my-super-jumps--get-project-ring)))
+  "Add ENTRY to the current project's jump ring.
+Don't replace solid jumps with transient ones at the same location."
+  (let ((ring (my-super-jumps--get-project-ring))
+        (found nil)
+        (i 0))
     ;; Remove any existing entry for the same location
-    (let ((found nil)
-          (i 0))
-      (while (and (< i (ring-length ring)) (not found))
-        (when (my-super-jumps--entry-equal-p entry (ring-ref ring i))
-          (ring-remove ring i)
-          (setq found t))
-        (unless found
-          (setq i (1+ i)))))
-    
-    ;; Add new entry at the front
-    (ring-insert ring entry)
-    (setq my-super-jumps--current-index 0)))
+    (while (and (< i (ring-length ring)) (not found))
+      (when (my-super-jumps--entry-equal-p entry (ring-ref ring i))
+        (let ((existing (ring-ref ring i)))
+          (if (and (my-super-jumps-entry-transient entry)
+                   (not (my-super-jumps-entry-transient existing)))
+              ;; New entry is transient but existing is solid - keep the solid one, skip adding
+              (setq found 'keep-existing)
+            ;; Otherwise remove the old one (will be replaced)
+            (ring-remove ring i)
+            (setq found t))))
+      (unless found
+        (setq i (1+ i))))
+
+    ;; Only add new entry if we're not keeping an existing solid jump
+    (unless (eq found 'keep-existing)
+      (ring-insert ring entry)
+      (setq my-super-jumps--current-index 0))))
 
 (defun my-super-jumps--move-to-front (index)
   "Move the jump at INDEX to the front of the ring."

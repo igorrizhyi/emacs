@@ -34,6 +34,74 @@
 (after! eshell
   (setq eshell-history-size 10000
         eshell-save-history-on-exit t))
+;; Fish-style inline autosuggestions in eshell (company-mode based)
+;; DISABLED for now - testing company-mode on its own
+;; (use-package! esh-autosuggest
+;;   :hook (eshell-mode . esh-autosuggest-mode)
+;;   :config
+;;   (setq esh-autosuggest-delay 0.5)
+;;   (add-hook 'eshell-mode-hook
+;;             (lambda ()
+;;               (face-remap-add-relative 'company-preview-common
+;;                                        :family "Perfect DOS VGA 437 Win"
+;;                                        :foreground "#c78021"))))
+
+;; Company-mode optimizations
+(after! company
+  (setq company-idle-delay 0.1              ; show popup faster (default 0.2)
+        company-minimum-prefix-length 1     ; trigger after 1 char
+        company-tooltip-limit 10
+        company-selection-wrap-around t
+        company-require-match nil            ; don't force match, let ESC work
+        company-tooltip-align-annotations t  ; align annotations to the right
+        company-tooltip-flip-when-above t    ; flip tooltip direction when near bottom
+        company-tooltip-minimum-width 30     ; consistent minimum width
+        company-tooltip-margin 1)            ; small margin for cleaner look
+
+  ;; Tab-N-Go: selecting a candidate immediately inserts it (like corfu)
+  (company-tng-mode)
+
+  ;; Fix evil mode conflicts
+  (define-key company-active-map (kbd "<escape>") nil)
+  (define-key company-active-map (kbd "C-g") #'company-abort))
+
+;; Use company-box for child-frame popup (fixes positioning with copilot overlays)
+(use-package! company-box
+  :hook (company-mode . company-box-mode)
+  :config
+  (setq company-box-frame-parameters
+        '((left . -1)
+          (no-accept-focus . t)
+          (no-focus-on-map . t)
+          (min-width . 0)
+          (width . 0)
+          (min-height . 0)
+          (height . 0)
+          (internal-border-width . 1)
+          (vertical-scroll-bars . nil)
+          (horizontal-scroll-bars . nil)
+          (left-fringe . 0)
+          (right-fringe . 0)
+          (menu-bar-lines . 0)
+          (tool-bar-lines . 0)
+          (line-spacing . 0)
+          (unsplittable . t)
+          (undecorated . t)
+          (top . -1)
+          (visibility . nil)
+          (mouse-wheel-frame . nil)
+          (no-other-frame . t)
+          (inhibit-double-buffering . nil)
+          (drag-internal-border . t)
+          (no-special-glyphs . t)
+          (desktop-dont-save . t)
+          (tab-bar-lines . 0)))
+  (setq company-box-frame-top-margin 10)
+  ;; Bigger font in the completion popup
+  (defun my/company-box-set-font (frame)
+    (set-face-attribute 'default frame :height 180))
+  (add-hook 'company-box-frame-hook #'my/company-box-set-font))
+
 (require 'my-magit-utils)
 (require 'my-dired-extension)
 (require 'text-functions)
