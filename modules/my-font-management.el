@@ -10,13 +10,13 @@
 ;; You can customize these settings:
 ;; Previous font configurations:
 ;; (defcustom my/font-family "JetBrains Mono"
-(defcustom my/font-family "DejaVu Sans Mono"
+(defcustom my/font-family "JetBrains Mono"
 ;; (defcustom my/font-family "Source Code Pro"
   "Font family to use. Available options: Source Code Pro, JetBrains Mono, DejaVu Sans Mono, monospace."
   :type 'string
   :group 'my-font-management)
 
-(defcustom my/small-font-size 20
+(defcustom my/small-font-size 22
   "Small font size for auxiliary buffers."
   :type 'integer
   :group 'my-font-management)
@@ -33,7 +33,7 @@
 
 ;; Set small font globally by default
 ;; Using customizable font family (JetBrains Mono by default)
-(setq doom-font (font-spec :family my/font-family :size my/small-font-size))
+(setq doom-font (font-spec :family my/font-family :size my/small-font-size :weight 'medium))
 
 (defun my/is-main-center-window-p ()
   "Check if current window is the main center split."

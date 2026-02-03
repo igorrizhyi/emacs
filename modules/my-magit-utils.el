@@ -72,7 +72,9 @@
   (evil-local-set-key 'normal (kbd "n") #'my/magit-enter-pure-normal)
   (evil-local-set-key 'normal (kbd "<escape>") #'my/magit-exit-pure-normal)
   (evil-local-set-key 'normal (kbd "<right>") #'magit-section-toggle)
-  (evil-local-set-key 'normal (kbd "C-<tab>") #'switch-to-buffer))
+  (evil-local-set-key 'normal (kbd "C-<tab>") #'switch-to-buffer)
+  (evil-local-set-key 'normal (kbd "<down>") #'magit-section-forward-sibling)
+  (evil-local-set-key 'normal (kbd "<up>") #'magit-section-backward-sibling))
 
 (add-hook 'magit-mode-hook #'my/magit-setup-normal-mode-toggle)
 
