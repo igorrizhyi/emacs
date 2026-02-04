@@ -27,7 +27,7 @@
   :group 'navigation
   :prefix "my-super-jumps-")
 
-(defcustom my-super-jumps-max-length 20
+(defcustom my-super-jumps-max-length 100
   "Maximum number of jumps to keep in the ring per project."
   :type 'integer
   :group 'my-super-jumps)
@@ -229,14 +229,15 @@ Don't replace solid jumps with transient ones at the same location."
     (let ((file (my-super-jumps-entry-file entry))
           (position (my-super-jumps-entry-position entry))
           (line (my-super-jumps-entry-line entry)))
-      
+
       ;; Open file if different from current
       (unless (equal file (buffer-file-name))
         (find-file file))
-      
+
       ;; Go to position - prefer marker, fallback to line number if position is just a line number
       (cond
-       ((markerp position)
+       ((and (markerp position) (marker-buffer position)
+             (eq (marker-buffer position) (current-buffer)))
         (goto-char (marker-position position)))
        ((and (numberp position) (> position (point-max)))
         ;; Position seems invalid (larger than buffer), use line number
@@ -246,7 +247,10 @@ Don't replace solid jumps with transient ones at the same location."
        (t
         ;; Fallback to line number
         (goto-line line)))
-      
+
+      ;; Update stale line number from actual position after navigation
+      (setf (my-super-jumps-entry-line entry) (line-number-at-pos))
+      (setf (my-super-jumps-entry-column entry) (current-column))
       ;; Update timestamp
       (setf (my-super-jumps-entry-timestamp entry) (float-time)))))
 
@@ -381,16 +385,23 @@ Otherwise, register current position."
 
 (defun my-super-jumps--current-matches-entry-p (entry &optional exact)
   "Check if current position matches ENTRY.
-If EXACT is non-nil, require exact line match.
+If EXACT is non-nil, require exact line match (or marker match).
 Otherwise, match if same file and within `my-super-jumps-line-threshold'."
   (and entry
        (buffer-file-name)
        (equal (expand-file-name (buffer-file-name))
               (my-super-jumps-entry-file entry))
-       (if exact
-           (= (line-number-at-pos) (my-super-jumps-entry-line entry))
-         (< (abs (- (line-number-at-pos) (my-super-jumps-entry-line entry)))
-            my-super-jumps-line-threshold))))
+       (let ((pos (my-super-jumps-entry-position entry)))
+         (if exact
+             ;; For exact match: use marker if available (immune to line drift),
+             ;; fall back to line number comparison
+             (or (and (markerp pos)
+                      (marker-buffer pos)
+                      (eq (marker-buffer pos) (current-buffer))
+                      (= (point) (marker-position pos)))
+                 (= (line-number-at-pos) (my-super-jumps-entry-line entry)))
+           (< (abs (- (line-number-at-pos) (my-super-jumps-entry-line entry)))
+              my-super-jumps-line-threshold)))))
 
 ;;;###autoload
 (defun my-super-jumps-backward ()

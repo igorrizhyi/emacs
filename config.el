@@ -35,21 +35,21 @@
   (setq eshell-history-size 10000
         eshell-save-history-on-exit t))
 ;; Fish-style inline autosuggestions in eshell (company-mode based)
-;; DISABLED for now - testing company-mode on its own
-;; (use-package! esh-autosuggest
-;;   :hook (eshell-mode . esh-autosuggest-mode)
-;;   :config
-;;   (setq esh-autosuggest-delay 0.5)
-;;   (add-hook 'eshell-mode-hook
-;;             (lambda ()
-;;               (face-remap-add-relative 'company-preview-common
-;;                                        :family "Perfect DOS VGA 437 Win"
-;;                                        :foreground "#c78021"))))
+(use-package! esh-autosuggest
+  :hook (eshell-mode . esh-autosuggest-mode)
+  :config
+  (setq esh-autosuggest-delay 0.5)
+  (add-hook 'eshell-mode-hook
+            (lambda ()
+              (face-remap-add-relative 'company-preview-common
+                                       :family "Perfect DOS VGA 437 Win"
+                                       :foreground "#c78021"))))
 
 ;; Company-mode optimizations
 (after! company
-  (setq company-idle-delay 0.1              ; show popup faster (default 0.2)
-        company-minimum-prefix-length 1     ; trigger after 1 char
+  (setq company-idle-delay 0.2              ; balanced speed vs lag
+        company-minimum-prefix-length 2     ; don't trigger on every keystroke
+        company-async-timeout 3             ; don't wait too long for slow backends
         company-tooltip-limit 10
         company-selection-wrap-around t
         company-require-match nil            ; don't force match, let ESC work
