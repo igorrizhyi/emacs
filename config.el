@@ -708,7 +708,8 @@
 ;; Super jumps keybindings - project-specific jumps
 (map! :map evil-normal-state-map
       "C-o" #'my-super-jumps-backward   ; Project jump back
-      "C-i" #'my-super-jumps-forward)   ; Project jump forward
+      "C-i" #'my-super-jumps-forward    ; Project jump forward
+      "C-S-<iso-lefttab>" #'my-super-jumps-list)  ; Jump preview
 
 ;; Leader keybindings for super jumps
 (map! :leader

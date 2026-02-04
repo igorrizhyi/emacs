@@ -495,27 +495,310 @@ Otherwise, jump to the first entry."
         
         (my-super-jumps--schedule-reorder))))))
 
+;;; Jump Preview Mode
+
+(defvar-local my-super-jumps-preview--entries nil
+  "List of (index . entry) pairs for the current preview.")
+
+(defvar-local my-super-jumps-preview--selected 0
+  "Currently selected jump block index (into visible entries).")
+
+(defvar-local my-super-jumps-preview--search ""
+  "Current search string.")
+
+(defvar-local my-super-jumps-preview--visible nil
+  "List of visible (index . entry) pairs after filtering.")
+
+(defvar-local my-super-jumps-preview--block-positions nil
+  "Alist mapping visible index to (start . end) buffer positions.")
+
+(defvar-local my-super-jumps-preview--source-ring nil
+  "Reference to the jump ring this preview was built from.")
+
+(defconst my-super-jumps-preview--context-lines 3
+  "Number of context lines above and below the jump line.")
+
+(defface my-super-jumps-preview-header
+  '((t :foreground "#ff7300" :weight bold))
+  "Face for jump block headers.")
+
+(defface my-super-jumps-preview-line-number
+  '((t :foreground "#8d7c6a"))
+  "Face for line numbers in preview.")
+
+(defface my-super-jumps-preview-jump-line
+  '((t :background "#2e1e13"))
+  "Face for the highlighted jump line.")
+
+(defface my-super-jumps-preview-selected
+  '((t :background "#372413"))
+  "Face for the currently selected jump block.")
+
+(defface my-super-jumps-preview-search-match
+  '((t :background "#5a3a15" :foreground "#ffb000" :weight bold))
+  "Face for search matches.")
+
+(defface my-super-jumps-preview-search-prompt
+  '((t :foreground "#ffb000" :weight bold))
+  "Face for the search prompt in header.")
+
+(defun my-super-jumps-preview--get-fontified-lines (file line-start line-end)
+  "Get fontified lines from FILE between LINE-START and LINE-END.
+Returns list of propertized strings."
+  (let ((buf (find-file-noselect file t)))
+    (with-current-buffer buf
+      (font-lock-ensure (point-min) (point-max))
+      (let ((lines nil))
+        (save-excursion
+          (goto-char (point-min))
+          (forward-line (1- (max 1 line-start)))
+          (dotimes (_ (1+ (- (min line-end (line-number-at-pos (point-max))) (max 1 line-start))))
+            (let ((bol (line-beginning-position))
+                  (eol (line-end-position)))
+              (push (buffer-substring bol eol) lines)
+              (forward-line 1))))
+        (nreverse lines)))))
+
+(defun my-super-jumps-preview--render ()
+  "Render the jump preview buffer."
+  (let ((inhibit-read-only t)
+        (selected my-super-jumps-preview--selected)
+        (search my-super-jumps-preview--search)
+        (block-positions nil)
+        (visible-idx 0))
+    (erase-buffer)
+
+    ;; Header
+    (insert (propertize "Super Jumps Preview" 'face 'my-super-jumps-preview-header))
+    (when (> (length search) 0)
+      (insert "  "
+              (propertize (format " search: %s " search)
+                          'face 'my-super-jumps-preview-search-prompt)))
+    (insert "\n")
+    (insert (propertize (make-string 60 ?─) 'face 'my-super-jumps-preview-line-number))
+    (insert "\n\n")
+
+    ;; Render each visible block
+    (dolist (pair my-super-jumps-preview--visible)
+      (let* ((entry (cdr pair))
+             (file (my-super-jumps-entry-file entry))
+             (jump-line (my-super-jumps-entry-line entry))
+             (line-start (max 1 (- jump-line my-super-jumps-preview--context-lines)))
+             (line-end (+ jump-line my-super-jumps-preview--context-lines))
+             (fontified-lines (my-super-jumps-preview--get-fontified-lines file line-start line-end))
+             (block-start (point))
+             (is-selected (= visible-idx selected))
+             (current-line line-start))
+
+        ;; File header
+        (insert (propertize (format "── %s:%d "
+                                    (file-name-nondirectory file)
+                                    jump-line)
+                            'face 'my-super-jumps-preview-header))
+        (insert (propertize (make-string (max 0 (- 58 (length (file-name-nondirectory file)) 5)) ?─)
+                            'face 'my-super-jumps-preview-line-number))
+        (insert "\n")
+
+        ;; Context lines with syntax highlighting
+        (dolist (line-text fontified-lines)
+          (let* ((is-jump-line (= current-line jump-line))
+                 (prefix (propertize (format "%s%4d│ "
+                                            (if is-jump-line ">" " ")
+                                            current-line)
+                                    'face 'my-super-jumps-preview-line-number)))
+            (insert prefix)
+            (insert line-text)
+            (when is-jump-line
+              (put-text-property (line-beginning-position) (line-end-position)
+                                'face 'my-super-jumps-preview-jump-line))
+            (insert "\n"))
+          (setq current-line (1+ current-line)))
+
+        (insert "\n")
+        (let ((block-end (point)))
+          ;; Apply selected overlay
+          (when is-selected
+            (let ((ov (make-overlay block-start block-end)))
+              (overlay-put ov 'face 'my-super-jumps-preview-selected)
+              (overlay-put ov 'my-super-jumps-preview t)))
+          (push (cons visible-idx (cons block-start block-end)) block-positions))
+        (setq visible-idx (1+ visible-idx))))
+
+    (when (null my-super-jumps-preview--visible)
+      (insert (propertize "\n  No matching jumps.\n" 'face 'my-super-jumps-preview-line-number)))
+
+    (setq my-super-jumps-preview--block-positions (nreverse block-positions))
+
+    ;; Highlight search matches
+    (when (>= (length search) 2)
+      (save-excursion
+        (goto-char (point-min))
+        (while (search-forward search nil t)
+          (let ((ov (make-overlay (match-beginning 0) (match-end 0))))
+            (overlay-put ov 'face 'my-super-jumps-preview-search-match)
+            (overlay-put ov 'my-super-jumps-preview-search t)
+            (overlay-put ov 'priority 10)))))
+
+    ;; Scroll to selected block
+    (when-let ((pos (cdr (assq selected my-super-jumps-preview--block-positions))))
+      (goto-char (car pos)))))
+
+(defun my-super-jumps-preview--filter ()
+  "Filter entries based on current search string."
+  (if (< (length my-super-jumps-preview--search) 2)
+      ;; Show all entries
+      (setq my-super-jumps-preview--visible
+            (copy-sequence my-super-jumps-preview--entries))
+    ;; Filter: keep only entries whose preview text contains the search string
+    (let ((search (downcase my-super-jumps-preview--search))
+          (result nil))
+      (dolist (pair my-super-jumps-preview--entries)
+        (let* ((entry (cdr pair))
+               (file (my-super-jumps-entry-file entry))
+               (jump-line (my-super-jumps-entry-line entry))
+               (line-start (max 1 (- jump-line my-super-jumps-preview--context-lines)))
+               (line-end (+ jump-line my-super-jumps-preview--context-lines))
+               (lines (my-super-jumps-preview--get-fontified-lines file line-start line-end))
+               (text (downcase (concat (file-name-nondirectory file) " "
+                                       (mapconcat #'substring-no-properties lines " ")))))
+          (when (string-match-p (regexp-quote search) text)
+            (push pair result))))
+      (setq my-super-jumps-preview--visible (nreverse result))))
+  ;; Clamp selected index
+  (when my-super-jumps-preview--visible
+    (setq my-super-jumps-preview--selected
+          (min my-super-jumps-preview--selected
+               (1- (length my-super-jumps-preview--visible))))))
+
+(defun my-super-jumps-preview--refresh ()
+  "Filter and re-render the preview."
+  (my-super-jumps-preview--filter)
+  (my-super-jumps-preview--render))
+
+(defun my-super-jumps-preview-next ()
+  "Move to next jump block."
+  (interactive)
+  (when my-super-jumps-preview--visible
+    (setq my-super-jumps-preview--selected
+          (min (1+ my-super-jumps-preview--selected)
+               (1- (length my-super-jumps-preview--visible))))
+    (my-super-jumps-preview--render)))
+
+(defun my-super-jumps-preview-prev ()
+  "Move to previous jump block."
+  (interactive)
+  (when my-super-jumps-preview--visible
+    (setq my-super-jumps-preview--selected
+          (max (1- my-super-jumps-preview--selected) 0))
+    (my-super-jumps-preview--render)))
+
+(defun my-super-jumps-preview-select ()
+  "Jump to the selected entry and close preview."
+  (interactive)
+  (when my-super-jumps-preview--visible
+    (let* ((pair (nth my-super-jumps-preview--selected
+                      my-super-jumps-preview--visible))
+           (ring-idx (car pair))
+           (entry (cdr pair))
+           (ring-len (ring-length my-super-jumps-preview--source-ring)))
+      (quit-window t)
+      (my-super-jumps--goto-entry entry)
+      (setq my-super-jumps--current-index ring-idx)
+      (my-super-jumps--schedule-reorder)
+      (message "Jump backward (%d/%d): %s:%d"
+               (1+ ring-idx)
+               ring-len
+               (file-name-nondirectory (my-super-jumps-entry-file entry))
+               (my-super-jumps-entry-line entry)))))
+
+(defun my-super-jumps-preview-quit ()
+  "Close the preview buffer."
+  (interactive)
+  (quit-window t))
+
+(defun my-super-jumps-preview-search-input ()
+  "Handle self-inserting character for search."
+  (interactive)
+  (let ((char (this-command-keys)))
+    (setq my-super-jumps-preview--search
+          (concat my-super-jumps-preview--search char))
+    (setq my-super-jumps-preview--selected 0)
+    (my-super-jumps-preview--refresh)))
+
+(defun my-super-jumps-preview-search-delete ()
+  "Delete last character from search string."
+  (interactive)
+  (when (> (length my-super-jumps-preview--search) 0)
+    (setq my-super-jumps-preview--search
+          (substring my-super-jumps-preview--search 0 -1))
+    (setq my-super-jumps-preview--selected 0)
+    (my-super-jumps-preview--refresh)))
+
+(defvar my-super-jumps-preview-mode-map
+  (let ((map (make-sparse-keymap)))
+    ;; Navigation
+    (define-key map (kbd "<down>") #'my-super-jumps-preview-next)
+    (define-key map (kbd "<up>") #'my-super-jumps-preview-prev)
+    (define-key map (kbd "RET") #'my-super-jumps-preview-select)
+    (define-key map (kbd "<escape>") #'my-super-jumps-preview-quit)
+    (define-key map (kbd "DEL") #'my-super-jumps-preview-search-delete)
+    (define-key map (kbd "<backspace>") #'my-super-jumps-preview-search-delete)
+    ;; Bind all printable characters to search input
+    (let ((i 32))
+      (while (<= i 126)
+        (define-key map (char-to-string i) #'my-super-jumps-preview-search-input)
+        (setq i (1+ i))))
+    map)
+  "Keymap for super jumps preview mode.")
+
+(define-derived-mode my-super-jumps-preview-mode special-mode "Jumps"
+  "Major mode for viewing jump previews with inline search."
+  (setq buffer-read-only t
+        truncate-lines t
+        cursor-type nil)
+  (when (bound-and-true-p evil-mode)
+    (evil-emacs-state)))
+
 ;;;###autoload
 (defun my-super-jumps-list ()
-  "Show all jumps for the current project."
+  "Show all jumps for the current project in a preview buffer."
   (interactive)
   (let* ((ring (my-super-jumps--get-project-ring))
-         (project-root (my-super-jumps--get-project-root)))
-    
+         (project-root (my-super-jumps--get-project-root))
+         (current-file (and (buffer-file-name) (expand-file-name (buffer-file-name))))
+         (current-line (line-number-at-pos)))
+
     (if (ring-empty-p ring)
         (message "No jumps for project: %s" project-root)
-      (with-output-to-temp-buffer "*Super Jumps*"
-        (princ (format "Jumps for project: %s\n\n" project-root))
+      ;; Build entries list, skip first entry if current position is within its context range
+      (let ((entries nil)
+            (skipped-first nil))
         (dotimes (i (ring-length ring))
           (let* ((entry (ring-ref ring i))
-                 (file (my-super-jumps-entry-file entry))
-                 (line (my-super-jumps-entry-line entry))
-                 (current-p (eq i my-super-jumps--current-index)))
-            (princ (format "%s%2d. %s:%d\n"
-                           (if current-p "* " "  ")
-                           (1+ i)
-                           (file-name-nondirectory file)
-                           line))))))))
+                 (entry-file (my-super-jumps-entry-file entry))
+                 (entry-line (my-super-jumps-entry-line entry))
+                 (in-context (and (= i 0)
+                                  current-file
+                                  (equal current-file entry-file)
+                                  (<= (abs (- current-line entry-line))
+                                      my-super-jumps-preview--context-lines))))
+            (if in-context
+                (setq skipped-first t)
+              (push (cons i entry) entries))))
+        (setq entries (nreverse entries))
+
+        (if (null entries)
+            (message "No other jumps for project: %s" project-root)
+          ;; Create and populate buffer
+          (let ((buf (get-buffer-create "*Super Jumps*")))
+            (with-current-buffer buf
+              (my-super-jumps-preview-mode)
+              (setq my-super-jumps-preview--entries entries
+                    my-super-jumps-preview--source-ring ring
+                    my-super-jumps-preview--search ""
+                    my-super-jumps-preview--selected 0)
+              (my-super-jumps-preview--refresh))
+            (pop-to-buffer buf '((display-buffer-full-frame)))))))))
 
 ;;;###autoload
 (defun my-super-jumps-clear ()
