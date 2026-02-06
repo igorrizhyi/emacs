@@ -609,8 +609,9 @@ Returns list of propertized strings."
             (insert prefix)
             (insert line-text)
             (when is-jump-line
-              (put-text-property (line-beginning-position) (line-end-position)
-                                'face 'my-super-jumps-preview-jump-line))
+              (let ((ov (make-overlay (line-beginning-position) (line-end-position))))
+                (overlay-put ov 'face '(:background "#5a3a15"))
+                (overlay-put ov 'my-super-jumps-preview t)))
             (insert "\n"))
           (setq current-line (1+ current-line)))
 

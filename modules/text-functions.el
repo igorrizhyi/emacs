@@ -62,6 +62,43 @@ Takes selected text and converts to item1, item2, ... format."
   (interactive)
   (insert (format-time-string "%Y-%m-%d")))
 
+(defun my/template-from-columns ()
+  "Replace selected column-based text using a template.
+Parses the selection as whitespace-delimited columns (skipping header line).
+Prompts for a template where {1}, {2}, etc. reference columns.
+Replaces the selection with the template applied to each row.
+
+Example: with selection:
+  NAME   AGE  CITY
+  Alice  30   London
+  Bob    25   Berlin
+
+And template: INSERT INTO users VALUES ('{1}', {2}, '{3}');
+
+Produces:
+  INSERT INTO users VALUES ('Alice', 30, 'London');
+  INSERT INTO users VALUES ('Bob', 25, 'Berlin');"
+  (interactive)
+  (if (use-region-p)
+      (let* ((text (buffer-substring-no-properties (region-beginning) (region-end)))
+             (lines (seq-filter (lambda (s) (not (string-empty-p (string-trim s))))
+                                (split-string text "\n")))
+             (skip-header (y-or-n-p "Skip first line (header)?"))
+             (data-lines (if skip-header (cdr lines) lines))
+             (template (read-string "Template ({1}, {2}, ...): "))
+             (results nil))
+        (dolist (line data-lines)
+          (let* ((cols (split-string (string-trim line) "[ \t]+" t))
+                 (result template))
+            (dotimes (i (length cols))
+              (setq result (string-replace (format "{%d}" (1+ i))
+                                           (nth i cols)
+                                           result)))
+            (push result results)))
+        (delete-region (region-beginning) (region-end))
+        (insert (string-join (nreverse results) "\n")))
+    (message "No region selected")))
+
 ;; Unbind flycheck-mode from SPC t f
 (map! :leader "t f" nil)
 
@@ -72,7 +109,8 @@ Takes selected text and converts to item1, item2, ... format."
        :desc "To Python strings ['a', 'b']"  "s" #'my/selection-to-python-string-array
        :desc "To SQL IN ('a', 'b')"          "q" #'my/selection-to-sql-in
        :desc "To comma-separated"            "c" #'my/selection-to-comma-separated
-       :desc "Insert date (YYYY-MM-DD)"      "d" #'my/insert-date))
+       :desc "Insert date (YYYY-MM-DD)"      "d" #'my/insert-date
+       :desc "Template from columns"         "t" #'my/template-from-columns))
 
 (provide 'text-functions)
 

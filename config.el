@@ -34,16 +34,6 @@
 (after! eshell
   (setq eshell-history-size 10000
         eshell-save-history-on-exit t))
-;; Fish-style inline autosuggestions in eshell (company-mode based)
-(use-package! esh-autosuggest
-  :hook (eshell-mode . esh-autosuggest-mode)
-  :config
-  (setq esh-autosuggest-delay 0.5)
-  (add-hook 'eshell-mode-hook
-            (lambda ()
-              (face-remap-add-relative 'company-preview-common
-                                       :family "Perfect DOS VGA 437 Win"
-                                       :foreground "#c78021"))))
 
 ;; Company-mode optimizations
 (after! company
@@ -699,6 +689,38 @@
       "s-k" #'my-layout-smart-claude-code
       "C-k" #'my-layout-smart-claude-code) ; Smart Claude Code handler
 
+
+;; Don't pollute clipboard with deleted/replaced text
+(setq evil-kill-on-visual-paste nil)  ; visual paste doesn't overwrite clipboard
+(evil-define-operator evil-delete-without-register (beg end type register yank-handler)
+  "Delete without yanking to clipboard."
+  (interactive "<R><x><y>")
+  (evil-delete beg end type ?_ yank-handler))
+(evil-define-operator evil-change-without-register (beg end type register yank-handler)
+  "Change without yanking to clipboard."
+  (interactive "<R><x><y>")
+  (evil-change beg end type ?_ yank-handler))
+(map! :map evil-normal-state-map
+      "d" #'evil-delete-without-register
+      "c" #'evil-change-without-register
+      "x" #'evil-delete-without-register)
+(map! :map evil-visual-state-map
+      "d" #'evil-delete-without-register
+      "c" #'evil-change-without-register)
+
+;; Delete word backward in insert mode without touching clipboard
+(defun my/delete-word-no-kill ()
+  "Delete word backward without touching kill ring."
+  (interactive)
+  (let ((beg (save-excursion (backward-word) (point))))
+    (delete-region beg (point))))
+(define-key evil-insert-state-map (kbd "C-<backspace>") nil)
+(add-hook 'prog-mode-hook
+          (lambda () (evil-local-set-key 'insert (kbd "C-<backspace>") #'my/delete-word-no-kill)))
+(add-hook 'text-mode-hook
+          (lambda () (evil-local-set-key 'insert (kbd "C-<backspace>") #'my/delete-word-no-kill)))
+(add-hook 'conf-mode-hook
+          (lambda () (evil-local-set-key 'insert (kbd "C-<backspace>") #'my/delete-word-no-kill)))
 
 ;; Jump navigation keybindings - like browser back/forward
 (map! :map evil-normal-state-map
