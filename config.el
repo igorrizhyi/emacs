@@ -931,15 +931,8 @@
             (evil-local-set-key 'normal (kbd "C-t") #'magit-status)
             (evil-local-set-key 'insert (kbd "C-t") #'magit-status)))
 
-(add-hook 'yaml-mode-hook
-          (lambda ()
-            (evil-local-set-key 'normal (kbd "C-t") #'magit-status)
-            (evil-local-set-key 'insert (kbd "C-t") #'magit-status)))
-
-(add-hook 'yaml-ts-mode-hook
-          (lambda ()
-            (evil-local-set-key 'normal (kbd "C-t") #'magit-status)
-            (evil-local-set-key 'insert (kbd "C-t") #'magit-status)))
+;; Global C-t for magit - works in ALL modes
+(map! :nvi "C-t" #'magit-status)
 
 ;; Window layout key bindings with SPC-w prefix (window management)
 (map! :leader
