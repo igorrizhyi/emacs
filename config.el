@@ -111,7 +111,6 @@
 
 ;; Disable automatic project switching when opening files
 (setq projectile-track-known-projects-automatically nil)
-(setq projectile-switch-project-action 'projectile-dired)
 (setq projectile-auto-discover nil)
 (setq projectile-enable-caching nil)
 (setq projectile-indexing-method 'alien)
@@ -134,8 +133,8 @@
                     my/manual-project-root
                   (funcall orig-fn dir))))
 
-  ;; Hook into project switching to update our locked project
-  (advice-add 'projectile-switch-project-by-name :after
+  ;; Hook into project switching to update our locked project BEFORE switch action runs
+  (advice-add 'projectile-switch-project-by-name :before
               (lambda (project-to-switch &optional arg)
                 (setq my/manual-project-root project-to-switch)
                 (message "Locked project to: %s" project-to-switch)))
@@ -150,7 +149,9 @@
 ;; Disable Doom's workspace switching on file open
 (after! persp-mode
   (setq persp-auto-save-opt 0)
-  (setq persp-auto-resume-time -1))
+  (setq persp-auto-resume-time -1)
+  ;; Override workspaces module - open dired instead of find-file on project switch
+  (setq projectile-switch-project-action #'projectile-dired))
 
 ;; Optimize general Emacs responsiveness
 (setq gc-cons-threshold (* 100 1024 1024))  ; 100MB instead of 800KB
@@ -927,6 +928,16 @@
 (add-hook 'org-mode-hook
           (lambda ()
             (evil-local-set-key 'normal (kbd "C-r") #'revert-buffer)
+            (evil-local-set-key 'normal (kbd "C-t") #'magit-status)
+            (evil-local-set-key 'insert (kbd "C-t") #'magit-status)))
+
+(add-hook 'yaml-mode-hook
+          (lambda ()
+            (evil-local-set-key 'normal (kbd "C-t") #'magit-status)
+            (evil-local-set-key 'insert (kbd "C-t") #'magit-status)))
+
+(add-hook 'yaml-ts-mode-hook
+          (lambda ()
             (evil-local-set-key 'normal (kbd "C-t") #'magit-status)
             (evil-local-set-key 'insert (kbd "C-t") #'magit-status)))
 

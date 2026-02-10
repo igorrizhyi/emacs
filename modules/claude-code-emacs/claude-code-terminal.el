@@ -2091,7 +2091,17 @@ The process sentinel will handle that when the subprocess actually exits."
     (goto-char (point-max))
     (evil-insert-state))
 
-  (evil-define-key 'normal eshell-mode-map (kbd "i") #'claude-code-terminal-eshell-insert))
+  (evil-define-key 'normal eshell-mode-map (kbd "i") #'claude-code-terminal-eshell-insert)
+
+  ;; In mistty normal mode, 'i' goes to bottom and enters insert
+  (defun claude-code-terminal-mistty-insert ()
+    "Go to end of buffer and enter insert mode in mistty."
+    (interactive)
+    (goto-char (point-max))
+    (evil-insert-state))
+
+  (with-eval-after-load 'mistty
+    (evil-define-key 'normal mistty-mode-map (kbd "i") #'claude-code-terminal-mistty-insert)))
 
 ;; Popup input for claude commands
 (defun claude-code-send-emacs-terminal-popup ()
@@ -2765,11 +2775,13 @@ Mistty becomes the main terminal buffer. When it closes, eshell returns."
 
       ;; Send command after shell starts
       ;; For kubectl commands, prepend KUBECONFIG if set
+      ;; NOTE: Delay must be sufficient for shell to be fully ready,
+      ;; otherwise first character gets swallowed
       (let ((final-cmd (if (and kubeconfig
                                 (string-match-p "\\bkubectl\\b" command))
                            (format "KUBECONFIG=%s %s" kubeconfig command)
                          command)))
-        (run-at-time 0.3 nil
+        (run-at-time 0.5 nil
                      (lambda (buf cmd)
                        (when (buffer-live-p buf)
                          (with-current-buffer buf
