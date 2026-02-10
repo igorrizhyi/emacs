@@ -909,30 +909,12 @@
 (after! evil
   (define-key evil-normal-state-map (kbd "s") #'save-buffer))
 
-;; C-r in code buffers to revert buffer (reload file from disk)
-;; First unbind C-r from Evil normal state globally, then bind in prog-mode
+;; Global C-t for magit and C-r for revert - works in ALL modes
 (after! evil
   (define-key evil-normal-state-map (kbd "C-r") nil))
 
-(add-hook 'prog-mode-hook
-          (lambda ()
-            (evil-local-set-key 'normal (kbd "C-r") #'revert-buffer)
-            (evil-local-set-key 'normal (kbd "C-t") #'magit-status)
-            (evil-local-set-key 'insert (kbd "C-t") #'magit-status)))
-
-(add-hook 'markdown-mode-hook
-          (lambda ()
-            (evil-local-set-key 'normal (kbd "C-t") #'magit-status)
-            (evil-local-set-key 'insert (kbd "C-t") #'magit-status)))
-
-(add-hook 'org-mode-hook
-          (lambda ()
-            (evil-local-set-key 'normal (kbd "C-r") #'revert-buffer)
-            (evil-local-set-key 'normal (kbd "C-t") #'magit-status)
-            (evil-local-set-key 'insert (kbd "C-t") #'magit-status)))
-
-;; Global C-t for magit - works in ALL modes
 (map! :nvi "C-t" #'magit-status)
+(map! :n "C-r" #'revert-buffer)
 
 ;; Window layout key bindings with SPC-w prefix (window management)
 (map! :leader
