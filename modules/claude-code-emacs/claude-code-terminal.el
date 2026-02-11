@@ -2427,7 +2427,13 @@ Keys are terminal IDs, values are plists with:
           (string-match-p "\\bexec\\b.*-[ti]" input-trimmed))
      ;; docker exec with -it flag
      (and (string-prefix-p "docker " input-trimmed)
-          (string-match-p "\\bexec\\b.*-[ti]" input-trimmed)))))
+          (string-match-p "\\bexec\\b.*-[ti]" input-trimmed))
+     ;; Python REPL
+     (string-prefix-p "python" input-trimmed)
+     (string-prefix-p "ipython" input-trimmed)
+     ;; TUI applications (also match with env var prefixes like KUBECONFIG=... k9s)
+     (string-match-p "\\bk9s\\b" input-trimmed)
+     (string-match-p "\\bhtop\\b" input-trimmed))))
 
 (defun claude-code-terminal-mark-command-start ()
   "Mark that we're executing a command and determine mode."
@@ -2774,11 +2780,11 @@ Mistty becomes the main terminal buffer. When it closes, eshell returns."
                   #'claude-code-terminal-mistty-cleanup nil t))
 
       ;; Send command after shell starts
-      ;; For kubectl commands, prepend KUBECONFIG if set
+      ;; For kubectl/k9s commands, prepend KUBECONFIG if set
       ;; NOTE: Delay must be sufficient for shell to be fully ready,
       ;; otherwise first character gets swallowed
       (let ((final-cmd (if (and kubeconfig
-                                (string-match-p "\\bkubectl\\b" command))
+                                (string-match-p "\\b\\(kubectl\\|k9s\\)\\b" command))
                            (format "KUBECONFIG=%s %s" kubeconfig command)
                          command)))
         (run-at-time 0.5 nil

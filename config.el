@@ -112,6 +112,16 @@
 ;; Disable automatic project switching when opening files
 (setq projectile-track-known-projects-automatically nil)
 (setq projectile-auto-discover nil)
+
+;; Register project when using SPC p . (browse project)
+(defun my/register-browsed-project-advice (orig-fn &rest args)
+  "Register project after browsing to it."
+  (let ((result (apply orig-fn args)))
+    (when-let ((project-root (projectile-project-root)))
+      (projectile-add-known-project project-root)
+      (message "Registered project: %s" project-root))
+    result))
+(advice-add #'+default/browse-project :around #'my/register-browsed-project-advice)
 (setq projectile-enable-caching nil)
 (setq projectile-indexing-method 'alien)
 (setq projectile-require-project-root nil)
