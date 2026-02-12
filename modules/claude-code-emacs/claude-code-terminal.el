@@ -2899,11 +2899,11 @@ Only switches to terminal if the immediate previous buffer was a terminal."
                       :foreground "#666666"
                       :inherit nil))
 
-;; Add history to completion sources for eshell
+;; Add history to completion sources for eshell (prepend, don't replace)
 (add-hook 'eshell-mode-hook
           (lambda ()
-            (setq-local completion-at-point-functions
-                        (list (cape-capf-super #'cape-history #'pcomplete-completions-at-point)))))
+            ;; Add cape-history to front, keep existing completions (file, command, etc.)
+            (add-to-list 'completion-at-point-functions #'cape-history)))
 
 (provide 'claude-code-terminal)
 ;;; claude-code-terminal.el ends here
