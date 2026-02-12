@@ -2890,7 +2890,14 @@ Only switches to terminal if the immediate previous buffer was a terminal."
          ("<right>" . completion-preview-insert)
          ("M-f" . completion-preview-insert-word))
   :custom
-  (completion-preview-minimum-symbol-length 1))
+  (completion-preview-minimum-symbol-length 1)
+  :config
+  ;; Match ghost text font to terminal DOS font
+  (set-face-attribute 'completion-preview nil
+                      :family "Perfect DOS VGA 437 Win"
+                      :height 0.5
+                      :foreground "#666666"
+                      :inherit nil))
 
 ;; Add history to completion sources for eshell
 (add-hook 'eshell-mode-hook
