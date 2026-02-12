@@ -2428,9 +2428,9 @@ Keys are terminal IDs, values are plists with:
      ;; docker exec with -it flag
      (and (string-prefix-p "docker " input-trimmed)
           (string-match-p "\\bexec\\b.*-[ti]" input-trimmed))
-     ;; Python REPL
-     (string-prefix-p "python" input-trimmed)
-     (string-prefix-p "ipython" input-trimmed)
+     ;; Python REPL (only interactive, no args)
+     (string-match-p "^python[23]?$" input-trimmed)
+     (string= "ipython" input-trimmed)
      ;; TUI applications (also match with env var prefixes like KUBECONFIG=... k9s)
      (string-match-p "\\bk9s\\b" input-trimmed)
      (string-match-p "\\bhtop\\b" input-trimmed))))

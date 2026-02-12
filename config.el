@@ -33,7 +33,25 @@
 (require 'my-eshell-funcs)
 (after! eshell
   (setq eshell-history-size 10000
-        eshell-save-history-on-exit t))
+        eshell-save-history-on-exit t
+        eshell-hist-ignoredups t)
+
+  ;; Save history after EVERY command, not just on exit
+  (defun my/eshell-save-history-on-command ()
+    "Save eshell history after each command."
+    (when (and eshell-history-ring
+               (ring-p eshell-history-ring)
+               (not (ring-empty-p eshell-history-ring)))
+      (eshell-write-history)))
+
+  (add-hook 'eshell-post-command-hook #'my/eshell-save-history-on-command)
+
+  ;; Reload history from file when switching to eshell buffer
+  (defun my/eshell-reload-history ()
+    "Reload history from file to get commands from other sessions."
+    (eshell-read-history))
+
+  (add-hook 'eshell-mode-hook #'my/eshell-reload-history))
 
 ;; Company-mode optimizations
 (after! company
