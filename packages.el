@@ -97,6 +97,7 @@
 (package! ultra-scroll)
 (package! eat)
 (package! mistty)
+(package! cape)
 (package! telephone-line)
 
 (package! evil-snipe :disable t)

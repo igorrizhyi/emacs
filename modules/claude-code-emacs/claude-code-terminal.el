@@ -2881,5 +2881,22 @@ Only switches to terminal if the immediate previous buffer was a terminal."
 
 (advice-add 'kill-current-buffer :around #'claude-code-terminal--return-after-kill)
 
+;;; Fish-style autosuggestions using Emacs 30 completion-preview-mode
+(use-package completion-preview
+  :ensure nil
+  :hook (eshell-mode . completion-preview-mode)
+  :bind (:map completion-preview-active-mode-map
+         ("C-f" . completion-preview-insert)
+         ("<right>" . completion-preview-insert)
+         ("M-f" . completion-preview-insert-word))
+  :custom
+  (completion-preview-minimum-symbol-length 1))
+
+;; Add history to completion sources for eshell
+(add-hook 'eshell-mode-hook
+          (lambda ()
+            (setq-local completion-at-point-functions
+                        (list (cape-capf-super #'cape-history #'pcomplete-completions-at-point)))))
+
 (provide 'claude-code-terminal)
 ;;; claude-code-terminal.el ends here
