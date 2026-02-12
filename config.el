@@ -33,23 +33,41 @@
 (require 'my-eshell-funcs)
 (after! eshell
   (setq eshell-history-size 10000
-        eshell-save-history-on-exit t
+        eshell-save-history-on-exit nil  ; We handle this ourselves
         eshell-hist-ignoredups t)
 
-  ;; Save history after EVERY command, not just on exit
-  (defun my/eshell-save-history-on-command ()
-    "Save eshell history after each command."
+  ;; Track the last command we saved to avoid duplicates
+  (defvar-local my/eshell-last-saved-command nil
+    "Last command saved to history file.")
+
+  ;; Append ONLY the new command to history file (truly incremental)
+  (defun my/eshell-append-history ()
+    "Append only the latest command to history file (incremental, never overwrites)."
     (when (and eshell-history-ring
                (ring-p eshell-history-ring)
                (not (ring-empty-p eshell-history-ring)))
-      (eshell-write-history)))
+      (let* ((latest (ring-ref eshell-history-ring 0))
+             (history-file (or eshell-history-file-name
+                              (expand-file-name "history" eshell-directory-name))))
+        ;; Only append if this is a new command
+        (when (and latest
+                   (not (string-empty-p (string-trim latest)))
+                   (not (equal latest my/eshell-last-saved-command)))
+          (setq my/eshell-last-saved-command latest)
+          ;; Append to file
+          (write-region (concat latest "\n") nil history-file 'append 'silent)))))
 
-  (add-hook 'eshell-post-command-hook #'my/eshell-save-history-on-command)
+  (add-hook 'eshell-post-command-hook #'my/eshell-append-history)
 
-  ;; Reload history from file when switching to eshell buffer
+  ;; Reload full history from file when opening eshell
   (defun my/eshell-reload-history ()
     "Reload history from file to get commands from other sessions."
-    (eshell-read-history))
+    (eshell-read-history)
+    ;; Mark the latest as already saved to avoid re-appending
+    (when (and eshell-history-ring
+               (ring-p eshell-history-ring)
+               (not (ring-empty-p eshell-history-ring)))
+      (setq my/eshell-last-saved-command (ring-ref eshell-history-ring 0))))
 
   (add-hook 'eshell-mode-hook #'my/eshell-reload-history))
 
