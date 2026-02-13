@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "emacs": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "/home/igorrizhyi/Projects/Tools/claude-emacs-mcp-server/dist/index.js"
+      ]
+    }
+  }
+}

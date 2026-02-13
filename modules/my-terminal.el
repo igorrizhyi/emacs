@@ -204,15 +204,16 @@
   ;; Disable evil mode state switching in eat
   (when (featurep 'evil)
 
-    ;; Hook for regular eat terminals - ESC sends to terminal, C-t for normal mode
+    ;; Hook for regular eat terminals - ESC sends to terminal, C-t for magit
     (defun my/eat-evil-setup ()
       "Setup evil keybindings for eat to disable ESC switching."
       ;; Force insert state
       (evil-insert-state)
       ;; Disable ESC in this buffer (send to terminal)
       (evil-local-set-key 'insert (kbd "<escape>") #'eat-self-input)
-      ;; Add C-t as normal mode switcher
-      (evil-local-set-key 'insert (kbd "C-t") #'evil-normal-state)
+      ;; C-t opens magit (consistent with global binding)
+      (evil-local-set-key 'insert (kbd "C-t") #'magit-status)
+      (evil-local-set-key 'normal (kbd "C-t") #'magit-status)
       (evil-local-set-key 'emacs (kbd "<escape>") #'eat-self-input))
 
     (add-hook 'eat-mode-hook #'my/eat-evil-setup))
@@ -231,7 +232,10 @@
           ;; C-c ESC sends actual escape to terminal
           (evil-local-set-key 'insert (kbd "C-c <escape>") #'eat-self-input)
           ;; C-u switches between Claude terminals
-          (evil-local-set-key 'insert (kbd "C-u") #'claude-code-terminal-switch)))))
+          (evil-local-set-key 'insert (kbd "C-u") #'claude-code-terminal-switch)
+          ;; C-t opens magit (override default evil-normal-state binding)
+          (evil-local-set-key 'insert (kbd "C-t") #'magit-status)
+          (evil-local-set-key 'normal (kbd "C-t") #'magit-status)))))
 
   ;; Use claude-code-start-hook with slight delay to ensure eat is ready
   (add-hook 'claude-code-start-hook

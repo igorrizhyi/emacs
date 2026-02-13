@@ -747,10 +747,14 @@
   "Change without yanking to clipboard."
   (interactive "<R><x><y>")
   (evil-change beg end type ?_ yank-handler))
+(defun evil-delete-char-without-register ()
+  "Delete character under cursor without yanking to kill ring."
+  (interactive)
+  (delete-char 1))
 (map! :map evil-normal-state-map
       "d" #'evil-delete-without-register
       "c" #'evil-change-without-register
-      "x" #'evil-delete-without-register)
+      "x" #'evil-delete-char-without-register)
 (map! :map evil-visual-state-map
       "d" #'evil-delete-without-register
       "c" #'evil-change-without-register)
@@ -805,9 +809,14 @@
     (modify-syntax-entry ?_ "w")  ; underscore = word constituent
     (modify-syntax-entry ?- ".")) ; hyphen = punctuation (separator)
 
-  ;; Apply to both Python modes - runs for every Python buffer
-  (add-hook 'python-mode-hook #'my/setup-word-boundaries)
-  (add-hook 'python-ts-mode-hook #'my/setup-word-boundaries))
+  ;; Apply to all programming modes EXCEPT elisp
+  (add-hook 'prog-mode-hook
+            (lambda ()
+              (unless (derived-mode-p 'emacs-lisp-mode 'lisp-interaction-mode)
+                (my/setup-word-boundaries))))
+  ;; Also apply to text/conf modes where underscores are common
+  (add-hook 'conf-mode-hook #'my/setup-word-boundaries)
+  (add-hook 'yaml-mode-hook #'my/setup-word-boundaries))
 
 ;; Smart Enter function with context-aware behavior
 (defun my/smart-enter ()

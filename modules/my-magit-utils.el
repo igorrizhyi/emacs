@@ -78,5 +78,10 @@
 
 (add-hook 'magit-mode-hook #'my/magit-setup-normal-mode-toggle)
 
+;; Add "y" to magit-branch transient for copying branch name
+(with-eval-after-load 'magit
+  (transient-append-suffix 'magit-branch "b"
+    '("y" "Copy branch name" my/magit-copy-branch-name)))
+
 (provide 'my-magit-utils)
 ;;; my-magit-utils.el ends here

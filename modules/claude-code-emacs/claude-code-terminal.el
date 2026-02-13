@@ -53,6 +53,10 @@ the mistty buffer takes over and should be used instead of eshell.")
 (defvar-local claude-code-terminal-embedded-command nil
   "The embedding command that started this mistty session (e.g., ssh, kubectl exec).")
 
+(defvar-local claude-code-terminal-waiting-for-editor nil
+  "Non-nil when this terminal is waiting for an editor command (kubectl edit, git commit, etc.).
+Contains a pattern to match the expected buffer name.")
+
 (defvar claude-code-terminal-counter 0
   "Counter for generating unique terminal IDs.")
 
@@ -296,7 +300,9 @@ If no current terminal or no pattern match, creates 'local_1'."
                 (switch-to-buffer buffer)
                 ;; Update access time for the terminal we just switched to
                 (claude-code-terminal-update-last-focused)
-                (message "Switched to terminal: %s" 
+                ;; Auto-switch to editor buffer if waiting
+                (claude-code-terminal-maybe-switch-to-editor)
+                (message "Switched to terminal: %s"
                          (plist-get most-recent-terminal :terminal-id))))))
       (message "No other terminals available"))))
 
@@ -1515,7 +1521,8 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
                                                        (buffer (when term (plist-get term :buffer))))
                                                   (when (and buffer (buffer-live-p buffer))
                                                     (with-selected-window (minibuffer-selected-window)
-                                                      (switch-to-buffer buffer)))))))
+                                                      (switch-to-buffer buffer)
+                                                      (claude-code-terminal-maybe-switch-to-editor)))))))
                                           nil t))
                             (let ((completion-cycle-threshold nil)
                                   (read-file-name-completion-ignore-case nil))
@@ -1524,7 +1531,9 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
               (let ((terminal (cdr (assoc choice choices))))
                 (switch-to-buffer (plist-get terminal :buffer))
                 ;; Update access time for the terminal we just switched to
-                (claude-code-terminal-update-last-focused))))
+                (claude-code-terminal-update-last-focused)
+                ;; Auto-switch to editor buffer if waiting
+                (claude-code-terminal-maybe-switch-to-editor))))
 
       (if active-terminals
           (message "No other terminal buffers (current terminal excluded)")
@@ -1955,6 +1964,19 @@ Detects monitored commands and starts tracking them."
       ;; Store the input for post-command processing
       (setq claude-code-terminal-eshell-last-input input)
 
+      ;; Detect editor-invoking commands (kubectl edit, git commit, etc.)
+      (message "[EDITOR-DETECT] input=%s, kubectl-match=%s, git-match=%s"
+               input
+               (when input (string-match-p "kubectl +edit" input))
+               (when input (string-match-p "git +commit *$" input)))
+      (when (and input
+                 (or (string-match-p "kubectl +edit" input)
+                     (string-match-p "git +commit *$" input)
+                     (string-match-p "EDITOR\\|VISUAL" input)))
+        (setq claude-code-terminal-waiting-for-editor t)
+        (message "[EDITOR-WAIT] Set waiting-for-editor=t in buffer %s, input=%s"
+                 (buffer-name) input))
+
       ;; Always show what we detected
       (message "[HOOK] input=%s, command=%s, monitored=%s"
                input command (claude-code-terminal-should-monitor-command-p command))
@@ -1980,6 +2002,13 @@ Detects monitored commands and starts tracking them."
   "Called after eshell finishes a command.
 For monitored commands (ssh, docker), we DON'T pop immediately.
 The process sentinel will handle that when the subprocess actually exits."
+  ;; Only clear editor waiting flag if no process is running
+  ;; (post-command fires immediately after process starts, not when it exits)
+  (when (and claude-code-terminal-waiting-for-editor
+             (not (get-buffer-process (current-buffer))))
+    (message "[POST-CMD] Clearing waiting-for-editor flag (no process)")
+    (setq claude-code-terminal-waiting-for-editor nil))
+
   (when (bound-and-true-p claude-code-terminal-id)
     (let* ((terminal-id claude-code-terminal-id)
            (stack (gethash terminal-id claude-code-terminal-shell-stack))
@@ -2060,6 +2089,34 @@ The process sentinel will handle that when the subprocess actually exits."
 ;; Track last focused terminal buffer
 (add-hook 'buffer-list-update-hook 'claude-code-terminal-update-last-focused)
 (add-hook 'window-configuration-change-hook 'claude-code-terminal-update-last-focused)
+
+;; Auto-switch to editor buffer when focusing eshell waiting for editor
+(defun claude-code-terminal-find-editor-buffer ()
+  "Find buffer matching the editor pattern (kubectl edit, git commit, etc.)."
+  (seq-find (lambda (buf)
+              (let ((name (buffer-file-name buf)))
+                (and name
+                     (or (string-match-p "/tmp/kubectl-edit-" name)
+                         (string-match-p "COMMIT_EDITMSG$" name)
+                         (string-match-p "/tmp/kube-edit-" name)))))
+            (buffer-list)))
+
+(defun claude-code-terminal-maybe-switch-to-editor ()
+  "Switch to editor buffer if this eshell is waiting for an editor command."
+  (message "[EDITOR-SWITCH] Called in buffer %s, waiting=%s, eshell=%s"
+           (buffer-name)
+           (bound-and-true-p claude-code-terminal-waiting-for-editor)
+           (derived-mode-p 'eshell-mode))
+  (when (and (bound-and-true-p claude-code-terminal-waiting-for-editor)
+             (derived-mode-p 'eshell-mode))
+    (let ((editor-buf (claude-code-terminal-find-editor-buffer)))
+      (message "[EDITOR-SWITCH] Found editor buffer: %s" editor-buf)
+      (when editor-buf
+        (switch-to-buffer editor-buf)))))
+
+(add-hook 'window-selection-change-functions
+          (lambda (_frame)
+            (claude-code-terminal-maybe-switch-to-editor)))
 
 ;; Force modeline update when window selection changes
 (add-hook 'window-selection-change-functions
