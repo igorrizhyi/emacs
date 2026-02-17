@@ -1715,11 +1715,11 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
   "Font family for eshell prompt and command input.")
 
 (defface claude-code-terminal-prompt-face
-  '((t :family "Perfect DOS VGA 437 Win" :height 0.5 :foreground "#00ff00"))
+  '((t :family "Perfect DOS VGA 437 Win" :height 1.0 :foreground "#00ff00"))
   "Face for eshell prompt with retro hacker font.")
 
 (defface claude-code-terminal-input-face
-  '((t :family "Perfect DOS VGA 437 Win" :height 0.5))
+  '((t :family "Perfect DOS VGA 437 Win" :height 1.0))
   "Face for eshell command input with retro hacker font.")
 
 ;;; Doom-modeline Integration for Colorful Mode Line
@@ -2447,11 +2447,11 @@ Keys are terminal IDs, values are plists with:
 
 ;; Face specs for different modes
 (defvar claude-code-terminal-output-face-regular
-  '(:family "SF Mono" :height 0.85 :inherit nil :background "#372413" :extend t)
+  '(:family "SF Mono" :height 0.75 :inherit nil :background "#372413" :extend t)
   "Face for regular command output (with background).")
 
 (defvar claude-code-terminal-output-face-embedded
-  '(:height 0.85 :inherit nil)
+  '(:height 0.75 :inherit nil)
   "Face for embedded mode output (font size only, no background).")
 
 (defun claude-code-terminal--get-id ()
@@ -2952,7 +2952,7 @@ Only switches to terminal if the immediate previous buffer was a terminal."
   ;; Match ghost text font to terminal DOS font
   (set-face-attribute 'completion-preview nil
                       :family "Perfect DOS VGA 437 Win"
-                      :height 0.5
+                      :height 1.0
                       :foreground "#666666"
                       :inherit nil))
 
