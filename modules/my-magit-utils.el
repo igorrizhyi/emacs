@@ -27,6 +27,17 @@
         (message "Copied branch name: %s" branch))
     (user-error "No branch at point")))
 
+;;;###autoload
+(defun my/magit-copy-tag-name ()
+  "Copy the tag at point or most recent tag to clipboard."
+  (interactive)
+  (if-let ((tag (or (magit-tag-at-point)
+                    (magit-git-string "describe" "--tags" "--abbrev=0"))))
+      (progn
+        (kill-new tag)
+        (message "Copied tag name: %s" tag))
+    (user-error "No tag at point and no tags in repository")))
+
 ;; Global pristine copy of magit-mode-map (saved once at load time)
 (defvar my-magit-pristine-keymap nil
   "Pristine copy of magit-mode-map for recovery.")
@@ -81,7 +92,9 @@
 ;; Add "y" to magit-branch transient for copying branch name
 (with-eval-after-load 'magit
   (transient-append-suffix 'magit-branch "b"
-    '("y" "Copy branch name" my/magit-copy-branch-name)))
+    '("y" "Copy branch name" my/magit-copy-branch-name))
+  (transient-append-suffix 'magit-tag "t"
+    '("y" "Copy tag name" my/magit-copy-tag-name)))
 
 (provide 'my-magit-utils)
 ;;; my-magit-utils.el ends here

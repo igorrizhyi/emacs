@@ -1947,9 +1947,6 @@ Run this after reloading the module to enable command monitoring on existing ter
 (defun claude-code-terminal-eshell-pre-command ()
   "Called before eshell executes a command.
 Detects monitored commands and starts tracking them."
-  ;; Always log that hook fired (temporary debug)
-  (message "[HOOK] eshell-pre-command fired! terminal-id=%s"
-           (bound-and-true-p claude-code-terminal-id))
   (when (bound-and-true-p claude-code-terminal-id)
     (let* ((terminal-id claude-code-terminal-id)
            (input (and (boundp 'eshell-last-input-start)
@@ -1965,21 +1962,11 @@ Detects monitored commands and starts tracking them."
       (setq claude-code-terminal-eshell-last-input input)
 
       ;; Detect editor-invoking commands (kubectl edit, git commit, etc.)
-      (message "[EDITOR-DETECT] input=%s, kubectl-match=%s, git-match=%s"
-               input
-               (when input (string-match-p "kubectl +edit" input))
-               (when input (string-match-p "git +commit *$" input)))
       (when (and input
                  (or (string-match-p "kubectl +edit" input)
                      (string-match-p "git +commit *$" input)
                      (string-match-p "EDITOR\\|VISUAL" input)))
-        (setq claude-code-terminal-waiting-for-editor t)
-        (message "[EDITOR-WAIT] Set waiting-for-editor=t in buffer %s, input=%s"
-                 (buffer-name) input))
-
-      ;; Always show what we detected
-      (message "[HOOK] input=%s, command=%s, monitored=%s"
-               input command (claude-code-terminal-should-monitor-command-p command))
+        (setq claude-code-terminal-waiting-for-editor t))
 
       ;; If this is a monitored command, push to stack
       (when (and command (claude-code-terminal-should-monitor-command-p command))
@@ -2006,7 +1993,6 @@ The process sentinel will handle that when the subprocess actually exits."
   ;; (post-command fires immediately after process starts, not when it exits)
   (when (and claude-code-terminal-waiting-for-editor
              (not (get-buffer-process (current-buffer))))
-    (message "[POST-CMD] Clearing waiting-for-editor flag (no process)")
     (setq claude-code-terminal-waiting-for-editor nil))
 
   (when (bound-and-true-p claude-code-terminal-id)
@@ -2016,17 +2002,12 @@ The process sentinel will handle that when the subprocess actually exits."
            (last-cmd-name (when last-command
                            (car (split-string (string-trim last-command))))))
 
-      (message "[HOOK] eshell-post-command: stack=%d, last-cmd=%s"
-               (length stack) last-cmd-name)
-
       ;; DON'T pop if the last command was a monitored one -
       ;; those are handled by process sentinel when they actually exit
       (when (and stack
                  (not (claude-code-terminal-should-monitor-command-p last-cmd-name)))
         ;; Only pop for non-monitored commands that somehow got on stack
-        (message "[HOOK] Non-monitored command, checking process...")
         (unless (get-buffer-process (current-buffer))
-          (message "[HOOK] No process, popping context")
           (claude-code-terminal-pop-embedded-context terminal-id))))))
 
 (defun claude-code-terminal-get-eshell-prompt ()
@@ -2101,18 +2082,56 @@ The process sentinel will handle that when the subprocess actually exits."
                          (string-match-p "/tmp/kube-edit-" name)))))
             (buffer-list)))
 
+(defvar-local claude-code-terminal-editor-source-buffer nil
+  "The eshell buffer that initiated this editor session (kubectl edit, etc.).")
+
+(defun claude-code-terminal-editor-buffer-p (buf)
+  "Check if BUF is a kubectl-edit or similar editor buffer."
+  (when-let ((name (buffer-file-name buf)))
+    (or (string-match-p "/tmp/kubectl-edit-" name)
+        (string-match-p "COMMIT_EDITMSG$" name)
+        (string-match-p "/tmp/kube-edit-" name))))
+
+(defun claude-code-terminal-setup-editor-buffer-return ()
+  "Set up return-to-eshell behavior for editor buffers.
+Called from find-file-hook to track source eshell buffer."
+  (when (claude-code-terminal-editor-buffer-p (current-buffer))
+    ;; Find the eshell buffer that's waiting for editor
+    (let ((source-eshell
+           (seq-find (lambda (buf)
+                       (with-current-buffer buf
+                         (and (derived-mode-p 'eshell-mode)
+                              (bound-and-true-p claude-code-terminal-waiting-for-editor))))
+                     (buffer-list))))
+      (when source-eshell
+        (setq claude-code-terminal-editor-source-buffer source-eshell)
+        ;; Add kill-buffer-hook to return to eshell
+        (add-hook 'kill-buffer-hook
+                  #'claude-code-terminal-return-to-source-eshell
+                  nil t)))))
+
+(defun claude-code-terminal-return-to-source-eshell ()
+  "Switch back to the source eshell buffer when editor buffer is killed."
+  (when-let ((source-buf claude-code-terminal-editor-source-buffer))
+    (when (buffer-live-p source-buf)
+      ;; Clear the waiting flag in the source buffer
+      (with-current-buffer source-buf
+        (setq claude-code-terminal-waiting-for-editor nil))
+      ;; Schedule switch after buffer is fully killed
+      (run-at-time 0 nil
+                   (lambda (buf)
+                     (when (buffer-live-p buf)
+                       (switch-to-buffer buf)))
+                   source-buf))))
+
+(add-hook 'find-file-hook #'claude-code-terminal-setup-editor-buffer-return)
+
 (defun claude-code-terminal-maybe-switch-to-editor ()
   "Switch to editor buffer if this eshell is waiting for an editor command."
-  (message "[EDITOR-SWITCH] Called in buffer %s, waiting=%s, eshell=%s"
-           (buffer-name)
-           (bound-and-true-p claude-code-terminal-waiting-for-editor)
-           (derived-mode-p 'eshell-mode))
   (when (and (bound-and-true-p claude-code-terminal-waiting-for-editor)
              (derived-mode-p 'eshell-mode))
-    (let ((editor-buf (claude-code-terminal-find-editor-buffer)))
-      (message "[EDITOR-SWITCH] Found editor buffer: %s" editor-buf)
-      (when editor-buf
-        (switch-to-buffer editor-buf)))))
+    (when-let ((editor-buf (claude-code-terminal-find-editor-buffer)))
+      (switch-to-buffer editor-buf))))
 
 (add-hook 'window-selection-change-functions
           (lambda (_frame)
@@ -2815,7 +2834,7 @@ Mistty becomes the main terminal buffer. When it closes, eshell returns."
         (local-set-key (kbd "C-<return>") #'claude-code-mcp-capture-and-send)
         (local-set-key (kbd "C-RET") #'claude-code-mcp-capture-and-send)
         ;; C-c C-c for interrupt - send directly to terminal
-        (local-set-key (kbd "C-c C-c") #'mistty-send-key)
+        (local-set-key (kbd "C-c C-c") #'claude-code-terminal-send-interrupt)
 
         ;; History navigation - send directly to terminal
         (local-set-key (kbd "<up>") #'mistty-send-key)

@@ -801,6 +801,21 @@
        :desc "Find function" "f" #'my-search-find-function
        :desc "Find symbol" "s" #'my-search-find-symbol))
 
+;; Copy relative file path
+(defun my/copy-relative-file-path ()
+  "Copy the current buffer's file path relative to project root."
+  (interactive)
+  (if-let ((file (buffer-file-name))
+           (root (projectile-project-root)))
+      (let ((relative (file-relative-name file root)))
+        (kill-new relative)
+        (message "Copied: %s" relative))
+    (user-error "Buffer is not visiting a file or not in a project")))
+
+(map! :leader
+      (:prefix ("c" . "code")
+       :desc "Copy relative path" "p" #'my/copy-relative-file-path))
+
 ;; Make Evil word movement behave like Vim - custom word boundaries
 (with-eval-after-load 'evil
   ;; Setup custom word boundaries: underscores = part of word, hyphens = separators
