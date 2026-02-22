@@ -271,8 +271,10 @@ Contents of the overlay is based on the results of \"window-stool-fn\"."
                                                            (concat acc truncated-respecting-word-boundaries)))
                                                        ctx)))
 
+                   (face-end (max 0 (- (length context-str-1) (length (car (last ctx))))))
                    (context-str (progn
-                                  (add-face-text-property 0 (length context-str-1) '(:inherit window-stool-face) t context-str-1)
+                                  (when (> face-end 0)
+                                    (add-face-text-property 0 face-end '(:inherit window-stool-face) t context-str-1))
                                   (concat context-str-1 covered-line))))
 
               (when window-stool-overlay
