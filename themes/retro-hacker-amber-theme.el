@@ -252,6 +252,9 @@
    `(term-color-magenta ((,class (:background ,violet :foreground ,violet))))
    `(term-color-cyan ((,class (:background ,cyan :foreground ,cyan))))
    `(term-color-white ((,class (:background ,fg-main :foreground ,fg-main))))
+
+   ;; Window-stool sticky header
+   `(window-stool-face ((,class (:background ,bg-highlight))))
    ))
 
 (when (and (boundp 'custom-theme-load-path) load-file-name)

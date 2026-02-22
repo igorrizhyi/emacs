@@ -66,8 +66,8 @@
 ;; Add all-the-icons for better icon support
 ;; (package! all-the-icons)
 
-;; Disable nerd-icons package to force use of all-the-icons
-(package! nerd-icons :disable t)
+;; nerd-icons is required by Doom core (dashboard, etc.) - do not disable
+;; (package! nerd-icons :disable t)
 
 (package! lsp-treemacs)
 
@@ -103,7 +103,7 @@
 (package! evil-snipe :disable t)
 (package! company-box)
 
-(package! window-stool :recipe (:host github :repo "jaszhe/window-stool" :files ("*.el")))
+(package! window-stool :recipe (:local-repo "modules/window-stool" :files ("*.el")))
 ;; Enhanced dired font-lock for better file listing colors
 (package! diredfl)
 ;; Filter dired items interactively (like nnn)
