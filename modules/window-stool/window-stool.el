@@ -42,7 +42,7 @@
 This will be ADDED to the context string's existing buffer font locking."
   :group 'window-stool)
 
-(defcustom window-stool-n-from-top 1
+(defcustom window-stool-n-from-top 2
   "Number of lines of context to keep from the outermost context list.
 i.e. suppose we have
 \(defun foo \(\)
@@ -59,7 +59,7 @@ This needs to be increased to one more than what you would have
 normally for the non overlay version."
   :type '(natnum))
 
-(defcustom window-stool-n-from-bottom 2
+(defcustom window-stool-n-from-bottom 0
   "Number of lines of context to keep from the innermost context list.
 See: \"window-stool-n-from-top\"."
   :type '(natnum))
