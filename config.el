@@ -144,6 +144,8 @@
 
 ;; File associations
 (add-to-list 'auto-mode-alist '("\\.jstxt\\'" . js-mode))
+(with-eval-after-load 'lsp-mode
+  (add-to-list 'lsp-language-id-configuration '(js-mode . "javascript")))
 
 ;; Disable automatic project switching when opening files
 (setq projectile-track-known-projects-automatically nil)
@@ -198,6 +200,14 @@
   (setq persp-auto-resume-time -1)
   ;; Override workspaces module - open dired instead of find-file on project switch
   (setq projectile-switch-project-action #'projectile-dired))
+
+;; Keep HYPRLAND_INSTANCE_SIGNATURE current
+(defun my/update-hyprland-signature ()
+  "Update HYPRLAND_INSTANCE_SIGNATURE from /run/user/1000/hypr/."
+  (interactive)
+  (when-let ((sig (car (directory-files "/run/user/1000/hypr/" nil "^[^.]"))))
+    (setenv "HYPRLAND_INSTANCE_SIGNATURE" sig)
+    (message "Hyprland signature: %s" sig)))
 
 ;; Optimize general Emacs responsiveness
 (setq gc-cons-threshold (* 100 1024 1024))  ; 100MB instead of 800KB

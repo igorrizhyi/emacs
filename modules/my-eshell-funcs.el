@@ -60,27 +60,47 @@
       "kubectl -n webpush-kafka -c cp-kafka-broker exec -it cp-kafka-0 -- /bin/bash"))))
 
 (defun my-eshell--kprod ()
-  (setenv "KUBECONFIG" "/home/igorrizhyi/.kube/prod")
+  (setenv "KUBECONFIG" "/var/home/igorrizhyi/.kube/prod_new")
   "echo 'Switched to PROD'")
 
 (defun my-eshell--kstaging ()
-  (setenv "KUBECONFIG" "/home/igorrizhyi/.kube/staging")
+  (setenv "KUBECONFIG" "/var/home/igorrizhyi/.kube/stg02")
   "echo 'Switched to STAGING'")
 
 (defun my-eshell--kbts00 ()
-  (setenv "KUBECONFIG" "/home/igorrizhyi/.kube/bts_00")
+  (setenv "KUBECONFIG" "/var/home/igorrizhyi/.kube/bts_00")
   "echo 'Switched to BTS00'")
 
 (defun my-eshell--khel02 ()
-  (setenv "KUBECONFIG" "/home/igorrizhyi/.kube/hel02")
+  (setenv "KUBECONFIG" "/var/home/igorrizhyi/.kube/hel02")
   "echo 'Switched to HEL02'")
 
 (defun my-eshell--kdev ()
-  (setenv "KUBECONFIG" "/home/igorrizhyi/.kube/dev")
+  (setenv "KUBECONFIG" "/var/home/igorrizhyi/.kube/dev")
   "echo 'Switched to DEV'")
 
 (defun my-eshell--kctx ()
   (format "echo 'KUBECONFIG=%s'" (or (getenv "KUBECONFIG") "default")))
+
+(defun eshell/source-env (&optional file)
+  "Load environment variables from FILE (default: .env)."
+  (let ((env-file (expand-file-name (or file ".env"))))
+    (if (not (file-exists-p env-file))
+        (eshell-print (format "File not found: %s\n" env-file))
+      (let ((count 0))
+        (dolist (line (split-string (with-temp-buffer
+                                      (insert-file-contents env-file)
+                                      (buffer-string))
+                                    "\n" t))
+          (when (string-match "\\`\\([A-Za-z_][A-Za-z0-9_]*\\)=\\(.*\\)\\'" line)
+            (let ((key (match-string 1 line))
+                  (val (match-string 2 line)))
+              ;; Strip surrounding quotes
+              (when (string-match "\\`[\"']\\(.*\\)[\"']\\'" val)
+                (setq val (match-string 1 val)))
+              (setenv key val)
+              (setq count (1+ count)))))
+        (eshell-print (format "Loaded %d vars from %s\n" count env-file))))))
 
 (defun eshell/grep (&rest args)
   "Run external grep with -h to suppress filename prefix."

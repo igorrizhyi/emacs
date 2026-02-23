@@ -243,10 +243,12 @@ If no current terminal or no pattern match, creates 'local_1'."
          (buffer-name (claude-code-terminal-buffer-name project-root new-terminal-id))
          (default-directory (or directory project-root)))
 
-    ;; Create eshell terminal buffer
-    (let ((buffer (claude-code-terminal--create-eshell-buffer buffer-name)))
+    ;; Capture env from current eshell buffer before creating new one
+    (let* ((parent-env (copy-sequence process-environment))
+           (buffer (claude-code-terminal--create-eshell-buffer buffer-name)))
       ;; Store terminal ID as buffer-local variable
       (with-current-buffer buffer
+        (setq-local process-environment parent-env)
         (setq-local claude-code-terminal-id new-terminal-id)
         (setq-local claude-code-terminal-project-root project-root)
         ;; Enable claude terminal mode and apply font scaling
@@ -2348,11 +2350,17 @@ Use C-RET to confirm MCP output capture."
             (eshell-send-input))))))
 
 (defun claude-code-terminal-send-interrupt ()
-  "Send C-c (interrupt) to eshell or mistty."
+  "Send C-c (interrupt) to eshell or mistty.
+In eshell, if no process is running, just clear the current input
+without creating a blank line."
   (interactive)
   (cond
    ((derived-mode-p 'eshell-mode)
-    (eshell-interrupt-process))
+    (if (eshell-interactive-process)
+        (eshell-interrupt-process)
+      ;; No process running - just clear the input line
+      (goto-char (point-max))
+      (delete-region eshell-last-output-end (point))))
    ((derived-mode-p 'mistty-mode)
     (when (fboundp 'mistty-send-key)
       (mistty-send-key 1 ?\C-c)))))
@@ -2363,9 +2371,29 @@ Use C-RET to confirm MCP output capture."
   (when (derived-mode-p 'eshell-mode)
     (eshell-send-eof-to-process)))
 
+(defun claude-code-terminal-run-in-mistty ()
+  "Prompt for a command and run it in a mistty buffer attached to current eshell.
+Useful for commands with progress bars or interactive output that don't
+render well in eshell (e.g., poetry install, npm install)."
+  (interactive)
+  (unless (derived-mode-p 'eshell-mode)
+    (user-error "Not in an eshell buffer"))
+  (let ((cmd (read-string "Run in mistty: "
+                          (string-trim (buffer-substring-no-properties
+                                        eshell-last-output-end (point))))))
+    (when (string-empty-p cmd)
+      (user-error "No command provided"))
+    ;; Clear current input
+    (delete-region eshell-last-output-end (point))
+    (insert (format "# Running in mistty: %s" cmd))
+    (let ((eshell-input-filter (lambda (_) nil)))
+      (eshell-send-input))
+    (claude-code-terminal-spawn-mistty cmd)))
+
 ;; Configure eshell terminal key bindings
 (with-eval-after-load 'eshell
   ;; Eshell keybindings - works like normal Emacs editing
+  (define-key eshell-mode-map (kbd "C-c x") 'claude-code-terminal-run-in-mistty)
   (define-key eshell-mode-map (kbd "C-c c") 'claude-code-terminal-create)
   (define-key eshell-mode-map (kbd "C-c n") 'claude-code-terminal-create-numbered)
   (define-key eshell-mode-map (kbd "C-c i") 'claude-code-send-emacs-terminal)
@@ -2466,7 +2494,7 @@ Keys are terminal IDs, values are plists with:
 
 ;; Face specs for different modes
 (defvar claude-code-terminal-output-face-regular
-  '(:family "SF Mono" :height 0.75 :inherit nil :background "#372413" :extend t)
+  (list :font (font-spec :family "SF Mono" :weight 'semibold) :height 0.75 :inherit nil :background "#372413" :extend t)
   "Face for regular command output (with background).")
 
 (defvar claude-code-terminal-output-face-embedded
@@ -2507,6 +2535,8 @@ Keys are terminal IDs, values are plists with:
      ;; Python REPL (only interactive, no args)
      (string-match-p "^python[23]?$" input-trimmed)
      (string= "ipython" input-trimmed)
+     ;; Commands with progress bars that don't render well in eshell
+     (string-match-p "\\bpoetry\\s+install\\b" input-trimmed)
      ;; TUI applications (also match with env var prefixes like KUBECONFIG=... k9s)
      (string-match-p "\\bk9s\\b" input-trimmed)
      (string-match-p "\\bhtop\\b" input-trimmed))))
@@ -2808,7 +2838,7 @@ Mistty becomes the main terminal buffer. When it closes, eshell returns."
         (claude-code-terminal-mode 1)
 
         ;; Apply SF Mono font to mistty buffer
-        (face-remap-add-relative 'default :family "SF Mono" :height 0.85)
+        (face-remap-add-relative 'default :font (font-spec :family "SF Mono" :weight 'semibold) :height 0.85)
 
         ;; Explicitly set doom-modeline for this buffer (after variables are set)
         (when (fboundp 'doom-modeline-set-modeline)
