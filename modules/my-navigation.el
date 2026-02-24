@@ -110,22 +110,29 @@ Does nothing if there are no changes in the buffer."
 
 ;; No manual advice needed - using command hooks approach
 
+(defun my/switch-to-buffer-filtered ()
+  "Like `consult-buffer' but excludes *claude* buffers with preview."
+  (interactive)
+  (let ((consult-buffer-filter
+         (append (bound-and-true-p consult-buffer-filter)
+                 '("\\*claude"))))
+    (call-interactively #'consult-buffer)))
+
 ;; Keep the original bindings - they'll automatically register jumps via command hooks
-(map! :g "C-<tab>" #'switch-to-buffer
-      :n "C-<tab>" #'switch-to-buffer
-      :i "C-<tab>" #'switch-to-buffer
-      :v "C-<tab>" #'switch-to-buffer)
+(map! :g "C-<tab>" #'my/switch-to-buffer-filtered
+      :n "C-<tab>" #'my/switch-to-buffer-filtered
+      :i "C-<tab>" #'my/switch-to-buffer-filtered
+      :v "C-<tab>" #'my/switch-to-buffer-filtered)
 
 ;; Helper function to set evil jump before switching buffers
 (defun my/goto-jumps-selection ()
   (interactive)
   (evil-set-jump)
-  (windmove-left)
-  )
+  (windmove-left))
 
 ;; Force override with global-set-key as backup
 (with-eval-after-load 'yasnippet
-  (global-set-key (kbd "C-<tab>") #'switch-to-buffer))
+  (global-set-key (kbd "C-<tab>") #'my/switch-to-buffer-filtered))
 
 ;; Python structural navigation with { and }
 (with-eval-after-load 'python

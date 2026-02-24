@@ -101,7 +101,6 @@
 (package! telephone-line)
 
 (package! evil-snipe :disable t)
-(package! company-box)
 
 (package! window-stool :recipe (:local-repo "modules/window-stool" :files ("*.el")))
 ;; Enhanced dired font-lock for better file listing colors

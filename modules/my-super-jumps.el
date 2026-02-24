@@ -756,9 +756,9 @@ Returns list of propertized strings."
   "Major mode for viewing jump previews with inline search."
   (setq buffer-read-only t
         truncate-lines t
-        cursor-type nil)
-  (when (bound-and-true-p evil-mode)
-    (evil-emacs-state)))
+        cursor-type nil))
+
+(evil-set-initial-state 'my-super-jumps-preview-mode 'emacs)
 
 ;;;###autoload
 (defun my-super-jumps-list ()
