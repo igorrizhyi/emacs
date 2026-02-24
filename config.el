@@ -32,9 +32,12 @@
 (require 'my-search)
 (require 'my-eshell-funcs)
 (after! eshell
+  (require 'em-tramp)
   (setq eshell-history-size 10000
         eshell-save-history-on-exit nil  ; We handle this ourselves
-        eshell-hist-ignoredups t)
+        eshell-hist-ignoredups t
+        password-cache t
+        password-cache-expiry 28800)
 
   ;; Track the last command we saved to avoid duplicates
   (defvar-local my/eshell-last-saved-command nil
@@ -686,7 +689,7 @@
 ;; Window navigation keybindings - move focus between splits
 (map! "C-h" #'my/smart-move-left   ; Smart left movement or Magit
       "C-l" #'windmove-right       ; Focus right window split
-      "s-k" #'my-layout-smart-claude-code
+      "M-k" #'my-layout-smart-claude-code
       "C-k" #'my-layout-smart-claude-code) ; Smart Claude Code handler
 
 
@@ -1118,6 +1121,11 @@
 
   (advice-add 'find-file :around #'my/claude-code-find-file-advice)
   (advice-add 'find-file-noselect :around #'my/claude-code-find-file-advice)
+
+  ;; M-k to switch back from claude-code buffer — must override eat's semi-char-mode-map
+  (add-hook 'claude-code-start-hook
+            (lambda ()
+              (define-key eat-semi-char-mode-map (kbd "M-k") #'claude-code--switch-to-previous-buffer)))
 
   (claude-code-mode)
   ;; :bind-keymap ("C-c c" . claude-code-terminal-create)

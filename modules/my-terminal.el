@@ -249,9 +249,6 @@
     ;; Override evil-collection vterm settings
     (setq evil-collection-vterm-send-escape-to-vterm-p t)))
 
-;; Key bindings
-(map! "C-j" #'my/toggle-terminal-show)
-
 (defun my/smart-navigate-down ()
   "Smart navigation: top to center to bottom (terminal).
   

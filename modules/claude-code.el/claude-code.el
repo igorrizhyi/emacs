@@ -680,12 +680,7 @@ _BACKEND is the terminal backend type (should be \\='eat)."
     (define-key map (kbd "C-g") #'claude-code-send-escape)
     
     ;; M-k to return to previous buffer
-    ;; Bind directly in eat-semi-char-mode-map since minor mode maps take
-    ;; precedence over local maps, so our local binding would be shadowed
-    ;; (when (boundp 'eat-semi-char-mode-map)
-    ;;   (define-key eat-semi-char-mode-map (kbd "M-k") #'claude-code--switch-to-previous-buffer))
     (define-key map (kbd "M-k") #'claude-code--switch-to-previous-buffer)
-    (define-key eat-semi-char-mode-map (kbd "M-k") #'claude-code--switch-to-previous-buffer)
 
     ;; Configure key bindings based on user preference
     (pcase claude-code-newline-keybinding-style

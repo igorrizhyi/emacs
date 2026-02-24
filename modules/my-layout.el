@@ -462,8 +462,7 @@
 ;; Key bindings for navigation
 (map! :n "C-h" #'my-layout-navigate-left
       :n "C-l" #'my-layout-navigate-right
-      :n "s-<right>" #'my-layout-navigate-right
-      :n "C-j" #'my-layout-navigate-down)
+      :n "s-<right>" #'my-layout-navigate-right)
 
 ;; Specific eat terminal keybindings using s-arrow keys that work reliably
 (after! eat

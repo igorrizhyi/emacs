@@ -6,6 +6,8 @@
 
 ;;; Code:
 
+(defvar consult-buffer-filter)
+
 ;; Require smart splits for advanced split management
 (require 'my-layout)
 
