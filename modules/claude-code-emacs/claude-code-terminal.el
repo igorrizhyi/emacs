@@ -195,7 +195,9 @@ Returns the terminal ID."
         (setq-local claude-code-terminal-project-root project-root)
         ;; Enable claude terminal mode and apply font scaling
         (claude-code-terminal-mode 1)
-        (claude-code-terminal-apply-large-font))
+        (claude-code-terminal-apply-large-font)
+        ;; Apply prompt, font, completion after buffer is fully set up
+        (claude-code-terminal-finalize-buffer))
 
       ;; Register terminal session
       (claude-code-terminal-register project-root buffer-name terminal-id)
@@ -253,7 +255,9 @@ If no current terminal or no pattern match, creates 'local_1'."
         (setq-local claude-code-terminal-project-root project-root)
         ;; Enable claude terminal mode and apply font scaling
         (claude-code-terminal-mode 1)
-        (claude-code-terminal-apply-large-font))
+        (claude-code-terminal-apply-large-font)
+        ;; Apply prompt, font, completion after buffer is fully set up
+        (claude-code-terminal-finalize-buffer))
 
       ;; Register terminal session
       (claude-code-terminal-register project-root buffer-name new-terminal-id)
@@ -1724,6 +1728,17 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
   '((t :family "Perfect DOS VGA 437 Win" :height 1.0))
   "Face for eshell command input with retro hacker font.")
 
+(defun claude-code-terminal-apply-buffer-font ()
+  "Apply retro font to entire eshell buffer via face remapping."
+  (face-remap-add-relative 'default :family claude-code-terminal-prompt-font))
+
+(defun claude-code-terminal-finalize-buffer ()
+  "Apply all terminal customizations after buffer is fully created.
+Called explicitly from create functions to avoid eshell-mode-hook race conditions."
+  (claude-code-terminal-apply-buffer-font)
+  (claude-code-terminal-setup-prompt-font)
+  (add-to-list 'completion-at-point-functions #'cape-history))
+
 ;;; Doom-modeline Integration for Colorful Mode Line
 
 (defface claude-code-terminal-id-face
@@ -2066,6 +2081,11 @@ The process sentinel will handle that when the subprocess actually exits."
           ;; Stack is now empty
           (remhash terminal-id claude-code-terminal-shell-stack)
           (remhash terminal-id claude-code-terminal-embedded-shells)
+          ;; Strip read-only properties left by subprocess output
+          (when-let ((buf (claude-code-terminal-get-buffer terminal-id)))
+            (with-current-buffer buf
+              (let ((inhibit-read-only t))
+                (remove-text-properties (point-min) (point-max) '(read-only nil)))))
           (message "[POP] Stack empty, back to base shell"))
         (force-mode-line-update)))))
 
