@@ -1737,7 +1737,10 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
 Called explicitly from create functions to avoid eshell-mode-hook race conditions."
   (claude-code-terminal-apply-buffer-font)
   (claude-code-terminal-setup-prompt-font)
-  (add-to-list 'completion-at-point-functions #'cape-history))
+  (make-local-variable 'completion-at-point-functions)
+  (add-to-list 'completion-at-point-functions #'cape-history)
+  (when (fboundp 'corfu-mode)
+    (corfu-mode 1)))
 
 ;;; Doom-modeline Integration for Colorful Mode Line
 
@@ -2448,7 +2451,7 @@ render well in eshell (e.g., poetry install, npm install)."
   (define-key eshell-mode-map (kbd "s-i") 'claude-code-send-emacs-terminal)
   (define-key eshell-mode-map (kbd "s-h") 'claude-code-send-emacs-terminal-popup)
   (define-key eshell-mode-map (kbd "s-1") 'claude-code-send-1)
-  (define-key eshell-mode-map (kbd "s-k") 'my-layout-smart-claude-code)
+  (define-key eshell-mode-map (kbd "M-k") 'my-layout-smart-claude-code)
   (define-key eshell-mode-map (kbd "s-u") 'claude-code-terminal-switch)
 
   (message "[DEBUG] Configured eshell terminal keybindings"))
@@ -2458,19 +2461,19 @@ render well in eshell (e.g., poetry install, npm install)."
   (evil-define-key 'insert claude-code-terminal-mode-map (kbd "C-u") 'claude-code-terminal-switch)
   (evil-define-key 'normal claude-code-terminal-mode-map (kbd "C-u") 'claude-code-terminal-switch)
   (evil-define-key 'emacs claude-code-terminal-mode-map (kbd "C-u") 'claude-code-terminal-switch)
-  (evil-define-key 'emacs claude-code-terminal-mode-map (kbd "s-k") 'my-layout-smart-claude-code)
-  (evil-define-key 'insert claude-code-terminal-mode-map (kbd "s-k") 'my-layout-smart-claude-code)
-  (evil-define-key 'normal claude-code-terminal-mode-map (kbd "s-k") 'my-layout-smart-claude-code)
+  (evil-define-key 'emacs claude-code-terminal-mode-map (kbd "M-k") 'my-layout-smart-claude-code)
+  (evil-define-key 'insert claude-code-terminal-mode-map (kbd "M-k") 'my-layout-smart-claude-code)
+  (evil-define-key 'normal claude-code-terminal-mode-map (kbd "M-k") 'my-layout-smart-claude-code)
   
   ;; Evil mode bindings for terminal quick switching - only in terminal buffers
   (evil-define-key 'insert claude-code-terminal-mode-map (kbd "C-f") 'claude-code-terminal-switch-recent)
   (evil-define-key 'normal claude-code-terminal-mode-map (kbd "C-f") 'claude-code-terminal-switch-recent)
   (evil-define-key 'emacs claude-code-terminal-mode-map (kbd "C-f") 'claude-code-terminal-switch-recent)
   
-  ;; Override Evil C-g for terminal prefix cycling in all states
-  (evil-define-key 'insert claude-code-terminal-mode-map (kbd "C-g") 'claude-code-terminal-cycle-prefix)
-  (evil-define-key 'normal claude-code-terminal-mode-map (kbd "C-g") 'claude-code-terminal-cycle-prefix)
-  (evil-define-key 'emacs claude-code-terminal-mode-map (kbd "C-g") 'claude-code-terminal-cycle-prefix)
+  ;; Terminal prefix cycling in all states
+  (evil-define-key 'insert claude-code-terminal-mode-map (kbd "C-j") 'claude-code-terminal-cycle-prefix)
+  (evil-define-key 'normal claude-code-terminal-mode-map (kbd "C-j") 'claude-code-terminal-cycle-prefix)
+  (evil-define-key 'emacs claude-code-terminal-mode-map (kbd "C-j") 'claude-code-terminal-cycle-prefix)
   
   ;; Evil mode bindings for shell nesting commands
   (evil-define-key 'insert claude-code-terminal-mode-map (kbd "C-c C-m") 'claude-code-terminal-mark-embedded)
@@ -2875,7 +2878,7 @@ Mistty becomes the main terminal buffer. When it closes, eshell returns."
         (local-set-key (kbd "s-c") #'claude-code-terminal-create)
         (local-set-key (kbd "s-n") #'claude-code-terminal-create-numbered)
         (local-set-key (kbd "s-h") #'claude-code-send-emacs-terminal-popup)
-        (local-set-key (kbd "s-k") #'my-layout-smart-claude-code)
+        (local-set-key (kbd "M-k") #'my-layout-smart-claude-code)
         (local-set-key (kbd "s-u") #'claude-code-terminal-switch)
         ;; Enter key - normal command execution
         (local-set-key (kbd "<return>") #'claude-code-terminal-mistty-smart-enter)
