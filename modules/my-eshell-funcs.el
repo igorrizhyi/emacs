@@ -349,5 +349,12 @@ Disables preview to avoid font styling issues."
 
 (add-hook 'eshell-mode-hook #'my-eshell-setup-expansion-keys)
 
+(defun my-eshell-unlock-buffer ()
+  "Remove read-only text properties from the entire eshell buffer."
+  (interactive)
+  (let ((inhibit-read-only t))
+    (remove-text-properties (point-min) (point-max) '(read-only nil)))
+  (message "Buffer unlocked"))
+
 (provide 'my-eshell-funcs)
 ;;; my-eshell-funcs.el ends here
