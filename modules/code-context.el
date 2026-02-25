@@ -31,12 +31,6 @@ Inherits from `window-stool-face' to reuse existing theme settings."
   :type 'natnum
   :group 'code-context)
 
-(defcustom code-context-continuation-regex
-  "\\`[])}]\\|\\`->"
-  "Regex matching continuation lines to skip (matched against trimmed line)."
-  :type 'regexp
-  :group 'code-context)
-
 (defconst code-context--min-window-height 20
   "Minimum window height for displaying context.")
 
@@ -82,59 +76,11 @@ Return non-nil if a valid line was found, nil if we hit `bobp'."
          (t (goto-char bol) (setq found t)))))
     found))
 
-(defun code-context--find-outermost (limit)
-  "Jump backward to the nearest column-0 code line before LIMIT.
-Skips strings and comments. Returns point, or nil if not found."
-  (let ((found nil))
-    (while (and (not found)
-                (re-search-backward "^\\S-" nil t))
-      (let ((ppss (syntax-ppss)))
-        (if (or (nth 3 ppss) (nth 4 ppss))
-            ;; In string/comment — skip to its start and keep looking
-            (goto-char (or (nth 8 ppss) (point-min)))
-          (setq found (point)))))
-    found))
-
-(defun code-context--collect-forward (from to n)
-  "Collect up to N context lines walking forward FROM toward TO.
-Returns a list of fontified strings (outermost first).
-Collects lines where indentation strictly increases from the previous level."
-  (save-excursion
-    (goto-char from)
-    (let ((ctx (list (code-context--line-string)))
-          (count 1)
-          (prev-indent (current-indentation)))
-      (forward-line 1)
-      (while (and (< count n) (< (point) to))
-        (let* ((bol (line-beginning-position))
-               (ppss (syntax-ppss bol)))
-          (cond
-           ;; Skip strings
-           ((nth 3 ppss)
-            (goto-char (or (nth 8 ppss) bol))
-            (forward-line 1)
-            ;; Jump past end of string
-            (let ((end (ignore-errors (scan-sexps (nth 8 ppss) 1))))
-              (when end (goto-char end) (forward-line 1))))
-           ;; Skip comments, empty lines, continuation lines
-           ((or (nth 4 ppss)
-                (progn (goto-char bol) (looking-at-p "^\\s-*$"))
-                (save-excursion (back-to-indentation) (looking-at-p "[])}]\\|->")))
-            (forward-line 1))
-           ;; Code line with greater indentation — new scope
-           ((> (current-indentation) prev-indent)
-            (setq prev-indent (current-indentation))
-            (push (code-context--line-string) ctx)
-            (setq count (1+ count))
-            (forward-line 1))
-           ;; Code line at same or lesser indentation — skip
-           (t (forward-line 1)))))
-      (nreverse ctx))))
-
 (defun code-context--get-context (pos n)
   "Extract up to N context lines for position POS.
-Jumps to outermost scope (column 0) then walks forward, collecting
-the first N scope-opening lines. O(1) backward + O(forward scan)."
+Walks backward from POS collecting lines with strictly decreasing
+indentation, skipping strings/comments.  Returns a list of fontified
+strings (outermost first), truncated to N."
   (save-excursion
     (goto-char pos)
     ;; If inside a string, jump to its start
@@ -142,15 +88,33 @@ the first N scope-opening lines. O(1) backward + O(forward scan)."
       (when (nth 3 ppss)
         (goto-char (nth 8 ppss))
         (beginning-of-line)))
-    (let ((ref-pos (point)))
-      ;; Jump to outermost scope (column-0 line)
-      (let ((outer (code-context--find-outermost ref-pos)))
-        (if outer
-            (code-context--collect-forward outer ref-pos n)
-          ;; Fallback: beginning-of-defun
-          (goto-char pos)
-          (when (ignore-errors (beginning-of-defun) t)
-            (list (code-context--line-string))))))))
+    ;; Find the first valid code line at or above pos
+    (code-context--skip-to-code-line)
+    (let ((ctx '())
+          (prev-indent (current-indentation)))
+      (push (code-context--line-string) ctx)
+      ;; Walk backward collecting lines with strictly less indentation
+      (while (and (> prev-indent 0) (not (bobp)))
+        (forward-line -1)
+        (when (code-context--skip-to-code-line)
+          (let ((ind (current-indentation)))
+            (when (< ind prev-indent)
+              (setq prev-indent ind)
+              (push (code-context--line-string) ctx)))))
+      ;; Fallback: beginning-of-defun if it gives something new
+      (when (fboundp 'beginning-of-defun)
+        (let ((walk-top (car ctx)))
+          (save-excursion
+            (goto-char pos)
+            (ignore-errors (beginning-of-defun))
+            (let ((defun-line (code-context--line-string)))
+              (unless (or (string= defun-line walk-top)
+                          (member defun-line ctx))
+                (push defun-line ctx))))))
+      ;; Truncate to N from outermost
+      (if (> (length ctx) n)
+          (cl-subseq ctx 0 n)
+        ctx))))
 
 ;;; Overlay management
 
@@ -160,8 +124,51 @@ the first N scope-opening lines. O(1) backward + O(forward scan)."
 (defvar-local code-context--prev-ctx nil
   "Previous context list, for scroll compensation.")
 
-(defvar-local code-context--cache-key nil
-  "The `window-start' value for which `code-context--prev-ctx' is valid.")
+(defvar-local code-context--cached-context-str nil
+  "Cached rendered context string (without covered line).")
+
+(defvar-local code-context--cached-defun-pos nil
+  "Buffer position from `beginning-of-defun' used as cache key.
+Changes when crossing function/class boundaries.")
+
+(defun code-context--defun-pos (pos)
+  "Return `beginning-of-defun' position from POS, or nil."
+  (save-excursion
+    (goto-char pos)
+    (when (ignore-errors (beginning-of-defun) t)
+      (point))))
+
+(defun code-context--build-context-str (ctx win-width)
+  "Build the rendered context string from CTX lines for WIN-WIDTH."
+  (when ctx
+    (let ((str (cl-reduce
+                (lambda (acc s)
+                  (concat acc (truncate-string-to-width s win-width 0 nil "\n")))
+                ctx)))
+      (when (> (length str) 0)
+        (add-face-text-property
+         0 (length str) '(:inherit code-context-face) t str))
+      str)))
+
+(defun code-context--show-overlay (window display-start context-str)
+  "Place the overlay for WINDOW at DISPLAY-START with CONTEXT-STR."
+  (let* ((ol-beg display-start)
+         (ol-end (save-excursion
+                   (goto-char display-start)
+                   (forward-visible-line 1)
+                   (line-end-position)))
+         (covered-line (save-excursion
+                         (goto-char display-start)
+                         (forward-visible-line 1)
+                         (buffer-substring
+                          (line-beginning-position)
+                          (line-end-position))))
+         (display-str (concat context-str covered-line)))
+    (move-overlay code-context--overlay ol-beg ol-end)
+    (overlay-put code-context--overlay 'type 'code-context--overlay)
+    (overlay-put code-context--overlay 'window window)
+    (overlay-put code-context--overlay 'priority 0)
+    (overlay-put code-context--overlay 'display display-str)))
 
 (defun code-context--update (window display-start)
   "Create or update the code context overlay for WINDOW at DISPLAY-START."
@@ -176,44 +183,25 @@ the first N scope-opening lines. O(1) backward + O(forward scan)."
               (eq display-start (point-min))
               (not (buffer-file-name)))
           (delete-overlay code-context--overlay)
-        ;; Use cached context if window-start hasn't changed
-        (let ((ctx (if (eq display-start code-context--cache-key)
-                       code-context--prev-ctx
-                     (code-context--get-context display-start code-context-n-from-top))))
-          (when ctx
-            (let* ((ol-beg display-start)
-                   (ol-end (save-excursion
-                             (goto-char display-start)
-                             (forward-visible-line 1)
-                             (line-end-position)))
-                   (covered-line (save-excursion
-                                   (goto-char display-start)
-                                   (forward-visible-line 1)
-                                   (buffer-substring
-                                    (line-beginning-position)
-                                    (line-end-position))))
+        ;; Cache key: beginning-of-defun position (fast, mode-aware)
+        (let ((defun-pos (code-context--defun-pos display-start)))
+          (if (and defun-pos
+                   (eql defun-pos code-context--cached-defun-pos)
+                   code-context--prev-ctx
+                   code-context--cached-context-str)
+              ;; Cache hit: same enclosing defun, reuse context
+              (code-context--show-overlay window display-start
+                                          code-context--cached-context-str)
+            ;; Cache miss: full recompute
+            (let* ((ctx (code-context--get-context display-start
+                                                   code-context-n-from-top))
                    (win-width (1- (window-width window)))
-                   (context-str
-                    (cl-reduce
-                     (lambda (acc str)
-                       (let ((truncated (truncate-string-to-width
-                                         str win-width 0 nil "\n")))
-                         (concat acc truncated)))
-                     ctx))
-                   (display-str
-                    (progn
-                      (when (> (length context-str) 0)
-                        (add-face-text-property
-                         0 (length context-str)
-                         '(:inherit code-context-face) t context-str))
-                      (concat context-str covered-line))))
-              (move-overlay code-context--overlay ol-beg ol-end)
-              (overlay-put code-context--overlay 'type 'code-context--overlay)
-              (overlay-put code-context--overlay 'window window)
-              (overlay-put code-context--overlay 'priority 0)
-              (overlay-put code-context--overlay 'display display-str)))
-          (setq-local code-context--prev-ctx ctx)
-          (setq-local code-context--cache-key display-start))))))
+                   (context-str (code-context--build-context-str ctx win-width)))
+              (when (and ctx context-str)
+                (code-context--show-overlay window display-start context-str))
+              (setq-local code-context--prev-ctx ctx)
+              (setq-local code-context--cached-context-str context-str)
+              (setq-local code-context--cached-defun-pos defun-pos))))))))
 
 (defun code-context--remove ()
   "Remove the code context overlay from the current buffer."
@@ -230,7 +218,6 @@ WINDOW and DISPLAY-START are provided by the hook."
   (when (and (buffer-file-name)
              (or (not (boundp 'git-commit-mode))
                  (not git-commit-mode)))
-    ;; Save previous context length before update overwrites it
     (setq-local code-context--prev-ctx-len (length code-context--prev-ctx))
     (code-context--update
      window
@@ -304,6 +291,8 @@ Uses `syntax-ppss' to reliably skip strings and comments."
   (if code-context-mode
       (progn
         (setq-local code-context--prev-ctx nil)
+        (setq-local code-context--cached-defun-pos nil)
+        (setq-local code-context--cached-context-str nil)
         (code-context--remove)
 
         (when (< scroll-margin (1+ code-context-n-from-top))
