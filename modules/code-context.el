@@ -88,7 +88,10 @@ strings (outermost first), truncated to N."
       (when (nth 3 ppss)
         (goto-char (nth 8 ppss))
         (beginning-of-line)))
-    ;; Find the first valid code line at or above pos
+    ;; Start from line ABOVE display-start so we only collect
+    ;; lines that are off-screen (not already visible)
+    (forward-line -1)
+    ;; Find the first valid code line above the visible area
     (code-context--skip-to-code-line)
     (let ((ctx '())
           (prev-indent (current-indentation)))
