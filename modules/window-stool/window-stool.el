@@ -152,6 +152,12 @@ Returns a list of fontified strings with newlines at the end.
 Strings will also inherit props of \"window-stool-face\".
 Will move point so caller should call \"save-excursion\"."
   (goto-char pos)
+  ;; If inside a string (e.g. multiline f-string), jump to string start
+  ;; so indentation-based context works on real code, not string content
+  (let ((ppss (syntax-ppss)))
+    (when (nth 3 ppss)
+      (goto-char (nth 8 ppss))
+      (beginning-of-line)))
   (window-stool-find-prev-non-empty-line)
   (let* ((ctx '())
          (prev-indentation (current-indentation))
@@ -167,6 +173,11 @@ Will move point so caller should call \"save-excursion\"."
     (cl-pushnew ctx-str ctx)
     (while (and (> (current-indentation) 0) (not (bobp)))
       (forward-line -1)
+      ;; Skip over multiline strings when walking backwards
+      (let ((ppss (syntax-ppss)))
+        (when (nth 3 ppss)
+          (goto-char (nth 8 ppss))
+          (beginning-of-line)))
       (window-stool-find-prev-non-empty-line)
       (when (< (current-indentation) prev-indentation)
         (let* ((trimmed (string-trim-left
