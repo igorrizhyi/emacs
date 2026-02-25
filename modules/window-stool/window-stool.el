@@ -169,10 +169,14 @@ Will move point so caller should call \"save-excursion\"."
       (forward-line -1)
       (window-stool-find-prev-non-empty-line)
       (when (< (current-indentation) prev-indentation)
-        (setq prev-indentation (current-indentation))
-        (let ((ctx-str (funcall ctx-fn)))
-          (cl-pushnew ctx-str ctx))
-        )
+        (let* ((trimmed (string-trim-left
+                         (buffer-substring (line-beginning-position)
+                                           (line-end-position))))
+               (continuation-p (string-match-p "\\`[])]" trimmed)))
+          (unless continuation-p
+            (setq prev-indentation (current-indentation))
+            (let ((ctx-str (funcall ctx-fn)))
+              (cl-pushnew ctx-str ctx)))))
       )
     ;; need the forward char so we ensure we go back to the beg of current defun
     ;; and not previous defun
