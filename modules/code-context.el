@@ -82,49 +82,75 @@ Return non-nil if a valid line was found, nil if we hit `bobp'."
          (t (goto-char bol) (setq found t)))))
     found))
 
+(defun code-context--find-outermost (limit)
+  "Jump backward to the nearest column-0 code line before LIMIT.
+Skips strings and comments. Returns point, or nil if not found."
+  (let ((found nil))
+    (while (and (not found)
+                (re-search-backward "^\\S-" nil t))
+      (let ((ppss (syntax-ppss)))
+        (if (or (nth 3 ppss) (nth 4 ppss))
+            ;; In string/comment — skip to its start and keep looking
+            (goto-char (or (nth 8 ppss) (point-min)))
+          (setq found (point)))))
+    found))
+
+(defun code-context--collect-forward (from to n)
+  "Collect up to N context lines walking forward FROM toward TO.
+Returns a list of fontified strings (outermost first).
+Collects lines where indentation strictly increases from the previous level."
+  (save-excursion
+    (goto-char from)
+    (let ((ctx (list (code-context--line-string)))
+          (count 1)
+          (prev-indent (current-indentation)))
+      (forward-line 1)
+      (while (and (< count n) (< (point) to))
+        (let* ((bol (line-beginning-position))
+               (ppss (syntax-ppss bol)))
+          (cond
+           ;; Skip strings
+           ((nth 3 ppss)
+            (goto-char (or (nth 8 ppss) bol))
+            (forward-line 1)
+            ;; Jump past end of string
+            (let ((end (ignore-errors (scan-sexps (nth 8 ppss) 1))))
+              (when end (goto-char end) (forward-line 1))))
+           ;; Skip comments, empty lines, continuation lines
+           ((or (nth 4 ppss)
+                (progn (goto-char bol) (looking-at-p "^\\s-*$"))
+                (save-excursion (back-to-indentation) (looking-at-p "[])}]\\|->")))
+            (forward-line 1))
+           ;; Code line with greater indentation — new scope
+           ((> (current-indentation) prev-indent)
+            (setq prev-indent (current-indentation))
+            (push (code-context--line-string) ctx)
+            (setq count (1+ count))
+            (forward-line 1))
+           ;; Code line at same or lesser indentation — skip
+           (t (forward-line 1)))))
+      (nreverse ctx))))
+
 (defun code-context--get-context (pos n)
   "Extract up to N context lines for position POS.
-Uses syntax-aware backward walk. Returns a list of fontified
-strings (outermost first), each ending with newline."
+Jumps to outermost scope (column 0) then walks forward, collecting
+the first N scope-opening lines. O(1) backward + O(forward scan)."
   (save-excursion
     (goto-char pos)
-    ;; If we start inside a string, jump to its beginning
+    ;; If inside a string, jump to its start
     (let ((ppss (syntax-ppss)))
       (when (nth 3 ppss)
         (goto-char (nth 8 ppss))
         (beginning-of-line)))
-    ;; Find the first valid code line at or above pos
-    (code-context--skip-to-code-line)
-    (let ((ctx '())
-          (count 0)
-          (prev-indent (current-indentation)))
-      ;; The first valid code line is the starting reference for indentation;
-      ;; it counts as context line #1
-      (push (code-context--line-string) ctx)
-      (setq count 1)
-      ;; Walk backward collecting lines with strictly less indentation
-      (while (and (> prev-indent 0) (not (bobp)))
-        (forward-line -1)
-        (when (code-context--skip-to-code-line)
-          (let ((ind (current-indentation)))
-            (when (< ind prev-indent)
-              (setq prev-indent ind)
-              (push (code-context--line-string) ctx)
-              (setq count (1+ count))))))
-      ;; Fallback: beginning-of-defun if it gives something new
-      (when (fboundp 'beginning-of-defun)
-        (let ((walk-top (car ctx)))
-          (save-excursion
-            (goto-char pos)
-            (ignore-errors (beginning-of-defun))
-            (let ((defun-line (code-context--line-string)))
-              (unless (or (string= defun-line walk-top)
-                          (member defun-line ctx))
-                (push defun-line ctx))))))
-      ;; Truncate to N from the outermost
-      (if (> (length ctx) n)
-          (cl-subseq ctx 0 n)
-        ctx))))
+    (let ((ref-pos (point)))
+      ;; Jump to outermost scope (column-0 line)
+      (let ((outer (code-context--find-outermost ref-pos)))
+        (if outer
+            (code-context--collect-forward outer ref-pos n)
+          ;; Fallback: beginning-of-defun
+          (goto-char pos)
+          (when (ignore-errors (beginning-of-defun) t)
+            (list (code-context--line-string))))))))
 
 ;;; Overlay management
 
