@@ -101,16 +101,6 @@ strings (outermost first), truncated to N."
             (when (< ind prev-indent)
               (setq prev-indent ind)
               (push (code-context--line-string) ctx)))))
-      ;; Fallback: beginning-of-defun if it gives something new
-      (when (fboundp 'beginning-of-defun)
-        (let ((walk-top (car ctx)))
-          (save-excursion
-            (goto-char pos)
-            (ignore-errors (beginning-of-defun))
-            (let ((defun-line (code-context--line-string)))
-              (unless (or (string= defun-line walk-top)
-                          (member defun-line ctx))
-                (push defun-line ctx))))))
       ;; Truncate to N from outermost
       (if (> (length ctx) n)
           (cl-subseq ctx 0 n)
