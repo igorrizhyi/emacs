@@ -190,9 +190,9 @@
 (when (fboundp 'auto-save-visited-mode)
   (auto-save-visited-mode -1))
 
-(use-package window-stool
+(use-package code-context
   :config
-  (add-hook 'prog-mode-hook #'window-stool-mode))
+  (add-hook 'prog-mode-hook #'code-context-mode))
 
 (use-package markdown-mode
   :hook (markdown-mode . lsp)

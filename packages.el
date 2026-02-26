@@ -102,7 +102,8 @@
 
 (package! evil-snipe :disable t)
 
-(package! window-stool :recipe (:local-repo "modules/window-stool" :files ("*.el")))
+;; (package! window-stool :recipe (:local-repo "modules/window-stool" :files ("*.el")))
+(package! code-context :recipe (:local-repo "modules" :files ("code-context.el")))
 ;; Enhanced dired font-lock for better file listing colors
 (package! diredfl)
 ;; Filter dired items interactively (like nnn)

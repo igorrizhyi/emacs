@@ -292,8 +292,6 @@ For consult preview buffers, swap in the real file buffer so overlays work."
               (setq buffer-file-name nil
                     buffer-file-truename nil))
             (let ((real-buf (find-file-noselect file)))
-              (message "code-context SWAP: preview=%s real=%s file=%s"
-                       name (buffer-name real-buf) file)
               (when (and real-buf (not (eq real-buf buf)))
                 (set-window-buffer win real-buf)
                 (set-window-start win ws)))))
@@ -302,7 +300,6 @@ For consult preview buffers, swap in the real file buffer so overlays work."
           (when (and (not code-context-mode)
                      (buffer-file-name)
                      (derived-mode-p 'prog-mode))
-            (message "code-context ENABLE: buf=%s" (buffer-name))
             (code-context-mode 1)))))))
 
 ;;; Minor mode
