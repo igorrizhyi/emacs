@@ -159,13 +159,12 @@ Changes when crossing function/class boundaries.")
          (display-str (concat context-str covered-line)))
     (move-overlay code-context--overlay ol-beg ol-end)
     (overlay-put code-context--overlay 'type 'code-context--overlay)
-    (overlay-put code-context--overlay 'window window)
     (overlay-put code-context--overlay 'priority 0)
     (overlay-put code-context--overlay 'display display-str)))
 
 (defun code-context--update (window display-start)
   "Create or update the code context overlay for WINDOW at DISPLAY-START."
-  (when (and (eq window (selected-window))
+  (when (and (window-live-p window)
              (with-current-buffer (window-buffer window)
                code-context-mode))
     (with-current-buffer (window-buffer window)
@@ -273,6 +272,39 @@ Uses cached context lengths — no recomputation."
            (goto-char (window-start window))
            (line-beginning-position)))))))
 
+;;; Auto-enable for preview buffers
+
+(defun code-context--maybe-enable ()
+  "Auto-enable `code-context-mode' in visible prog-mode buffers.
+For consult preview buffers, swap in the real file buffer so overlays work."
+  (dolist (win (window-list))
+    (when (window-live-p win)
+      (let* ((buf (window-buffer win))
+             (name (buffer-name buf)))
+        ;; Swap preview buffers with the real file buffer
+        (when (and (string-prefix-p " Preview:" name)
+                   (buffer-file-name buf))
+          (let* ((file (buffer-file-name buf))
+                 (ws (window-start win)))
+            ;; Dissociate file from preview buffer so find-file-noselect
+            ;; creates a fresh, properly-named buffer
+            (with-current-buffer buf
+              (setq buffer-file-name nil
+                    buffer-file-truename nil))
+            (let ((real-buf (find-file-noselect file)))
+              (message "code-context SWAP: preview=%s real=%s file=%s"
+                       name (buffer-name real-buf) file)
+              (when (and real-buf (not (eq real-buf buf)))
+                (set-window-buffer win real-buf)
+                (set-window-start win ws)))))
+        ;; Enable mode if needed
+        (with-current-buffer (window-buffer win)
+          (when (and (not code-context-mode)
+                     (buffer-file-name)
+                     (derived-mode-p 'prog-mode))
+            (message "code-context ENABLE: buf=%s" (buffer-name))
+            (code-context-mode 1)))))))
+
 ;;; Minor mode
 
 ;;;###autoload
@@ -297,7 +329,9 @@ Uses `syntax-ppss' to reliably skip strings and comments."
         (add-hook 'pre-command-hook #'code-context--pre-command-hook nil t)
         (add-hook 'post-command-hook #'code-context--post-command-hook nil t)
         (add-hook 'window-scroll-functions #'code-context--on-scroll nil t)
-        (add-hook 'window-state-change-functions #'code-context--on-state-change nil t))
+        (add-hook 'window-state-change-functions #'code-context--on-state-change nil t)
+        ;; Global hook to auto-enable in preview windows
+        (add-hook 'post-command-hook #'code-context--maybe-enable))
 
     ;; Disable
     (code-context--remove)
