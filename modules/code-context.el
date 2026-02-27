@@ -41,9 +41,11 @@ Inherits from `window-stool-face' to reuse existing theme settings."
 
 (defun code-context--line-string ()
   "Return the current line as a fontified string with trailing newline."
-  (concat
-   (buffer-substring (line-beginning-position) (line-end-position))
-   "\n"))
+  (let ((beg (line-beginning-position))
+        (end (line-end-position)))
+    (unless (text-property-not-all beg end 'fontified t)
+      (font-lock-ensure beg end))
+    (concat (buffer-substring beg end) "\n")))
 
 (defun code-context--skip-to-code-line ()
   "Move backward to the nearest valid code line.
@@ -71,6 +73,11 @@ Return non-nil if a valid line was found, nil if we hit `bobp'."
          ((save-excursion
             (back-to-indentation)
             (looking-at-p "[])}]\\|->"))
+          (forward-line -1))
+         ;; Decorator line: starts with @
+         ((save-excursion
+            (back-to-indentation)
+            (looking-at-p "@"))
           (forward-line -1))
          ;; Valid code line
          (t (goto-char bol) (setq found t)))))
