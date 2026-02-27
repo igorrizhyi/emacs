@@ -117,7 +117,7 @@ Does nothing if there are no changes in the buffer."
   (interactive)
   (let ((consult-buffer-filter
          (append (bound-and-true-p consult-buffer-filter)
-                 '("\\*claude"))))
+                 '("\\*claude" "\\*mistty"))))
     (call-interactively #'consult-buffer)))
 
 ;; Keep the original bindings - they'll automatically register jumps via command hooks

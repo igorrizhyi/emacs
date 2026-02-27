@@ -1122,10 +1122,11 @@
   (advice-add 'find-file :around #'my/claude-code-find-file-advice)
   (advice-add 'find-file-noselect :around #'my/claude-code-find-file-advice)
 
-  ;; M-k to switch back from claude-code buffer — must override eat's semi-char-mode-map
+  ;; Override eat's semi-char-mode-map for claude-code buffers
   (add-hook 'claude-code-start-hook
             (lambda ()
-              (define-key eat-semi-char-mode-map (kbd "M-k") #'claude-code--switch-to-previous-buffer)))
+              (define-key eat-semi-char-mode-map (kbd "M-k") #'claude-code--switch-to-previous-buffer)
+              (define-key eat-semi-char-mode-map (kbd "C-v") #'clipboard-yank)))
 
   (claude-code-mode)
   ;; :bind-keymap ("C-c c" . claude-code-terminal-create)
