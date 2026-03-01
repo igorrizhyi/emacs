@@ -2445,6 +2445,8 @@ render well in eshell (e.g., poetry install, npm install)."
   (evil-define-key 'insert claude-code-terminal-mode-map (kbd "C-v") 'yank)
   (evil-define-key 'normal claude-code-terminal-mode-map (kbd "C-v") 'yank)
   (evil-define-key 'emacs claude-code-terminal-mode-map (kbd "C-v") 'yank)
+  (evil-define-key 'insert claude-code-terminal-mode-map (kbd "s-<right>") 'windmove-right)
+  (evil-define-key 'emacs claude-code-terminal-mode-map (kbd "s-<right>") 'windmove-right)
   
   ;; Evil mode bindings for terminal quick switching - only in terminal buffers
   (evil-define-key 'insert claude-code-terminal-mode-map (kbd "C-f") 'claude-code-terminal-switch-recent)
