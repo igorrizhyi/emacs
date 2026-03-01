@@ -4,7 +4,7 @@
       "type": "stdio",
       "command": "node",
       "args": [
-        "/home/igorrizhyi/Projects/Tools/claude-emacs-mcp-server/dist/index.js"
+        "/home/igorrizhyi/.config/doom/claude-emacs-mcp-server/dist/index.js"
       ]
     }
   }
