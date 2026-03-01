@@ -293,30 +293,26 @@
   (let ((magit-buffer (magit-status-setup-buffer)))
     (my-layout-show-in-left-sidebar magit-buffer)))
 
-(defun my-layout-smart-claude-code ()
-  "Smart Claude Code handler: start or show in main-center window."
+(defun my-layout-smart-agent-shell ()
+  "Smart agent-shell handler: start, show, or switch back."
   (interactive)
-  (let ((claude-buffer (seq-find (lambda (buf)
-                                   (string-match-p "^\\*claude:" (buffer-name buf)))
-                                 (buffer-list))))
-
+  (let ((agent-buffer (seq-find (lambda (buf)
+                                  (string-match-p "Claude Code Agent" (buffer-name buf)))
+                                (buffer-list))))
     (cond
-     ;; Case 1: Claude never started - start it
-     ((not my-layout--claude-started)
-      (claude-code)
-      (setq my-layout--claude-started t)
-      (message "Started Claude Code"))
+     ;; Already in an agent-shell buffer — switch to previous buffer
+     ((and agent-buffer (eq (current-buffer) agent-buffer))
+      (let ((prev (seq-find (lambda (buf)
+                              (and (not (eq buf (current-buffer)))
+                                   (buffer-live-p buf)
+                                   (not (string-prefix-p " " (buffer-name buf)))))
+                            (buffer-list))))
+        (when prev (switch-to-buffer prev))))
 
-     ;; Case 2: Claude buffer exists - show it in main-center
-     (claude-buffer
-      (my-layout-show-in-main-center claude-buffer)
-      (message "Showing Claude Code in main window"))
-
-     ;; Fallback: start Claude Code
+     ;; Agent-shell buffer exists or not — always use agent-shell to switch
+     ;; (adds context about the file we came from)
      (t
-      (claude-code)
-      (setq my-layout--claude-started t)
-      (message "Started Claude Code")))))
+      (agent-shell-emacs-mcp)))))
 
 (defun my-layout-show-file-main-center (file-path &optional line-num)
   "Show FILE-PATH in main center window, optionally go to LINE-NUM."

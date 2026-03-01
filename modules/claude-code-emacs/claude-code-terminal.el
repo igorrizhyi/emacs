@@ -2206,95 +2206,24 @@ Called from find-file-hook to track source eshell buffer."
 
 ;; Popup input for claude commands
 (defun claude-code-send-emacs-terminal-popup ()
-  "Show centered popup for claude command input with multi-line support."
+  "Prompt for a command and send it to agent-shell."
   (interactive)
-  (let* ((buffer-name "*Claude Command Input*")
-         (existing-buffer (get-buffer buffer-name)))
-    
-    ;; Kill existing buffer if it exists
-    (when existing-buffer
-      (kill-buffer existing-buffer))
-    
-    ;; Create and configure popup buffer
-    (with-current-buffer (get-buffer-create buffer-name)
-      (erase-buffer)
-      (insert "<!-- Enter Claude command (Enter to send, Shift+Enter for newlines, ESC to cancel) -->\n\n")
-      
-      ;; Set up the buffer
-      (markdown-mode)
-      (evil-insert-state)
-      (goto-char (point-max))
-      
-      ;; Local keybindings - Enter to send, Shift+Enter for newlines
-      (local-set-key (kbd "<return>") 
-                     (lambda () 
-                       (interactive)
-                       (claude-code-send-command-from-popup)))
-      (local-set-key (kbd "C-c C-c") 
-                     (lambda () 
-                       (interactive)
-                       (claude-code-send-command-from-popup)))
-      (local-set-key (kbd "S-<return>") 'newline)
-      (local-set-key (kbd "C-c C-k") 
-                     (lambda () 
-                       (interactive)
-                       (delete-frame)
-                       (message "Claude command cancelled")))
-      (local-set-key (kbd "<escape>") 
-                     (lambda () 
-                       (interactive)
-                       (delete-frame)
-                       (message "Claude command cancelled")))
-      (local-set-key (kbd "C-g")
-                     (lambda ()
-                       (interactive)
-                       (delete-frame)
-                       (message "Claude command cancelled")))
-      
-      ;; Evil mode keybindings if available
-      (when (featurep 'evil)
-        ;; Insert state - Enter to send, Shift+Enter for newlines
-        (evil-local-set-key 'insert (kbd "<return>")
-                           (lambda ()
-                             (interactive)
-                             (claude-code-send-command-from-popup)))
-        (evil-local-set-key 'insert (kbd "RET")
-                           (lambda ()
-                             (interactive)
-                             (claude-code-send-command-from-popup)))
-        (evil-local-set-key 'insert (kbd "S-<return>") 'newline)
-        (evil-local-set-key 'insert (kbd "<escape>")
-                           (lambda ()
-                             (interactive)
-                             (delete-frame)
-                             (message "Claude command cancelled")))
-        ;; Normal state
-        (evil-local-set-key 'normal (kbd "<return>")
-                           (lambda ()
-                             (interactive)
-                             (claude-code-send-command-from-popup)))
-        (evil-local-set-key 'normal (kbd "q")
-                           (lambda ()
-                             (interactive)
-                             (delete-frame))))
-      
-      ;; Show in centered popup
-      (pop-to-buffer (current-buffer)
-                     `((display-buffer-in-child-frame)
-                       (child-frame-parameters
-                        . ((width . 60)
-                           (height . 12)
-                           (left . 0.4)
-                           (top . 0.4)
-                           (tool-bar-lines . 0)
-                           (menu-bar-lines . 0)
-                           (tab-bar-lines . 0)
-                           (left-fringe . 4)
-                           (right-fringe . 4)
-                           (border-width . 1)
-                           (internal-border-width . 4)
-                           (unsplittable . t)
-                           (no-other-frame . t))))))))
+  (let ((command (read-string "Claude command: ")))
+    (when (not (string-empty-p (string-trim command)))
+      (let ((agent-buffer (claude-code--find-agent-shell-buffer)))
+        (if agent-buffer
+            (progn
+              (with-current-buffer agent-buffer
+                (goto-char (point-max))
+                (insert (format "/emacs-terminal %s" command))
+                (when (fboundp 'shell-maker-submit)
+                  (shell-maker-submit)))
+              (pop-to-buffer agent-buffer)
+              (select-window (frame-first-window))
+              (message "Command sent to agent-shell"))
+          ;; Fallback to claude-code session
+          (claude-code-send-string command)
+          (message "Command sent to Claude"))))))
 
 (defun claude-code-send-command-from-popup ()
   "Send command from popup to claude and close popup."
@@ -2322,7 +2251,9 @@ Called from find-file-hook to track source eshell buffer."
                     (insert (format "/emacs-terminal %s" command))
                     (when (fboundp 'shell-maker-submit)
                       (shell-maker-submit)))
-                  (display-buffer agent-buffer)
+                  ;; Show agent-shell (pop-to-buffer avoids freeze), then focus first split
+                  (pop-to-buffer agent-buffer)
+                  (select-window (frame-first-window))
                   (message "Command sent to agent-shell"))
               ;; Fallback to claude-code session
               (claude-code-send-string command)
@@ -2468,7 +2399,7 @@ render well in eshell (e.g., poetry install, npm install)."
   (define-key eshell-mode-map (kbd "C-c i") 'claude-code-send-emacs-terminal)
   (define-key eshell-mode-map (kbd "C-c h") 'claude-code-send-emacs-terminal-popup)
   (define-key eshell-mode-map (kbd "C-c 1") 'claude-code-send-1)
-  (define-key eshell-mode-map (kbd "C-c k") 'my-layout-smart-claude-code)
+  (define-key eshell-mode-map (kbd "C-c k") 'my-layout-smart-agent-shell)
   (define-key eshell-mode-map (kbd "C-l") 'windmove-right)
   (define-key eshell-mode-map (kbd "C-1") (lambda () (interactive)
                                             (goto-char (point-max))
@@ -2497,7 +2428,7 @@ render well in eshell (e.g., poetry install, npm install)."
   (define-key eshell-mode-map (kbd "s-i") 'claude-code-send-emacs-terminal)
   (define-key eshell-mode-map (kbd "s-h") 'claude-code-send-emacs-terminal-popup)
   (define-key eshell-mode-map (kbd "s-1") 'claude-code-send-1)
-  (define-key eshell-mode-map (kbd "M-k") 'my-layout-smart-claude-code)
+  (define-key eshell-mode-map (kbd "M-k") 'my-layout-smart-agent-shell)
   (define-key eshell-mode-map (kbd "C-v") 'yank)
   (define-key eshell-mode-map (kbd "s-u") 'claude-code-terminal-switch)
 
@@ -2508,9 +2439,9 @@ render well in eshell (e.g., poetry install, npm install)."
   (evil-define-key 'insert claude-code-terminal-mode-map (kbd "C-u") 'claude-code-terminal-switch)
   (evil-define-key 'normal claude-code-terminal-mode-map (kbd "C-u") 'claude-code-terminal-switch)
   (evil-define-key 'emacs claude-code-terminal-mode-map (kbd "C-u") 'claude-code-terminal-switch)
-  (evil-define-key 'emacs claude-code-terminal-mode-map (kbd "M-k") 'my-layout-smart-claude-code)
-  (evil-define-key 'insert claude-code-terminal-mode-map (kbd "M-k") 'my-layout-smart-claude-code)
-  (evil-define-key 'normal claude-code-terminal-mode-map (kbd "M-k") 'my-layout-smart-claude-code)
+  (evil-define-key 'emacs claude-code-terminal-mode-map (kbd "M-k") 'my-layout-smart-agent-shell)
+  (evil-define-key 'insert claude-code-terminal-mode-map (kbd "M-k") 'my-layout-smart-agent-shell)
+  (evil-define-key 'normal claude-code-terminal-mode-map (kbd "M-k") 'my-layout-smart-agent-shell)
   (evil-define-key 'insert claude-code-terminal-mode-map (kbd "C-v") 'yank)
   (evil-define-key 'normal claude-code-terminal-mode-map (kbd "C-v") 'yank)
   (evil-define-key 'emacs claude-code-terminal-mode-map (kbd "C-v") 'yank)
@@ -2922,13 +2853,13 @@ Mistty becomes the main terminal buffer. When it closes, eshell returns."
         (local-set-key (kbd "C-c n") #'claude-code-terminal-create-numbered)
         (local-set-key (kbd "C-c i") #'claude-code-send-emacs-terminal)
         (local-set-key (kbd "C-c h") #'claude-code-send-emacs-terminal-popup)
-        (local-set-key (kbd "C-c k") #'my-layout-smart-claude-code)
+        (local-set-key (kbd "C-c k") #'my-layout-smart-agent-shell)
         (local-set-key (kbd "C-u") #'claude-code-terminal-switch)
         (local-set-key (kbd "C-f") #'claude-code-terminal-switch-recent)
         (local-set-key (kbd "s-c") #'claude-code-terminal-create)
         (local-set-key (kbd "s-n") #'claude-code-terminal-create-numbered)
         (local-set-key (kbd "s-h") #'claude-code-send-emacs-terminal-popup)
-        (local-set-key (kbd "M-k") #'my-layout-smart-claude-code)
+        (local-set-key (kbd "M-k") #'my-layout-smart-agent-shell)
         (local-set-key (kbd "C-v") #'yank)
         (local-set-key (kbd "s-u") #'claude-code-terminal-switch)
         ;; Enter key - normal command execution

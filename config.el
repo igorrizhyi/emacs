@@ -689,8 +689,8 @@
 ;; Window navigation keybindings - move focus between splits
 (map! "C-h" #'my/smart-move-left   ; Smart left movement or Magit
       "C-l" #'windmove-right       ; Focus right window split
-      "M-k" #'my-layout-smart-claude-code
-      "C-k" #'my-layout-smart-claude-code) ; Smart Claude Code handler
+      "M-k" #'my-layout-smart-agent-shell
+      "C-k" #'my-layout-smart-agent-shell) ; Smart agent-shell handler
 
 
 ;; Don't pollute clipboard with deleted/replaced text
@@ -1125,7 +1125,7 @@
   ;; Override eat's semi-char-mode-map for claude-code buffers
   (add-hook 'claude-code-start-hook
             (lambda ()
-              (define-key eat-semi-char-mode-map (kbd "M-k") #'claude-code--switch-to-previous-buffer)
+              (define-key eat-semi-char-mode-map (kbd "M-k") #'my-layout-smart-agent-shell)
               (define-key eat-semi-char-mode-map (kbd "C-v") #'clipboard-yank)))
 
   (claude-code-mode)
