@@ -2452,6 +2452,7 @@ render well in eshell (e.g., poetry install, npm install)."
   (define-key eshell-mode-map (kbd "s-h") 'claude-code-send-emacs-terminal-popup)
   (define-key eshell-mode-map (kbd "s-1") 'claude-code-send-1)
   (define-key eshell-mode-map (kbd "M-k") 'my-layout-smart-claude-code)
+  (define-key eshell-mode-map (kbd "C-v") 'yank)
   (define-key eshell-mode-map (kbd "s-u") 'claude-code-terminal-switch)
 
   (message "[DEBUG] Configured eshell terminal keybindings"))
@@ -2464,6 +2465,9 @@ render well in eshell (e.g., poetry install, npm install)."
   (evil-define-key 'emacs claude-code-terminal-mode-map (kbd "M-k") 'my-layout-smart-claude-code)
   (evil-define-key 'insert claude-code-terminal-mode-map (kbd "M-k") 'my-layout-smart-claude-code)
   (evil-define-key 'normal claude-code-terminal-mode-map (kbd "M-k") 'my-layout-smart-claude-code)
+  (evil-define-key 'insert claude-code-terminal-mode-map (kbd "C-v") 'yank)
+  (evil-define-key 'normal claude-code-terminal-mode-map (kbd "C-v") 'yank)
+  (evil-define-key 'emacs claude-code-terminal-mode-map (kbd "C-v") 'yank)
   
   ;; Evil mode bindings for terminal quick switching - only in terminal buffers
   (evil-define-key 'insert claude-code-terminal-mode-map (kbd "C-f") 'claude-code-terminal-switch-recent)
@@ -2879,6 +2883,7 @@ Mistty becomes the main terminal buffer. When it closes, eshell returns."
         (local-set-key (kbd "s-n") #'claude-code-terminal-create-numbered)
         (local-set-key (kbd "s-h") #'claude-code-send-emacs-terminal-popup)
         (local-set-key (kbd "M-k") #'my-layout-smart-claude-code)
+        (local-set-key (kbd "C-v") #'yank)
         (local-set-key (kbd "s-u") #'claude-code-terminal-switch)
         ;; Enter key - normal command execution
         (local-set-key (kbd "<return>") #'claude-code-terminal-mistty-smart-enter)
