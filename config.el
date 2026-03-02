@@ -895,6 +895,15 @@
 ;; Global keybinding for claude-code-terminal-create-numbered
 (map! "C-c n" #'claude-code-terminal-create-numbered)
 (map! "C-c r" #'lsp-workspace-restart)
+;; Send C-c to mistty subprocess (like C-q C-c)
+(after! mistty
+  (define-key mistty-mode-map (kbd "C-c C-c")
+    (lambda () (interactive)
+      (when mistty-proc
+        (process-send-string mistty-proc "\C-c")))))
+;; Global keybinding for switching to most recent claude terminal
+(map! :n "C-f" #'claude-code-terminal-switch-recent
+      :i "C-f" #'claude-code-terminal-switch-recent)
 
 ;; Smart Q function with context-aware behavior
 (defun my/smart-q ()

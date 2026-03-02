@@ -2431,6 +2431,7 @@ render well in eshell (e.g., poetry install, npm install)."
   (define-key eshell-mode-map (kbd "M-k") 'my-layout-smart-agent-shell)
   (define-key eshell-mode-map (kbd "C-v") 'yank)
   (define-key eshell-mode-map (kbd "s-<right>") 'windmove-right)
+  (define-key eshell-mode-map (kbd "C-j") 'claude-code-terminal-cycle-prefix)
   (define-key eshell-mode-map (kbd "s-u") 'claude-code-terminal-switch)
 
   (message "[DEBUG] Configured eshell terminal keybindings"))
