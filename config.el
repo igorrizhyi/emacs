@@ -800,12 +800,13 @@
 
    ;; In agent-shell buffers, toggle sections or activate buttons
    ((derived-mode-p 'agent-shell-mode)
-    (if (get-text-property (point) 'agent-shell-ui-state)
-        (agent-shell-ui-toggle-fragment-at-point)
-      (let ((button (button-at (point))))
-        (if button
-            (push-button (point))
-          (message "No toggleable section or button at point")))))
+      ;; Simulate insert-mode RET so button keymaps fire correctly
+      (let ((inhibit-read-only t))
+        (evil-insert-state)
+        (unwind-protect
+            (let ((key (kbd "RET")))
+              (call-interactively (key-binding key)))
+          (evil-normal-state))))
 
    ;; In magit buffers, use magit's default Enter behavior
    ((derived-mode-p 'magit-mode 'magit-status-mode 'magit-log-mode 'magit-diff-mode)
@@ -1172,6 +1173,8 @@
   ;; Custom output styling for agent-shell body sections
   (require 'my-agent-shell-style)
   (add-hook 'agent-shell-section-functions #'my/agent-shell-style-sections)
+  ;; Custom keybindings for agent-shell buffers
+  (require 'my-agent-shell-keybindings)
   ;; Keybinding for quick access
   (map! :leader
         :desc "Claude (Emacs MCP)" "c c" #'agent-shell-emacs-mcp))
