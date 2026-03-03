@@ -1160,6 +1160,9 @@
 (after! agent-shell
   ;; Require MCP tools for the stdio server
   (require 'claude-code-mcp-tools nil t)
+  ;; Custom output styling for agent-shell body sections
+  (require 'my-agent-shell-style)
+  (add-hook 'agent-shell-section-functions #'my/agent-shell-style-sections)
   ;; Keybinding for quick access
   (map! :leader
         :desc "Claude (Emacs MCP)" "c c" #'agent-shell-emacs-mcp))
