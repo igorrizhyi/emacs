@@ -798,6 +798,15 @@
    ((evil-insert-state-p)
     (newline))
 
+   ;; In agent-shell buffers, toggle sections or activate buttons
+   ((derived-mode-p 'agent-shell-mode)
+    (if (get-text-property (point) 'agent-shell-ui-state)
+        (agent-shell-ui-toggle-fragment-at-point)
+      (let ((button (button-at (point))))
+        (if button
+            (push-button (point))
+          (message "No toggleable section or button at point")))))
+
    ;; In magit buffers, use magit's default Enter behavior
    ((derived-mode-p 'magit-mode 'magit-status-mode 'magit-log-mode 'magit-diff-mode)
     (call-interactively (key-binding (kbd "RET"))))
