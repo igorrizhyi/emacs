@@ -41,6 +41,8 @@
           (overlay-put ov 'face face)
           (overlay-put ov 'line-prefix padding)
           (overlay-put ov 'wrap-prefix padding)
+          (overlay-put ov 'before-string (propertize "\n" 'face face))
+          (overlay-put ov 'after-string (concat (propertize "\n" 'face face) "\n"))
           (overlay-put ov 'evaporate nil)
           (overlay-put ov 'my-agent-shell-output t)
           (setq my/agent-shell--last-overlay ov))))))
