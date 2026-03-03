@@ -16,11 +16,14 @@
 (defun my/agent-shell-style-sections (range)
   "Apply custom styling to agent-shell sections, merging adjacent blocks."
   ;; Use :block range for full coverage, fall back to labels/body
+  ;; Include :padding range to cover agent-shell's own spacing
   (let ((block-start (or (map-nested-elt range '(:block :start))
+                         (map-nested-elt range '(:padding :start))
                          (map-nested-elt range '(:label-left :start))
                          (map-nested-elt range '(:label-right :start))
                          (map-nested-elt range '(:body :start))))
-        (block-end (or (map-nested-elt range '(:block :end))
+        (block-end (or (map-nested-elt range '(:padding :end))
+                       (map-nested-elt range '(:block :end))
                        (map-nested-elt range '(:body :end))
                        (map-nested-elt range '(:label-right :end))
                        (map-nested-elt range '(:label-left :end)))))
@@ -42,7 +45,7 @@
           (overlay-put ov 'line-prefix padding)
           (overlay-put ov 'wrap-prefix padding)
           (overlay-put ov 'before-string (propertize "\n" 'face face))
-          (overlay-put ov 'after-string (concat (propertize "\n\n" 'face face) "\n\n"))
+          (overlay-put ov 'after-string (concat (propertize "\n" 'face face) "\n"))
           (overlay-put ov 'evaporate nil)
           (overlay-put ov 'my-agent-shell-output t)
           (setq my/agent-shell--last-overlay ov))))))
