@@ -190,13 +190,8 @@ Skips regions already styled.  Safe to call repeatedly."
                        (ov-me (make-overlay hide-start hide-end nil t nil)))
                   (overlay-put ov-me 'invisible t)
                   (overlay-put ov-me 'my-agent-shell-context t))
-                ;; Style the context body (include trailing \n so :extend t works)
-                (let ((body-end (save-excursion
-                                  (goto-char ctx-end)
-                                  (skip-chars-backward "\n")
-                                  ;; Include the newline after last content line
-                                  (min (1+ (point)) ctx-end))))
-                  (my/agent-shell--apply-context-overlay ctx-start body-end))))))))))
+                ;; Style the context body (up to ctx-end so all \n get background)
+                (my/agent-shell--apply-context-overlay ctx-start ctx-end)))))))))
 
 (defun my/agent-shell--maybe-style-context ()
   "Post-command hook: style context markers in agent-shell buffers."
