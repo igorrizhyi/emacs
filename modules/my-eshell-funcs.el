@@ -347,6 +347,10 @@ Disables preview to avoid font styling issues."
     (evil-local-set-key 'normal (kbd "C-r") #'my-eshell-smart-history-search)
     (evil-local-set-key 'emacs (kbd "C-r") #'my-eshell-smart-history-search)))
 
+(defun eshell/clear (&rest _args)
+  "Clear eshell buffer completely, removing all scrollback."
+  (eshell/clear-scrollback))
+
 (add-hook 'eshell-mode-hook #'my-eshell-setup-expansion-keys)
 
 (defun my-eshell-unlock-buffer ()

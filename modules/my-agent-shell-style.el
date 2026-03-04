@@ -50,5 +50,73 @@
           (overlay-put ov 'my-agent-shell-output t)
           (setq my/agent-shell--last-overlay ov))))))
 
+(defvar my/agent-shell-context-face
+  (list :font (font-spec :family "SF Mono" :weight 'semibold)
+        :height 0.75
+        :inherit nil
+        :background "#1a2a37"
+        :extend t)
+  "Face for agent-shell context blocks (inserted when switching from a buffer).")
+
+(defun my/agent-shell--apply-context-overlay (content-start content-end)
+  "Create a context overlay from CONTENT-START to CONTENT-END."
+  (let* ((face my/agent-shell-context-face)
+         (padding (propertize "  " 'face face))
+         (ov (make-overlay content-start content-end nil nil nil)))
+    (overlay-put ov 'face face)
+    (overlay-put ov 'line-prefix padding)
+    (overlay-put ov 'wrap-prefix padding)
+    (overlay-put ov 'before-string (propertize "\n" 'face face))
+    (overlay-put ov 'after-string (propertize "\n" 'face face))
+    (overlay-put ov 'evaporate nil)
+    (overlay-put ov 'my-agent-shell-context t)))
+
+(defun my/agent-shell-style-context (start end buffer)
+  "Apply context styling overlay from START to END in BUFFER."
+  (when (and start end buffer (buffer-live-p buffer))
+    (with-current-buffer buffer
+      (save-excursion
+        ;; Skip leading whitespace/newlines to find actual content
+        (goto-char start)
+        (skip-chars-forward "\n\t " end)
+        (let* ((content-start (line-beginning-position))
+               (content-end (progn (goto-char end)
+                                   (skip-chars-backward "\n\t " content-start)
+                                   (line-end-position))))
+          ;; Mark the text so we can restore overlays after submission
+          (let ((inhibit-read-only t))
+            (put-text-property content-start content-end
+                               'my-agent-shell-context-region t))
+          (my/agent-shell--apply-context-overlay content-start content-end))))))
+
+(defun my/agent-shell-restore-context-overlays (&rest _args)
+  "Restore context overlays on text marked with `my-agent-shell-context-region'."
+  (when (derived-mode-p 'agent-shell-mode)
+    (save-excursion
+      (goto-char (point-min))
+      (let ((pos (point-min)))
+        (while (< pos (point-max))
+          (let ((next-change (next-single-property-change pos 'my-agent-shell-context-region nil (point-max))))
+            (when (get-text-property pos 'my-agent-shell-context-region)
+              ;; Check if there's already an overlay here
+              (unless (cl-some (lambda (ov) (overlay-get ov 'my-agent-shell-context))
+                               (overlays-at pos))
+                (my/agent-shell--apply-context-overlay pos next-change)))
+            (setq pos next-change)))))))
+
+(defun my/agent-shell-style-context-advice (result)
+  "After-advice for `agent-shell--insert-to-shell-buffer' to style context."
+  (when result
+    (let ((buffer (alist-get :buffer result))
+          (start (alist-get :start result))
+          (end (alist-get :end result)))
+      (my/agent-shell-style-context start end buffer)))
+  result)
+
+(with-eval-after-load 'agent-shell
+  (advice-add 'agent-shell--insert-to-shell-buffer
+              :filter-return #'my/agent-shell-style-context-advice)
+  (add-hook 'comint-output-filter-functions #'my/agent-shell-restore-context-overlays))
+
 (provide 'my-agent-shell-style)
 ;;; my-agent-shell-style.el ends here
