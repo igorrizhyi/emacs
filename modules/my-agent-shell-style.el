@@ -157,7 +157,7 @@
         (save-excursion
           (goto-char (point-max))
           (insert "\n\n" my/agent-shell--context-marker-start
-                  "\n" text "\n"
+                  "\n" text "\n\n"
                   my/agent-shell--context-marker-end))))
     (setq my/agent-shell--pending-context nil)))
 
