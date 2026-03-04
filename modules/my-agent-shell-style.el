@@ -2,6 +2,8 @@
 
 (require 'map)
 
+;; --- Output section styling ---
+
 (defvar my/agent-shell-output-face
   (list :font (font-spec :family "SF Mono" :weight 'semibold)
         :height 0.75
@@ -50,73 +52,165 @@
           (overlay-put ov 'my-agent-shell-output t)
           (setq my/agent-shell--last-overlay ov))))))
 
+;; --- Context posframe styling ---
+
 (defvar my/agent-shell-context-face
   (list :font (font-spec :family "SF Mono" :weight 'semibold)
         :height 0.75
         :inherit nil
         :background "#1a2a37"
         :extend t)
-  "Face for agent-shell context blocks (inserted when switching from a buffer).")
+  "Face for agent-shell context blocks.")
 
-(defun my/agent-shell--apply-context-overlay (content-start content-end)
-  "Create a context overlay from CONTENT-START to CONTENT-END."
+(defvar my/agent-shell--context-posframe-buffer " *agent-shell-context*"
+  "Buffer name for the context posframe.")
+
+(defvar-local my/agent-shell--pending-context nil
+  "Plist (:text) of context awaiting submission.")
+
+(defun my/agent-shell--show-context-posframe (text buffer)
+  "Show TEXT in a posframe anchored to BUFFER's window."
+  (require 'posframe)
+  (let ((posframe-buf (get-buffer-create my/agent-shell--context-posframe-buffer)))
+    (with-current-buffer posframe-buf
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (insert (propertize text 'face my/agent-shell-context-face))))
+    (when-let ((win (get-buffer-window buffer)))
+      (with-selected-window win
+        (posframe-show posframe-buf
+                       :position (point-min)
+                       :poshandler #'posframe-poshandler-frame-top-center
+                       :border-width 1
+                       :border-color "#1a2a37"
+                       :background-color "#1a2a37"
+                       :min-width 40
+                       :internal-border-width 8
+                       :accept-focus nil)))))
+
+(defun my/agent-shell--hide-context-posframe ()
+  "Hide the context posframe."
+  (when (fboundp 'posframe-hide)
+    (posframe-hide my/agent-shell--context-posframe-buffer)))
+
+(defun my/agent-shell--apply-context-overlay (start end)
+  "Apply context face overlay on text from START to END."
   (let* ((face my/agent-shell-context-face)
          (padding (propertize "  " 'face face))
-         (ov (make-overlay content-start content-end nil nil nil)))
+         (ov (make-overlay start end nil t nil)))
     (overlay-put ov 'face face)
     (overlay-put ov 'line-prefix padding)
     (overlay-put ov 'wrap-prefix padding)
-    (overlay-put ov 'before-string (propertize "\n" 'face face))
     (overlay-put ov 'after-string (propertize "\n" 'face face))
     (overlay-put ov 'evaporate nil)
     (overlay-put ov 'my-agent-shell-context t)))
 
-(defun my/agent-shell-style-context (start end buffer)
-  "Apply context styling overlay from START to END in BUFFER."
-  (when (and start end buffer (buffer-live-p buffer))
-    (with-current-buffer buffer
-      (save-excursion
-        ;; Skip leading whitespace/newlines to find actual content
-        (goto-char start)
-        (skip-chars-forward "\n\t " end)
-        (let* ((content-start (line-beginning-position))
-               (content-end (progn (goto-char end)
-                                   (skip-chars-backward "\n\t " content-start)
-                                   (line-end-position))))
-          ;; Mark the text so we can restore overlays after submission
-          (let ((inhibit-read-only t))
-            (put-text-property content-start content-end
-                               'my-agent-shell-context-region t))
-          (my/agent-shell--apply-context-overlay content-start content-end))))))
-
-(defun my/agent-shell-restore-context-overlays (&rest _args)
-  "Restore context overlays on text marked with `my-agent-shell-context-region'."
-  (when (derived-mode-p 'agent-shell-mode)
-    (save-excursion
-      (goto-char (point-min))
-      (let ((pos (point-min)))
-        (while (< pos (point-max))
-          (let ((next-change (next-single-property-change pos 'my-agent-shell-context-region nil (point-max))))
-            (when (get-text-property pos 'my-agent-shell-context-region)
-              ;; Check if there's already an overlay here
-              (unless (cl-some (lambda (ov) (overlay-get ov 'my-agent-shell-context))
-                               (overlays-at pos))
-                (my/agent-shell--apply-context-overlay pos next-change)))
-            (setq pos next-change)))))))
-
-(defun my/agent-shell-style-context-advice (result)
-  "After-advice for `agent-shell--insert-to-shell-buffer' to style context."
+(defun my/agent-shell-context-advice (result)
+  "After-advice: intercept context, remove from buffer, show in posframe."
   (when result
-    (let ((buffer (alist-get :buffer result))
-          (start (alist-get :start result))
-          (end (alist-get :end result)))
-      (my/agent-shell-style-context start end buffer)))
+    (let* ((buffer (alist-get :buffer result))
+           (start (alist-get :start result))
+           (end (alist-get :end result)))
+      (when (and buffer start end (buffer-live-p buffer))
+        (with-current-buffer buffer
+          ;; Extract clean context text (skip \n\n prefix)
+          (let ((text (save-excursion
+                        (goto-char start)
+                        (skip-chars-forward "\n\t " end)
+                        (string-trim
+                         (buffer-substring-no-properties (point) end)))))
+            ;; Delete the context from the buffer (keep prompt clean)
+            (let ((inhibit-read-only t))
+              ;; Remove ALL overlays in and around the region
+              (dolist (ov (overlays-in (max (point-min) (1- start))
+                                       (min (point-max) (1+ end))))
+                (delete-overlay ov))
+              (delete-region start end)
+              ;; Nuclear cleanup: remove any overlays touching deletion point
+              (let ((cleanup-pos (min start (point-max))))
+                (dolist (ov (overlays-at cleanup-pos))
+                  (delete-overlay ov))
+                (when (> cleanup-pos (point-min))
+                  (dolist (ov (overlays-at (1- cleanup-pos)))
+                    (delete-overlay ov)))))
+            ;; Store for submission
+            (setq my/agent-shell--pending-context (list :text text))
+            ;; Show posframe
+            (my/agent-shell--show-context-posframe text buffer))))))
   result)
 
+(defvar my/agent-shell--context-marker-start "«CTX»"
+  "Start marker for context blocks in shell history.")
+
+(defvar my/agent-shell--context-marker-end "«/CTX»"
+  "End marker for context blocks in shell history.")
+
+(defun my/agent-shell-on-submit (&rest _args)
+  "On submission: hide posframe, append context with markers."
+  (when (and (derived-mode-p 'agent-shell-mode)
+             my/agent-shell--pending-context)
+    (my/agent-shell--hide-context-posframe)
+    (let* ((ctx my/agent-shell--pending-context)
+           (text (plist-get ctx :text))
+           (inhibit-read-only t))
+      (when text
+        (save-excursion
+          (goto-char (point-max))
+          (insert "\n\n" my/agent-shell--context-marker-start
+                  "\n" text "\n"
+                  my/agent-shell--context-marker-end))))
+    (setq my/agent-shell--pending-context nil)))
+
+(defun my/agent-shell--style-context-markers ()
+  "Scan buffer for context markers and apply faces.
+Skips regions already styled.  Safe to call repeatedly."
+  (save-excursion
+    (goto-char (point-min))
+    (let ((marker-start my/agent-shell--context-marker-start)
+          (marker-end my/agent-shell--context-marker-end))
+      (while (search-forward marker-start nil t)
+        (let ((m-start (match-beginning 0))
+              (ctx-start (match-end 0)))
+          (when (search-forward marker-end nil t)
+            (let ((ctx-end (match-beginning 0))
+                  (m-end (match-end 0)))
+              ;; Only add overlays if not already styled
+              (unless (cl-some (lambda (ov) (overlay-get ov 'my-agent-shell-context))
+                               (overlays-in m-start m-end))
+                ;; Hide start marker + its trailing newline
+                (let ((ov-ms (make-overlay m-start ctx-start nil t nil)))
+                  (overlay-put ov-ms 'invisible t)
+                  (overlay-put ov-ms 'my-agent-shell-context t))
+                ;; Hide end marker + trailing newlines (not the \n before it)
+                (let* ((hide-start ctx-end)
+                       (hide-end (save-excursion
+                                   (goto-char m-end)
+                                   (skip-chars-forward "\n")
+                                   (point)))
+                       (ov-me (make-overlay hide-start hide-end nil t nil)))
+                  (overlay-put ov-me 'invisible t)
+                  (overlay-put ov-me 'my-agent-shell-context t))
+                ;; Style the context body (include trailing \n so :extend t works)
+                (let ((body-end (save-excursion
+                                  (goto-char ctx-end)
+                                  (skip-chars-backward "\n")
+                                  ;; Include the newline after last content line
+                                  (min (1+ (point)) ctx-end))))
+                  (my/agent-shell--apply-context-overlay ctx-start body-end))))))))))
+
+(defun my/agent-shell--maybe-style-context ()
+  "Post-command hook: style context markers in agent-shell buffers."
+  (when (derived-mode-p 'agent-shell-mode)
+    (my/agent-shell--style-context-markers)))
+
 (with-eval-after-load 'agent-shell
+  ;; Intercept context insertion: remove from buffer, show in posframe
   (advice-add 'agent-shell--insert-to-shell-buffer
-              :filter-return #'my/agent-shell-style-context-advice)
-  (add-hook 'comint-output-filter-functions #'my/agent-shell-restore-context-overlays))
+              :filter-return #'my/agent-shell-context-advice)
+  ;; On submit: append context with markers
+  (advice-add 'shell-maker-submit :before #'my/agent-shell-on-submit)
+  ;; Style markers on every command loop iteration (cheap — skips if already styled)
+  (add-hook 'post-command-hook #'my/agent-shell--maybe-style-context))
 
 (provide 'my-agent-shell-style)
 ;;; my-agent-shell-style.el ends here
