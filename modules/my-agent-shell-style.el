@@ -75,17 +75,23 @@
     (with-current-buffer posframe-buf
       (let ((inhibit-read-only t))
         (erase-buffer)
-        (insert (propertize text 'face my/agent-shell-context-face))))
+        (insert (propertize " " 'face `(:height 0.3 :background "#1a2a37" :extend t))
+                "\n"
+                (propertize (replace-regexp-in-string "^" "  " text)
+                            'face my/agent-shell-context-face)
+                "\n"
+                (propertize " " 'face `(:height 0.3 :background "#1a2a37" :extend t)))))
     (when-let ((win (get-buffer-window buffer)))
       (with-selected-window win
         (posframe-show posframe-buf
-                       :position (point-min)
-                       :poshandler #'posframe-poshandler-frame-top-center
+                       :position (point-max)
+                       :poshandler #'posframe-poshandler-window-bottom-center
                        :border-width 1
-                       :border-color "#1a2a37"
+                       :border-color "#3a5a6a"
                        :background-color "#1a2a37"
-                       :min-width 40
-                       :internal-border-width 8
+                       :min-width 60
+                       :internal-border-width 12
+                       :lines-truncate t
                        :accept-focus nil)))))
 
 (defun my/agent-shell--hide-context-posframe ()
@@ -194,9 +200,11 @@ Skips regions already styled.  Safe to call repeatedly."
                 (my/agent-shell--apply-context-overlay ctx-start ctx-end)))))))))
 
 (defun my/agent-shell--maybe-style-context ()
-  "Post-command hook: style context markers in agent-shell buffers."
-  (when (derived-mode-p 'agent-shell-mode)
-    (my/agent-shell--style-context-markers)))
+  "Post-command hook: style context markers in agent-shell buffers.
+Also hide the context posframe when not in an agent-shell buffer."
+  (if (derived-mode-p 'agent-shell-mode)
+      (my/agent-shell--style-context-markers)
+    (my/agent-shell--hide-context-posframe)))
 
 (with-eval-after-load 'agent-shell
   ;; Intercept context insertion: remove from buffer, show in posframe

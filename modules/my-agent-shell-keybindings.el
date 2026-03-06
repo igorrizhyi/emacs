@@ -6,10 +6,13 @@
 ;;; Code:
 
 (defun my/agent-shell-reset-prompt ()
-  "Clear the current input at the agent-shell prompt."
+  "Clear the current input and any pending context at the agent-shell prompt."
   (interactive)
   (when (derived-mode-p 'agent-shell-mode)
-    (delete-region (comint-line-beginning-position) (point-max))))
+    (delete-region (comint-line-beginning-position) (point-max))
+    (when my/agent-shell--pending-context
+      (setq my/agent-shell--pending-context nil)
+      (my/agent-shell--hide-context-posframe))))
 
 (defun my/agent-shell-insert-at-prompt ()
   "Jump to the end of the prompt and enter insert state."
