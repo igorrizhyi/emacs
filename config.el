@@ -1297,3 +1297,10 @@
   (add-hook 'dired-mode-hook
             (lambda ()
               (doom-modeline-set-modeline 'my-dired))))
+
+;; Suppress org-persist gc-lock read errors (file gets corrupted during suspend)
+(defadvice! my/silence-org-persist-read-errors (fn &rest args)
+  :around #'org-persist-read
+  (condition-case nil
+      (apply fn args)
+    (error nil)))

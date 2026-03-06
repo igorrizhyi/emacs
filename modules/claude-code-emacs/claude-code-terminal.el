@@ -2544,7 +2544,7 @@ Keys are terminal IDs, values are plists with:
      (string-match-p "^python[23]?$" input-trimmed)
      (string= "ipython" input-trimmed)
      ;; Commands with progress bars that don't render well in eshell
-     (string-match-p "\\bpoetry\\s+install\\b" input-trimmed)
+     (string-match-p "\\bpoetry\\s-+install\\b" input-trimmed)
      ;; TUI applications (also match with env var prefixes like KUBECONFIG=... k9s)
      (string-match-p "\\bk9s\\b" input-trimmed)
      (string-match-p "\\bhtop\\b" input-trimmed))))
