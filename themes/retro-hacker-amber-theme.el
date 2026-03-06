@@ -238,7 +238,7 @@
    `(ivy-minibuffer-match-face-4 ((,class (:foreground ,amber-gold :weight bold))))
    
    ;; Vertico (if used)
-   `(vertico-current ((,class (:background ,bg-active :foreground ,fg-main))))
+   `(vertico-current ((,class (:background ,bg-selection :foreground ,fg-alt :weight bold :extend t))))
    
    ;; Evil mode visual selections
    `(evil-visual-selection ((,class (:background "#5a3a15"))))
