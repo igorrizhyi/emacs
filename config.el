@@ -379,12 +379,13 @@
       (eshell-set-path new-path)
       "Deactivated")))
 
-;; Configure lsp-pyright for superior pyright integration
-(lsp-register-client
- (make-lsp-client
-  :new-connection (lsp-stdio-connection '("ty" "lsp"))
-  :major-modes '(python-mode)
-  :server-id 'ty-lsp))
+;; Configure lsp-pyright for faster completions
+(after! lsp-pyright
+  (setq lsp-pyright-auto-import-completions t
+        lsp-pyright-auto-search-paths t
+        lsp-pyright-use-library-code-for-types t
+        lsp-pyright-diagnostic-mode "openFilesOnly"  ;; Don't analyze entire workspace
+        lsp-pyright-type-checking-mode "basic"))      ;; Lighter type checking = faster responses
 (add-hook 'python-mode-hook #'lsp)
 
 ;; (use-package! lsp-pyright
@@ -418,7 +419,9 @@
         lsp-signature-render-documentation nil  ; Disable for speed
         lsp-enable-file-watchers t
         lsp-file-watch-threshold 2000   ;; Faster file watching
-        lsp-eldoc-render-all nil)       ;; Don't render everything for speed
+        lsp-eldoc-render-all nil        ;; Don't render everything for speed
+        lsp-completion-no-cache nil     ;; Cache completions locally (avoid re-requesting)
+        lsp-completion-use-last-result t) ;; Reuse cached results for faster popup
   ;; ;; Breadcrumb configuration
   ;; (setq lsp-headerline-breadcrumb-enable t ;; Enable breadcrumb navigation in header
   ;;       lsp-headerline-breadcrumb-icons-enable nil ;; Disable icons for speed
@@ -692,6 +695,19 @@
       "M-k" #'my-layout-smart-agent-shell
       "C-k" #'my-layout-smart-agent-shell) ; Smart agent-shell handler
 
+;; Override evil-org's M-k (org-metaup) — advice the source function so it
+;; can never set M-k without us immediately overriding it
+(defun my/override-evil-org-meta-keys (&rest _)
+  "Re-bind M-k and C-v after evil-org sets its additional bindings."
+  (evil-define-key 'normal evil-org-mode-map (kbd "M-k") #'my-layout-smart-agent-shell)
+  (evil-define-key 'insert evil-org-mode-map (kbd "M-k") #'my-layout-smart-agent-shell)
+  (evil-define-key 'visual evil-org-mode-map (kbd "M-k") #'my-layout-smart-agent-shell)
+  (evil-define-key 'normal evil-org-mode-map (kbd "C-v") #'yank)
+  (evil-define-key 'insert evil-org-mode-map (kbd "C-v") #'yank)
+  (evil-normalize-keymaps))
+(after! evil-org
+  (advice-add #'evil-org--populate-additional-bindings :after #'my/override-evil-org-meta-keys)
+  (advice-add #'evil-org-set-key-theme :after #'my/override-evil-org-meta-keys))
 
 ;; Don't pollute clipboard with deleted/replaced text
 (setq evil-kill-on-visual-paste nil)  ; visual paste doesn't overwrite clipboard

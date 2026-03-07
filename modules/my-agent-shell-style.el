@@ -70,29 +70,31 @@
 
 (defun my/agent-shell--show-context-posframe (text buffer)
   "Show TEXT in a posframe anchored to BUFFER's window."
-  (require 'posframe)
-  (let ((posframe-buf (get-buffer-create my/agent-shell--context-posframe-buffer)))
-    (with-current-buffer posframe-buf
-      (let ((inhibit-read-only t))
-        (erase-buffer)
-        (insert (propertize " " 'face `(:height 0.3 :background "#1a2a37" :extend t))
-                "\n"
-                (propertize (replace-regexp-in-string "^" "  " text)
-                            'face my/agent-shell-context-face)
-                "\n"
-                (propertize " " 'face `(:height 0.3 :background "#1a2a37" :extend t)))))
-    (when-let ((win (get-buffer-window buffer)))
-      (with-selected-window win
-        (posframe-show posframe-buf
-                       :position (point-max)
-                       :poshandler #'posframe-poshandler-window-bottom-center
-                       :border-width 1
-                       :border-color "#3a5a6a"
-                       :background-color "#1a2a37"
-                       :min-width 60
-                       :internal-border-width 12
-                       :lines-truncate t
-                       :accept-focus nil)))))
+  (if (or (null text) (string-blank-p text))
+      (my/agent-shell--hide-context-posframe)
+    (require 'posframe)
+    (let ((posframe-buf (get-buffer-create my/agent-shell--context-posframe-buffer)))
+      (with-current-buffer posframe-buf
+        (let ((inhibit-read-only t))
+          (erase-buffer)
+          (insert (propertize " " 'face `(:height 0.3 :background "#1a2a37" :extend t))
+                  "\n"
+                  (propertize (replace-regexp-in-string "^" "  " text)
+                              'face my/agent-shell-context-face)
+                  "\n"
+                  (propertize " " 'face `(:height 0.3 :background "#1a2a37" :extend t)))))
+      (when-let ((win (get-buffer-window buffer)))
+        (with-selected-window win
+          (posframe-show posframe-buf
+                         :position (point-max)
+                         :poshandler #'posframe-poshandler-window-bottom-center
+                         :border-width 1
+                         :border-color "#3a5a6a"
+                         :background-color "#1a2a37"
+                         :min-width 60
+                         :internal-border-width 12
+                         :lines-truncate t
+                         :accept-focus nil))))))
 
 (defun my/agent-shell--hide-context-posframe ()
   "Hide the context posframe."
