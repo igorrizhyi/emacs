@@ -53,6 +53,33 @@ without prompting for confirmation."
   :type 'boolean
   :group 'agent-shell-team)
 
+;;; Faces for doom-modeline role badges
+
+(defface agent-shell-team-role-lead-face
+  '((t :background "#e74c3c" :foreground "#ffffff" :weight bold))
+  "Face for lead role badge in mode line."
+  :group 'agent-shell-team)
+
+(defface agent-shell-team-role-dev-face
+  '((t :background "#2ecc71" :foreground "#000000" :weight bold))
+  "Face for dev role badge in mode line."
+  :group 'agent-shell-team)
+
+(defface agent-shell-team-role-tester-face
+  '((t :background "#f39c12" :foreground "#000000" :weight bold))
+  "Face for tester role badge in mode line."
+  :group 'agent-shell-team)
+
+(defface agent-shell-team-role-researcher-face
+  '((t :background "#9b59b6" :foreground "#ffffff" :weight bold))
+  "Face for researcher role badge in mode line."
+  :group 'agent-shell-team)
+
+(defface agent-shell-team-info-face
+  '((t :background "#3b4252" :foreground "#88c0d0" :weight normal))
+  "Face for team info (session, worktree) in mode line."
+  :group 'agent-shell-team)
+
 ;;; Buffer-local variables
 
 (defvar-local agent-shell-team--session-id nil
@@ -364,6 +391,43 @@ WORKTREE-PATH, WORKTREE-NAME, WORKING-DIR depend on role/mode."
                 (_ (agent-shell-team--tester-neighbor-prompt session-id (or working-dir default-directory)))))
     ("researcher" (agent-shell-team--researcher-prompt session-id (or working-dir default-directory)))))
 
+;;; Doom modeline integration
+
+(defun agent-shell-team--doom-modeline-role ()
+  "Generate role badge segment for doom-modeline."
+  (when agent-shell-team--role
+    (let ((face (pcase agent-shell-team--role
+                  ("lead" 'agent-shell-team-role-lead-face)
+                  ("dev" 'agent-shell-team-role-dev-face)
+                  ("tester" 'agent-shell-team-role-tester-face)
+                  ("researcher" 'agent-shell-team-role-researcher-face))))
+      (propertize (format " %s " (upcase agent-shell-team--role))
+                  'face face))))
+
+(defun agent-shell-team--doom-modeline-info ()
+  "Generate team info segment for doom-modeline."
+  (when agent-shell-team--session-id
+    (let ((info (if agent-shell-team--worktree-name
+                    (format " %s | %s "
+                            (agent-shell-team--short-session-id agent-shell-team--session-id)
+                            agent-shell-team--worktree-name)
+                  (format " %s "
+                          (agent-shell-team--short-session-id agent-shell-team--session-id)))))
+      (propertize info 'face 'agent-shell-team-info-face))))
+
+(with-eval-after-load 'doom-modeline
+  (doom-modeline-def-segment agent-shell-team-role
+    "Display team agent role with colored background."
+    (agent-shell-team--doom-modeline-role))
+
+  (doom-modeline-def-segment agent-shell-team-info
+    "Display team session and worktree info."
+    (agent-shell-team--doom-modeline-info))
+
+  (doom-modeline-def-modeline 'agent-shell-team
+    '(bar workspace-name window-number matches agent-shell-team-role agent-shell-team-info)
+    '()))
+
 ;;; ACP request decorator — inject systemPrompt at session creation
 
 (defun agent-shell-team--make-request-decorator (system-prompt)
@@ -656,7 +720,11 @@ WORKTREE-PATH and WORKTREE-NAME are for isolated mode."
      :on-event (lambda (_event)
                  (agent-shell-team--setup-tool-call-watcher buffer)
                  ;; Notify existing agents about the new team member
-                 (agent-shell-team--announce-agent session-id buffer role mode worktree-name)))
+                 (agent-shell-team--announce-agent session-id buffer role mode worktree-name)
+                 ;; Activate custom doom-modeline
+                 (when (fboundp 'doom-modeline-set-modeline)
+                   (with-current-buffer buffer
+                     (doom-modeline-set-modeline 'agent-shell-team)))))
     buffer))
 
 (defun agent-shell-team--make-config (session-id role buffer-name)
