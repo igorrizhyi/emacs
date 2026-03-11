@@ -201,11 +201,68 @@ Skips regions already styled.  Safe to call repeatedly."
                 ;; Style the context body (up to ctx-end so all \n get background)
                 (my/agent-shell--apply-context-overlay ctx-start ctx-end)))))))))
 
+;; --- Team message styling ---
+
+(defvar my/agent-shell-team-message-face
+  (list :font (font-spec :family "SF Mono" :weight 'semibold)
+        :height 0.75
+        :inherit nil
+        :background "#2a1a37"
+        :extend t)
+  "Face for team-injected messages in agent-shell buffers.")
+
+(defvar my/agent-shell--team-msg-marker-start "«TEAM»"
+  "Start marker for team messages in shell history.")
+
+(defvar my/agent-shell--team-msg-marker-end "«/TEAM»"
+  "End marker for team messages in shell history.")
+
+(defun my/agent-shell--apply-team-message-overlay (start end)
+  "Apply team message face overlay on text from START to END."
+  (let* ((face my/agent-shell-team-message-face)
+         (padding (propertize "  " 'face face))
+         (ov (make-overlay start end nil t nil)))
+    (overlay-put ov 'face face)
+    (overlay-put ov 'line-prefix padding)
+    (overlay-put ov 'wrap-prefix padding)
+    (overlay-put ov 'after-string (propertize "\n" 'face face))
+    (overlay-put ov 'evaporate nil)
+    (overlay-put ov 'my-agent-shell-team-msg t)))
+
+(defun my/agent-shell--style-team-message-markers ()
+  "Scan buffer for team message markers and apply faces."
+  (save-excursion
+    (goto-char (point-min))
+    (while (search-forward my/agent-shell--team-msg-marker-start nil t)
+      (let ((m-start (match-beginning 0))
+            (content-start (match-end 0)))
+        (when (search-forward my/agent-shell--team-msg-marker-end nil t)
+          (let ((content-end (match-beginning 0))
+                (m-end (match-end 0)))
+            (unless (cl-some (lambda (ov) (overlay-get ov 'my-agent-shell-team-msg))
+                             (overlays-in m-start m-end))
+              ;; Hide start marker
+              (let ((ov-ms (make-overlay m-start content-start nil t nil)))
+                (overlay-put ov-ms 'invisible t)
+                (overlay-put ov-ms 'my-agent-shell-team-msg t))
+              ;; Hide end marker
+              (let* ((hide-start content-end)
+                     (hide-end (save-excursion
+                                 (goto-char m-end)
+                                 (skip-chars-forward "\n")
+                                 (point)))
+                     (ov-me (make-overlay hide-start hide-end nil t nil)))
+                (overlay-put ov-me 'invisible t)
+                (overlay-put ov-me 'my-agent-shell-team-msg t))
+              ;; Style the content body
+              (my/agent-shell--apply-team-message-overlay content-start content-end))))))))
+
 (defun my/agent-shell--maybe-style-context ()
-  "Post-command hook: style context markers in agent-shell buffers.
-Also hide the context posframe when not in an agent-shell buffer."
+  "Post-command hook: style markers in agent-shell buffers."
   (if (derived-mode-p 'agent-shell-mode)
-      (my/agent-shell--style-context-markers)
+      (progn
+        (my/agent-shell--style-context-markers)
+        (my/agent-shell--style-team-message-markers))
     (my/agent-shell--hide-context-posframe)))
 
 (with-eval-after-load 'agent-shell

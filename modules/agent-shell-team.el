@@ -521,7 +521,7 @@ This goes through shell-maker's normal prompt flow so that:
 - ACP notifications render in-buffer instead of as stale minibuffer messages."
   (when (buffer-live-p buffer)
     (with-current-buffer buffer
-      (shell-maker-submit :input message))))
+      (shell-maker-submit :input (format "«TEAM»\n%s\n«/TEAM»" message)))))
 
 (defun agent-shell-team--prompt-agent-silent (buffer message)
   "Deliver MESSAGE to BUFFER's agent via raw ACP request.
