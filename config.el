@@ -707,7 +707,8 @@
   (evil-normalize-keymaps))
 (after! evil-org
   (advice-add #'evil-org--populate-additional-bindings :after #'my/override-evil-org-meta-keys)
-  (advice-add #'evil-org-set-key-theme :after #'my/override-evil-org-meta-keys))
+  (advice-add #'evil-org-set-key-theme :after #'my/override-evil-org-meta-keys)
+  (my/override-evil-org-meta-keys))
 
 ;; Override evil-markdown's M-k (markdown-move-up) — same pattern as evil-org above
 (defun my/override-evil-markdown-meta-keys (&rest _)
@@ -718,7 +719,8 @@
   (evil-normalize-keymaps))
 (after! evil-markdown
   (advice-add #'evil-markdown--populate-additional-bindings :after #'my/override-evil-markdown-meta-keys)
-  (advice-add #'evil-markdown-set-key-theme :after #'my/override-evil-markdown-meta-keys))
+  (advice-add #'evil-markdown-set-key-theme :after #'my/override-evil-markdown-meta-keys)
+  (my/override-evil-markdown-meta-keys))
 
 ;; Don't pollute clipboard with deleted/replaced text
 (setq evil-kill-on-visual-paste nil)  ; visual paste doesn't overwrite clipboard
