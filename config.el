@@ -1182,6 +1182,8 @@
 ;; Bridge agent-shell with our Emacs MCP server
 (add-to-list 'load-path (expand-file-name "modules" doom-user-dir))
 (autoload 'agent-shell-emacs-mcp "agent-shell-emacs-mcp" "Start Claude with Emacs MCP integration." t)
+(autoload 'agent-shell-team "agent-shell-team" "Start multi-agent team session." t)
+(autoload 'agent-shell-team-status "agent-shell-team" "Team dashboard." t)
 
 (after! agent-shell
   ;; Require MCP tools for the stdio server
@@ -1193,7 +1195,9 @@
   (require 'my-agent-shell-keybindings)
   ;; Keybinding for quick access
   (map! :leader
-        :desc "Claude (Emacs MCP)" "c c" #'agent-shell-emacs-mcp))
+        :desc "Claude (Emacs MCP)" "c c" #'agent-shell-emacs-mcp
+        :desc "Claude Team" "c t" #'agent-shell-team
+        :desc "Team Status" "c T" #'agent-shell-team-status))
 
 ;; Initial setup - enable for normal mode by default
 (add-hook 'evil-mode-hook

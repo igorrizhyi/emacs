@@ -39,7 +39,39 @@ Build a team orchestration layer on top of `agent-shell-emacs-mcp` that lets mul
 
 **Neighbor agents can target any directory** — not just the main tree. When spawned from a dev's buffer in isolated mode, the neighbor runs in that dev's worktree. When spawned from the lead, it runs in the main tree.
 
-## Architecture
+## Architecture — Pure ACP Approach
+
+### Key Insight: No MCP Modifications Needed
+
+Agent-shell uses ACP (Agent Client Protocol) for all communication between Emacs and Claude Code CLI processes. ACP already provides:
+
+1. **Full visibility into agent activity** — `agent-shell--on-notification` sees every tool call (including `sendNotification`) with full `rawInput` arguments via the `tool-call-update` event
+2. **Event subscription system** — `agent-shell-subscribe-to` lets us hook into per-buffer events like `tool-call-update`
+3. **Programmatic prompt injection** — `acp-send-request` with `acp-make-session-prompt-request` sends prompts to any agent
+4. **System prompt at session creation** — `acp-make-session-new-request` accepts `:meta '((systemPrompt . "..."))` to set role instructions
+
+This means **all orchestration lives in Emacs**. No changes to the MCP server (TypeScript) or MCP tool schemas are required.
+
+### Communication Flow
+
+```
+Agent A calls sendNotification(title: "Task Complete", message: "...")
+    │
+    ▼  (ACP notification — Emacs sees the tool call with full rawInput)
+    │
+    ▼  agent-shell-team intercepts via tool-call-update subscription
+    │
+    ▼  Routing logic: sender's role + notification title → determine target
+    │
+    ▼  acp-send-request + acp-make-session-prompt-request → inject into Agent B
+```
+
+### Why This Works
+
+- **Outbound (agent → Emacs):** The agent calls `sendNotification` (standard MCP tool, no changes). ACP mirrors the tool call to Emacs with full arguments in `rawInput`. Our `tool-call-update` subscription intercepts it.
+- **Routing (Emacs decides):** Emacs knows each buffer's role and session. It inspects the notification title/message and the sender's role to determine routing.
+- **Delivery (Emacs → agent):** Emacs sends a prompt to the target agent via ACP's `session/prompt` request — a first-class ACP operation, not a shell-maker hack.
+- **System prompts:** Set at session creation via ACP `:meta systemPrompt`, not injected as a first user message.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -55,13 +87,11 @@ Build a team orchestration layer on top of `agent-shell-emacs-mcp` that lets mul
    └────┬─────┘   └────┬────┘   └────┬────┘
         │              │              │
         ▼              ▼              ▼
-   agent-shell-emacs-mcp (existing — handles ACP + MCP per buffer)
+   ACP client      ACP client     ACP client
+   (each buffer has its own ACP connection to its Claude Code CLI)
 ```
 
-Communication between agents goes through Emacs:
-- Agents use MCP `sendNotification` with a **target role** field
-- Emacs routes the message to the right agent(s) based on target role + agent status
-- If the target agent is busy, the message queues in the team log until the agent is idle
+Emacs is the orchestrator. It watches all ACP streams, routes messages between agents, and delivers via ACP prompts. MCP is untouched.
 
 ---
 
@@ -104,7 +134,7 @@ Communication between agents goes through Emacs:
 3. If role is `dev` or `tester` → prompt: create worktree? (default yes for isolated mode)
 4. Start `agent-shell-emacs-mcp` in the appropriate directory
 5. Set buffer-local vars, register in global session
-6. Inject system prompt with role instructions (via initial message or CLAUDE.md in worktree)
+6. Set system prompt via ACP `:meta systemPrompt` at session creation
 
 **When called from an existing team buffer:**
 1. Inherit session UUID from parent buffer
@@ -147,7 +177,7 @@ The lead always works on the main tree. Devs and testers get worktrees.
 
 ## Phase 4: Role-Specific System Prompts
 
-Each role gets instructions injected as the first message (or via a `.claude/CLAUDE.md` dropped into the worktree):
+System prompts are injected via ACP's `:meta systemPrompt` parameter in `acp-make-session-new-request`, which appends to the agent's default system prompt at session creation time. This is cleaner than sending it as a first user message.
 
 ### Lead prompt
 ```
@@ -159,13 +189,11 @@ Your responsibilities:
 - Assign new tasks to idle dev agents
 - Handle task split requests from devs (see Sub-Tasking below)
 
-All communication uses sendNotification with targetRole:
-- To assign work to a dev:
-  title: "Task Assignment", message: "...", targetRole: "dev"
-- To request testing:
-  title: "Run Tests", message: "Test branch {X} merged to main", targetRole: "tester"
-- To report status to user:
-  title: "Status Update", message: "...", targetRole: "all"
+Use sendNotification to communicate with other agents. Emacs routes messages
+based on your role automatically. Use clear, structured notification titles:
+- "Task Assignment" — assign work to a dev
+- "Run Tests" — request testing
+- "Status Update" — broadcast to all
 
 When a dev signals completion, review their branch with:
   git diff main...{branch-name}
@@ -175,10 +203,10 @@ Then notify the tester.
 ## Sub-Tasking
 You own ALL task decomposition. When you receive a broad task:
 1. Break it into atomic, independently implementable subtasks
-2. Assign each subtask to an idle dev:
-   title: "Task Assignment", message: "Subtask: {description}", targetRole: "dev"
-3. If no idle devs are available, ask the user to spawn more:
-   title: "Need More Agents", message: "N subtasks pending, only M devs available", targetRole: "all"
+2. Assign each subtask to an idle dev via sendNotification:
+   title: "Task Assignment", message: "Subtask: {description}"
+3. If no idle devs are available, notify:
+   title: "Need More Agents", message: "N subtasks pending, only M devs available"
 4. Track which subtasks belong to the same parent task so you know when
    ALL subtasks are done before requesting a test run.
 Devs never split tasks — they receive atomic units and execute them.
@@ -194,11 +222,9 @@ Your responsibilities:
 - Signal completion by calling sendNotification with:
   title: "Task Complete"
   message: "dev:{worktree-name} finished: {brief description}"
-  targetRole: "lead"
-- If you need logs or test output, request it from a tester:
+- If you need logs or test output, request it via sendNotification:
   title: "Need Verification"
   message: "Please run X and report results"
-  targetRole: "tester"
 - Wait for lead's feedback. Fix issues if requested.
 - You receive atomic tasks from the lead. Do not split or delegate — just implement.
 ```
@@ -212,7 +238,6 @@ Your responsibilities:
 - Report results via sendNotification:
   title: "Test Results"
   message: "PASS" or "FAIL: {details}"
-  targetRole: "lead"
 - If tests fail, provide detailed diagnostics
 ```
 
@@ -228,63 +253,89 @@ Your responsibilities:
 - Report findings via sendNotification:
   title: "Log Report" / "Test Results" / "Runtime Check"
   message: "{detailed findings}"
-  targetRole: "dev" (if helping a dev) or "lead" (if reporting to lead)
 - You are the team's eyes and hands for observation. Run, observe, report.
 ```
 
 ---
 
-## Phase 5: Notification Routing & Emacs Orchestration
+## Phase 5: ACP-Based Notification Routing
 
-### Extended `sendNotification` Schema
+### Intercepting Tool Calls via ACP Events
 
-Every team notification includes a **target role**:
-
-```
-sendNotification({
-  title: "Task Complete",
-  message: "Implemented auth module, all commits pushed",
-  targetRole: "lead"       // who should receive this
-})
-```
-
-Valid `targetRole` values: `"lead"`, `"dev"`, `"tester"`, `"all"` (broadcast).
-
-The MCP tool handler detects team context from the calling buffer's buffer-local vars (`agent-shell-team--session-id`, `agent-shell-team--role`) and routes accordingly.
-
-### Emacs Orchestration Logic
-
-Emacs acts as the message router. When a `sendNotification` with `targetRole` arrives:
+Each team agent buffer gets a `tool-call-update` subscription. When the agent calls `sendNotification`, ACP mirrors the tool call to Emacs with full `rawInput` (title, message). Our subscription handler inspects it and routes.
 
 ```elisp
-(defun agent-shell-team--route-notification (session-id from-role target-role title message)
-  "Route notification to the appropriate agent(s) based on target role and status."
-  ;; 1. Always log to shared team buffer
-  (agent-shell-team--log session-id
-    (format "[%s → %s] %s: %s" from-role target-role title message))
+(defun agent-shell-team--setup-tool-call-watcher (buffer)
+  "Subscribe to tool-call-update events on BUFFER for team routing."
+  (agent-shell-subscribe-to
+   :shell-buffer buffer
+   :event 'tool-call-update
+   :on-event #'agent-shell-team--on-tool-call-update))
 
-  ;; 2. Find target agent(s)
-  (let ((targets (if (equal target-role "all")
-                     (agent-shell-team--get-session-agents session-id)
-                   (agent-shell-team--get-agents-by-role session-id target-role))))
+(defun agent-shell-team--on-tool-call-update (event)
+  "Handle tool-call-update EVENT. Route sendNotification calls between team agents."
+  (let* ((data (map-elt event :data))
+         (tool-call (cdr (assq :tool-call data)))
+         (title (cdr (assq :title tool-call)))
+         (raw-input (cdr (assq :raw-input tool-call)))
+         (status (cdr (assq :status tool-call))))
+    ;; Only intercept sendNotification tool calls that have completed
+    (when (and (equal title "sendNotification")
+               (equal status "completed")  ;; or check for appropriate status
+               agent-shell-team--session-id)
+      (let ((notif-title (cdr (assq 'title raw-input)))
+            (notif-message (cdr (assq 'message raw-input))))
+        (when (and notif-title notif-message)
+          (agent-shell-team--route-from-acp
+           agent-shell-team--session-id
+           agent-shell-team--role
+           notif-title
+           notif-message))))))
+```
 
-    ;; 3. For each target: deliver or queue based on status
-    (dolist (agent targets)
-      (let ((buf (alist-get 'buffer agent))
-            (status (agent-shell-team--agent-status buf)))
-        (pcase status
-          ('idle
-           ;; Agent is waiting — inject message directly into their comint input
-           (agent-shell-team--prompt-agent buf
-             (format "Message from %s: %s — %s" from-role title message)))
-          ('busy
-           ;; Agent is mid-task — queue for delivery when they become idle
-           (agent-shell-team--queue-message session-id buf
-             (list :from from-role :title title :message message)))
-          ('dead
-           ;; Buffer killed — log warning, skip
-           (agent-shell-team--log session-id
-             (format "WARNING: target %s buffer is dead, message dropped" target-role))))))))
+### Routing Logic (Role-Based)
+
+Instead of `targetRole` in the notification, Emacs infers the target from the **sender's role** and **notification title**:
+
+```elisp
+(defun agent-shell-team--infer-target (from-role title)
+  "Infer target role based on FROM-ROLE and notification TITLE."
+  (pcase from-role
+    ("dev"
+     (pcase title
+       ("Task Complete" "lead")
+       ("Need Verification" "tester")
+       (_ "lead")))  ;; dev messages default to lead
+    ("tester"
+     (pcase title
+       ("Test Results" "lead")
+       ("Log Report" "lead")
+       ("Runtime Check" "lead")
+       (_ "lead")))  ;; tester messages default to lead
+    ("lead"
+     (pcase title
+       ("Task Assignment" "dev")
+       ("Run Tests" "tester")
+       ("Status Update" "all")
+       ("Need More Agents" "all")
+       (_ "all")))))  ;; lead broadcasts by default
+```
+
+### Message Delivery via ACP
+
+```elisp
+(defun agent-shell-team--prompt-agent (buffer message)
+  "Deliver MESSAGE to BUFFER's agent via ACP session/prompt."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (when-let ((session-id (map-nested-elt (agent-shell--state) '(:session :id)))
+                 (client (map-elt (agent-shell--state) :client)))
+        (acp-send-request
+         :client client
+         :request (acp-make-session-prompt-request
+                   :session-id session-id
+                   :prompt message)
+         :buffer buffer)))))
 ```
 
 ### Agent Status Detection
@@ -324,7 +375,7 @@ Hooked into agent-shell's post-response or idle detection."
         (format "Queued messages while you were busy:\n%s" combined)))))
 ```
 
-The drain hook attaches to `shell-maker-output-filter-functions` or agent-shell's section completion hook to detect when the agent finishes its current task.
+The drain hook uses a periodic timer to check for idle agents with pending messages.
 
 ### Sub-Tasking Flow (Lead-Driven)
 
@@ -351,17 +402,17 @@ The lead tracks parent→subtask relationships. When all subtasks for a parent t
 
 ### Routing Rules Summary
 
-| From | Target | Behavior |
-|------|--------|----------|
-| From | Target | Behavior |
-| dev | lead | Task done, needs review |
-| dev | tester | Need logs/verification from neighbor tester |
-| tester | dev | Test results, logs, runtime observations |
-| tester | lead | Test pass/fail report |
-| lead | dev | Task assignment, subtask assignment, feedback |
-| lead | tester | Run tests on branch X |
-| lead | all | Status update, need more agents |
-| any | all | Broadcast to all agents in session |
+| From | Target (inferred) | Trigger (title) | Behavior |
+|------|-------------------|-----------------|----------|
+| dev | lead | "Task Complete" | Task done, needs review |
+| dev | tester | "Need Verification" | Need logs/verification from neighbor tester |
+| dev | lead | (default) | Any other dev notification goes to lead |
+| tester | lead | "Test Results" | Test pass/fail report |
+| tester | lead | "Log Report" / "Runtime Check" | Observation results |
+| lead | dev | "Task Assignment" | Subtask assignment |
+| lead | tester | "Run Tests" | Run tests on branch X |
+| lead | all | "Status Update" / "Need More Agents" | Broadcast |
+| lead | all | (default) | Any other lead notification broadcasts |
 
 ---
 
@@ -389,16 +440,10 @@ Implemented as a `transient` menu for consistency with agent-shell's existing UI
 
 | File | Action |
 |------|--------|
-| `modules/agent-shell-team.el` | **NEW** — Core team orchestration |
-| `modules/agent-shell-emacs-mcp.el` | **MODIFY** — Accept team context (session-id, role, worktree) |
+| `modules/agent-shell-team.el` | **NEW** — Core team orchestration (pure Emacs Lisp, ACP-based) |
 | `config.el` | **MODIFY** — Load agent-shell-team, add keybinding |
 
-MCP tools require a small extension — `sendNotification` gains an optional `targetRole` parameter. The MCP server (Node.js) passes `targetRole` through to Emacs, where the elisp orchestration layer routes it.
-
-| File | Action |
-|------|--------|
-| `claude-emacs-mcp-server/src/tools/notification-tools.ts` | **MODIFY** — Add `targetRole` param to `sendNotification` |
-| `modules/claude-code-emacs/claude-code-mcp-tools.el` | **MODIFY** — Handle `targetRole` in notification handler, delegate to team router |
+**No MCP server changes required.** All routing and orchestration happens in Emacs via ACP event subscriptions and ACP prompt delivery.
 
 ---
 
@@ -416,7 +461,9 @@ MCP tools require a small extension — `sendNotification` gains an optional `ta
 1. `agent-shell-team.el` — data model, registry, session UUID
 2. `agent-shell-team` command — role prompt, mode prompt, worktree creation
 3. Buffer naming + buffer-local vars
-4. Role-specific system prompts (injected as first message)
-5. Notification routing to team log buffer
-6. Team dashboard (transient menu)
-7. Wire into `config.el` with keybinding
+4. System prompts via ACP `:meta systemPrompt`
+5. ACP tool-call-update subscription for notification interception
+6. Routing logic + message delivery via ACP `session/prompt`
+7. Message queue + drain timer
+8. Team dashboard (transient menu)
+9. Wire into `config.el` with keybinding
