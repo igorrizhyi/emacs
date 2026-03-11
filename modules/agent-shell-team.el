@@ -404,7 +404,8 @@ TITLE and MESSAGE are the notification content."
 ;;; Message delivery via ACP session/prompt
 
 (defun agent-shell-team--prompt-agent (buffer message)
-  "Deliver MESSAGE to BUFFER's agent via ACP session/prompt."
+  "Deliver MESSAGE to BUFFER's agent via ACP session/prompt.
+MESSAGE is a string that will be wrapped in a text content block."
   (when (buffer-live-p buffer)
     (with-current-buffer buffer
       (when (and (boundp 'agent-shell--state)
@@ -412,12 +413,16 @@ TITLE and MESSAGE are the notification content."
         (let ((session-id (map-nested-elt agent-shell--state '(:session :id)))
               (client (map-elt agent-shell--state :client)))
           (when (and session-id client)
-            (acp-send-request
-             :client client
-             :request (acp-make-session-prompt-request
-                       :session-id session-id
-                       :prompt message)
-             :buffer buffer)))))))
+            ;; Wrap string in a content block list — acp-make-session-prompt-request
+            ;; uses vconcat, which on a string produces a byte vector instead of
+            ;; a vector of content objects
+            (let ((content-blocks (list `((type . "text") (text . ,message)))))
+              (acp-send-request
+               :client client
+               :request (acp-make-session-prompt-request
+                         :session-id session-id
+                         :prompt content-blocks)
+               :buffer buffer))))))))
 
 ;;; Message queue & drain
 
@@ -521,12 +526,14 @@ WORKTREE-PATH and WORKTREE-NAME are for isolated mode."
     ;; Register in team session
     (agent-shell-team--register-agent session-id buffer role mode worktree-path worktree-name)
     ;; Subscribe to tool-call-update events for notification routing
-    ;; Use init-finished event to set up watcher after agent is ready
+    ;; and notify existing team members about the new agent
     (agent-shell-subscribe-to
      :shell-buffer buffer
      :event 'init-finished
      :on-event (lambda (_event)
-                 (agent-shell-team--setup-tool-call-watcher buffer)))
+                 (agent-shell-team--setup-tool-call-watcher buffer)
+                 ;; Notify existing agents about the new team member
+                 (agent-shell-team--announce-agent session-id buffer role mode worktree-name)))
     buffer))
 
 (defun agent-shell-team--make-config (session-id role buffer-name)
@@ -545,6 +552,48 @@ SESSION-ID, ROLE, and BUFFER-NAME customize the config."
    :default-model-id (lambda () agent-shell-anthropic-default-model-id)
    :default-session-mode-id (lambda () agent-shell-anthropic-default-session-mode-id)
    :install-instructions "See https://github.com/zed-industries/claude-code-acp for installation."))
+
+;;; Team membership announcements
+
+(defun agent-shell-team--announce-agent (session-id buffer role mode worktree-name)
+  "Announce a newly initialized agent to existing team members.
+SESSION-ID is the team session. BUFFER is the new agent's buffer.
+ROLE, MODE, and WORKTREE-NAME describe the new agent."
+  (let ((agents (agent-shell-team--get-session-agents session-id))
+        (announcement (format "Team update: %s agent joined (%s mode%s). Buffer: %s"
+                              role mode
+                              (if worktree-name (format ", worktree: %s" worktree-name) "")
+                              (buffer-name buffer))))
+    ;; Log the announcement
+    (agent-shell-team--log session-id announcement)
+    ;; Notify all OTHER agents (not the one that just joined)
+    (dolist (agent agents)
+      (let ((agent-buf (alist-get 'buffer agent)))
+        (when (and (buffer-live-p agent-buf)
+                   (not (eq agent-buf buffer)))
+          ;; Build a team roster for context
+          (let ((roster (agent-shell-team--build-roster session-id)))
+            (agent-shell-team--prompt-agent
+             agent-buf
+             (format "TEAM UPDATE: A new %s agent has joined the session.\n\nCurrent team roster:\n%s"
+                     role roster))))))))
+
+(defun agent-shell-team--build-roster (session-id)
+  "Build a human-readable roster of all agents in SESSION-ID."
+  (let ((agents (agent-shell-team--get-session-agents session-id))
+        (lines '()))
+    (dolist (agent agents)
+      (let* ((buf (alist-get 'buffer agent))
+             (r (alist-get 'role agent))
+             (m (alist-get 'mode agent))
+             (wt (alist-get 'worktree-name agent))
+             (status (agent-shell-team--agent-status buf)))
+        (push (format "- %s (%s%s) [%s]"
+                      r m
+                      (if wt (format ", worktree: %s" wt) "")
+                      status)
+              lines)))
+    (string-join (nreverse lines) "\n")))
 
 ;;; Interactive commands
 
