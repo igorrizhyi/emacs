@@ -709,6 +709,17 @@
   (advice-add #'evil-org--populate-additional-bindings :after #'my/override-evil-org-meta-keys)
   (advice-add #'evil-org-set-key-theme :after #'my/override-evil-org-meta-keys))
 
+;; Override evil-markdown's M-k (markdown-move-up) — same pattern as evil-org above
+(defun my/override-evil-markdown-meta-keys (&rest _)
+  "Re-bind M-k after evil-markdown sets its additional bindings."
+  (evil-define-key 'normal evil-markdown-mode-map (kbd "M-k") #'my-layout-smart-agent-shell)
+  (evil-define-key 'insert evil-markdown-mode-map (kbd "M-k") #'my-layout-smart-agent-shell)
+  (evil-define-key 'visual evil-markdown-mode-map (kbd "M-k") #'my-layout-smart-agent-shell)
+  (evil-normalize-keymaps))
+(after! evil-markdown
+  (advice-add #'evil-markdown--populate-additional-bindings :after #'my/override-evil-markdown-meta-keys)
+  (advice-add #'evil-markdown-set-key-theme :after #'my/override-evil-markdown-meta-keys))
+
 ;; Don't pollute clipboard with deleted/replaced text
 (setq evil-kill-on-visual-paste nil)  ; visual paste doesn't overwrite clipboard
 (evil-define-operator evil-delete-without-register (beg end type register yank-handler)
