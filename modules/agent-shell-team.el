@@ -77,9 +77,16 @@ Each entry is: ((buffer . #<buffer>) (role . \"dev\") (mode . \"isolated\")
 (defun agent-shell-team--generate-session-id ()
   "Generate a UUID for a team session.
 Uses `org-id-uuid' if available, falls back to uuidgen."
-  (if (fboundp 'org-id-uuid)
-      (org-id-uuid)
-    (string-trim (shell-command-to-string "uuidgen"))))
+  (let ((uuidgen (executable-find "uuidgen")))
+    (if uuidgen
+        (string-trim (shell-command-to-string uuidgen))
+      ;; Fallback: generate a simple random hex ID
+      (format "%08x-%04x-%04x-%04x-%012x"
+              (random (expt 16 8))
+              (random (expt 16 4))
+              (random (expt 16 4))
+              (random (expt 16 4))
+              (random (expt 16 12))))))
 
 (defun agent-shell-team--short-session-id (session-id)
   "Return first 4 chars of SESSION-ID for display."
@@ -294,8 +301,10 @@ with append mode, so the role prompt is appended to the agent's default system p
   (lambda (request)
     (when (equal (map-elt request :method) "session/new")
       (let ((params (map-elt request :params)))
-        (map-put! params '_meta
-                  `((systemPrompt . ((append . ,system-prompt)))))))
+        ;; nconc modifies the params list in place (appends to end),
+        ;; which propagates back to the request since params shares structure
+        (nconc params (list (cons '_meta
+                                  `((systemPrompt . ((append . ,system-prompt)))))))))
     request))
 
 ;;; ACP-based notification routing
@@ -500,8 +509,13 @@ WORKTREE-PATH and WORKTREE-NAME are for isolated mode."
          (system-prompt (agent-shell-team--get-system-prompt
                          role mode session-id worktree-path worktree-name default-directory))
          (config (agent-shell-team--make-config session-id role buf-name))
-         (buffer (agent-shell-start
+         ;; Use agent-shell--start directly to force session-strategy 'new
+         ;; This prevents hanging on session selection prompts
+         (buffer (agent-shell--start
                   :config config
+                  :no-focus nil
+                  :new-session t
+                  :session-strategy 'new
                   :outgoing-request-decorator
                   (agent-shell-team--make-request-decorator system-prompt))))
     ;; Register in team session
