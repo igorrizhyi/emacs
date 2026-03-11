@@ -65,9 +65,12 @@
 
 ;;; JSON-RPC Communication
 
-(defun claude-code-mcp-send-response (id result error project-root)
-  "Send response for request ID with RESULT or ERROR for PROJECT-ROOT."
-  (let ((websocket (claude-code-mcp-get-websocket project-root))
+(defun claude-code-mcp-send-response (id result error project-root &optional websocket)
+  "Send response for request ID with RESULT or ERROR for PROJECT-ROOT.
+When WEBSOCKET is provided, send directly on it (bypassing project lookup).
+This is critical for multi-agent setups where multiple MCP servers share
+the same project-root — ensures the response reaches the correct server."
+  (let ((ws (or websocket (claude-code-mcp-get-websocket project-root)))
         (response (if error
                       `((jsonrpc . "2.0")
                         (id . ,id)
@@ -75,10 +78,10 @@
                     `((jsonrpc . "2.0")
                       (id . ,id)
                       (result . ,result)))))
-    (if websocket
+    (if ws
         (condition-case send-err
             (progn
-              (websocket-send-text websocket (json-encode response))
+              (websocket-send-text ws (json-encode response))
               (message "📤 [RESPONSE] Sent for request: %s (error: %s)" id (if error "yes" "no")))
           (error
            (message "❌ [RESPONSE] Failed to send response for %s: %s" id (error-message-string send-err))))
@@ -86,8 +89,9 @@
 
 ;;; Message Handling
 
-(defun claude-code-mcp-handle-message (message project-root)
-  "Handle incoming JSON-RPC MESSAGE for PROJECT-ROOT."
+(defun claude-code-mcp-handle-message (message project-root &optional websocket)
+  "Handle incoming JSON-RPC MESSAGE for PROJECT-ROOT.
+WEBSOCKET is the connection that received this message."
   (condition-case err
       (let* ((json-object-type 'alist)
              (json-array-type 'list)
@@ -99,7 +103,7 @@
 
          ;; Request from server (check method first)
          ((assoc 'method msg)
-          (claude-code-mcp-handle-request msg project-root))
+          (claude-code-mcp-handle-request msg project-root websocket))
 
          ;; Response to our request
          ((assoc 'id msg)
@@ -118,8 +122,10 @@
     (error
      (message "Error handling MCP message: %s" err))))
 
-(defun claude-code-mcp-handle-request (request project-root)
-  "Handle incoming REQUEST from MCP server for PROJECT-ROOT."
+(defun claude-code-mcp-handle-request (request project-root &optional websocket)
+  "Handle incoming REQUEST from MCP server for PROJECT-ROOT.
+WEBSOCKET is the connection that received this request — responses
+are sent back on this exact connection to avoid cross-agent routing."
   (let* ((id (cdr (assoc 'id request)))
          (method (cdr (assoc 'method request)))
          (params (cdr (assoc 'params request)))
@@ -140,30 +146,30 @@
                     ;; Store pending async request
                     (claude-code-mcp-store-async-request id async-id project-root)
                     ;; Execute async operation with callback
-                    (funcall async-callback 
+                    (funcall async-callback
                              (lambda (async-result)
                                (message "🔄 [ASYNC] Operation completed: %s, sending response..." async-id)
                                ;; Send response when async completes
                                (condition-case callback-err
                                    (progn
-                                     (claude-code-mcp-send-response id async-result nil project-root)
+                                     (claude-code-mcp-send-response id async-result nil project-root websocket)
                                      (message "✅ [ASYNC] Response sent successfully for: %s" async-id))
                                  (error
                                   (message "❌ [ASYNC] Failed to send response for %s: %s" async-id (error-message-string callback-err))))
                                (claude-code-mcp-remove-async-request id project-root))))
                 ;; Synchronous result - send immediately
                 (message "🔄 [SYNC] Sending immediate response for request: %s" id)
-                (claude-code-mcp-send-response id result nil project-root)))
+                (claude-code-mcp-send-response id result nil project-root websocket)))
           (error
            (message "Error in handler %s: %s" handler err)
            (claude-code-mcp-send-response id nil
                                                 `((code . -32603)
                                                   (message . ,(error-message-string err)))
-                                                project-root)))
+                                                project-root websocket)))
       (claude-code-mcp-send-response id nil
                                            `((code . -32601)
                                              (message . ,(format "Method not found: %s" method)))
-                                           project-root))))
+                                           project-root websocket))))
 
 ;;; Async Request Management
 
@@ -214,11 +220,11 @@
 
 ;;; WebSocket Event Handlers
 
-(defun claude-code-mcp-on-message (_websocket frame project-root)
-  "Handle incoming WebSocket message for PROJECT-ROOT."
+(defun claude-code-mcp-on-message (websocket frame project-root)
+  "Handle incoming WebSocket message on WEBSOCKET for PROJECT-ROOT."
   (let ((payload (websocket-frame-text frame)))
     (when payload
-      (claude-code-mcp-handle-message payload project-root))))
+      (claude-code-mcp-handle-message payload project-root websocket))))
 
 (defun claude-code-mcp-on-error (_websocket type error &optional _project-root)
   "Handle WebSocket error."

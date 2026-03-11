@@ -401,28 +401,17 @@ TITLE and MESSAGE are the notification content."
                                   (format "WARNING: target %s buffer is dead, message dropped"
                                           target-role))))))))
 
-;;; Message delivery via ACP session/prompt
+;;; Message delivery via shell-maker-submit
 
 (defun agent-shell-team--prompt-agent (buffer message)
-  "Deliver MESSAGE to BUFFER's agent via ACP session/prompt.
-MESSAGE is a string that will be wrapped in a text content block."
+  "Deliver MESSAGE to BUFFER's agent via shell-maker-submit.
+This goes through shell-maker's normal prompt flow so that:
+- The message appears in the shell buffer
+- shell-maker--busy is set correctly
+- ACP notifications render in-buffer instead of as stale minibuffer messages."
   (when (buffer-live-p buffer)
     (with-current-buffer buffer
-      (when (and (boundp 'agent-shell--state)
-                 agent-shell--state)
-        (let ((session-id (map-nested-elt agent-shell--state '(:session :id)))
-              (client (map-elt agent-shell--state :client)))
-          (when (and session-id client)
-            ;; Wrap string in a content block list — acp-make-session-prompt-request
-            ;; uses vconcat, which on a string produces a byte vector instead of
-            ;; a vector of content objects
-            (let ((content-blocks (list `((type . "text") (text . ,message)))))
-              (acp-send-request
-               :client client
-               :request (acp-make-session-prompt-request
-                         :session-id session-id
-                         :prompt content-blocks)
-               :buffer buffer))))))))
+      (shell-maker-submit :input message))))
 
 ;;; Message queue & drain
 
