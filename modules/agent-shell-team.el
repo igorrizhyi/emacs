@@ -99,6 +99,19 @@ Uses `org-id-uuid' if available, falls back to uuidgen."
   "Return first 4 chars of SESSION-ID for display."
   (substring session-id 0 (min 4 (length session-id))))
 
+(defun agent-shell-team--generate-request-id ()
+  "Generate a short unique request ID for task tracking."
+  (substring (agent-shell-team--generate-session-id) 0 8))
+
+(defun agent-shell-team--reports-dir (session-id)
+  "Return reports directory for SESSION-ID, creating it if needed."
+  (let ((dir (expand-file-name
+              (format ".agent-shell/reports/%s/" session-id)
+              (or (projectile-project-root) default-directory))))
+    (unless (file-directory-p dir)
+      (make-directory dir t))
+    dir))
+
 ;;; Registry functions
 
 (defun agent-shell-team--register-agent (session-id buffer role mode &optional worktree worktree-name)
@@ -239,7 +252,13 @@ You own ALL task decomposition. When you receive a broad task:
    title: \"Need More Agents\", message: \"N subtasks pending, only M devs available\"
 4. Track which subtasks belong to the same parent task so you know when
    ALL subtasks are done before requesting a test run.
-Devs never split tasks — they receive atomic units and execute them."
+Devs never split tasks — they receive atomic units and execute them.
+
+## Reports
+Task assignments include a Request ID and a report file path.
+When an agent reports completion, their message includes a path to a detailed
+report file (.agent-shell/reports/{session-id}/{request-id}.md).
+ALWAYS read the report file to review the agent's work before proceeding."
           session-id))
 
 (defun agent-shell-team--dev-prompt (session-id worktree-path worktree-name)
@@ -250,9 +269,11 @@ Your working directory is a git worktree: %s
 Your responsibilities:
 - Implement the assigned task
 - Commit your work when done (git add + git commit)
+- Write a detailed report to the file path specified in your task assignment
+  Include: what was done, files changed, any issues or decisions made
 - Signal completion by calling sendNotification with:
   title: \"Task Complete\"
-  message: \"dev:%s finished: {brief description}\"
+  message: \"dev:%s finished: {brief description} [Request ID: {id from assignment}]\"
 - If you need logs or test output, request it via sendNotification:
   title: \"Need Verification\"
   message: \"Please run X and report results\"
@@ -267,9 +288,11 @@ WORKTREE-PATH is the tester's workspace."
 Mode: isolated (own worktree: %s)
 Your responsibilities:
 - Run the test suite on the merged code in your worktree
+- Write a detailed report to the file path specified in your test request
+  Include: tests run, pass/fail counts, failure details, logs
 - Report results via sendNotification:
   title: \"Test Results\"
-  message: \"PASS\" or \"FAIL: {details}\"
+  message: \"PASS\" or \"FAIL: {details} [Request ID: {id from request}]\"
 - If tests fail, provide detailed diagnostics"
           session-id worktree-path))
 
@@ -283,9 +306,11 @@ Your responsibilities:
 - Run commands to gather information: tests, linters, builds, curl, browser checks
 - Tail log files, inspect running processes, check runtime state
 - Grab screenshots or console output from browser if needed
+- Write a detailed report to the file path specified in your test request
+  Include: commands run, outputs, pass/fail summary, observations
 - Report findings via sendNotification:
   title: \"Log Report\" / \"Test Results\" / \"Runtime Check\"
-  message: \"{detailed findings}\"
+  message: \"{brief summary} [Request ID: {id from request}]\"
 - You are the team's eyes and hands for observation. Run, observe, report."
           session-id working-dir))
 
@@ -323,6 +348,23 @@ with append mode, so the role prompt is appended to the agent's default system p
    :event 'tool-call-update
    :on-event #'agent-shell-team--on-tool-call-update))
 
+(defun agent-shell-team--extract-request-id (message)
+  "Extract request ID from MESSAGE if present.
+Looks for pattern [Request ID: XXXXXXXX] in the text."
+  (when (and message (string-match "\\[Request ID: \\([a-f0-9-]+\\)\\]" message))
+    (match-string 1 message)))
+
+(defun agent-shell-team--enrich-completion-message (session-id message)
+  "If MESSAGE contains a request ID, append the report file path.
+This helps the lead find and read the report."
+  (let ((request-id (agent-shell-team--extract-request-id message)))
+    (if request-id
+        (let ((report-path (expand-file-name
+                            (concat request-id ".md")
+                            (agent-shell-team--reports-dir session-id))))
+          (format "%s\n\nReport file: %s" message report-path))
+      message)))
+
 (defun agent-shell-team--on-tool-call-update (event)
   "Handle tool-call-update EVENT. Route sendNotification calls between team agents."
   (let* ((data (map-elt event :data))
@@ -335,16 +377,22 @@ with append mode, so the role prompt is appended to the agent's default system p
                (string-match-p "sendNotification" tool-title)
                (equal status "completed")
                agent-shell-team--session-id)
-      (let ((notif-title (or (map-elt raw-input 'title)
-                             (map-elt raw-input "title")))
-            (notif-message (or (map-elt raw-input 'message)
-                               (map-elt raw-input "message"))))
-        (when (and notif-title notif-message)
+      (let* ((notif-title (or (map-elt raw-input 'title)
+                              (map-elt raw-input "title")))
+             (notif-message (or (map-elt raw-input 'message)
+                                (map-elt raw-input "message")))
+             ;; For completion notifications, enrich with report path
+             (enriched-message
+              (if (member notif-title '("Task Complete" "Test Results"))
+                  (agent-shell-team--enrich-completion-message
+                   agent-shell-team--session-id notif-message)
+                notif-message)))
+        (when (and notif-title enriched-message)
           (agent-shell-team--route-from-acp
            agent-shell-team--session-id
            agent-shell-team--role
            notif-title
-           notif-message))))))
+           enriched-message))))))
 
 ;;; Routing logic — infer target from sender role + notification title
 
@@ -385,28 +433,39 @@ SESSION-ID identifies the team.
 FROM-ROLE is the sender's role.
 TARGET-ROLE is the inferred recipient (\"lead\", \"dev\", \"tester\", or \"all\").
 TITLE and MESSAGE are the notification content."
-  ;; Log
-  (agent-shell-team--log session-id
-                         (format "[%s -> %s] %s: %s" from-role target-role title message))
-  ;; Find target agent(s)
-  (let ((targets (if (equal target-role "all")
-                     (agent-shell-team--get-session-agents session-id)
-                   (agent-shell-team--get-agents-by-role session-id target-role))))
-    ;; Deliver or queue per target
-    (dolist (agent targets)
-      (let* ((buf (alist-get 'buffer agent))
-             (status (agent-shell-team--agent-status buf)))
-        (pcase status
-          ('idle
-           (agent-shell-team--prompt-agent
-            buf (format "Message from %s: %s -- %s" from-role title message)))
-          ('busy
-           (agent-shell-team--queue-message
-            session-id buf (list :from from-role :title title :message message)))
-          ('dead
-           (agent-shell-team--log session-id
-                                  (format "WARNING: target %s buffer is dead, message dropped"
-                                          target-role))))))))
+  ;; For task assignments and test requests, inject a request ID and report path
+  (let* ((needs-report (member title '("Task Assignment" "Run Tests")))
+         (request-id (when needs-report (agent-shell-team--generate-request-id)))
+         (reports-dir (when needs-report (agent-shell-team--reports-dir session-id)))
+         (report-path (when request-id (expand-file-name (concat request-id ".md") reports-dir)))
+         (enriched-message
+          (if request-id
+              (format "%s\n\n[Request ID: %s]\nWrite your detailed report to: %s\nReference this Request ID in your completion notification."
+                      message request-id report-path)
+            message)))
+    ;; Log
+    (agent-shell-team--log session-id
+                           (format "[%s -> %s] %s: %s%s" from-role target-role title message
+                                   (if request-id (format " (request: %s)" request-id) "")))
+    ;; Find target agent(s)
+    (let ((targets (if (equal target-role "all")
+                       (agent-shell-team--get-session-agents session-id)
+                     (agent-shell-team--get-agents-by-role session-id target-role))))
+      ;; Deliver or queue per target
+      (dolist (agent targets)
+        (let* ((buf (alist-get 'buffer agent))
+               (status (agent-shell-team--agent-status buf)))
+          (pcase status
+            ('idle
+             (agent-shell-team--prompt-agent
+              buf (format "Message from %s: %s -- %s" from-role title enriched-message)))
+            ('busy
+             (agent-shell-team--queue-message
+              session-id buf (list :from from-role :title title :message enriched-message)))
+            ('dead
+             (agent-shell-team--log session-id
+                                    (format "WARNING: target %s buffer is dead, message dropped"
+                                            target-role)))))))))
 
 ;;; Message delivery
 
