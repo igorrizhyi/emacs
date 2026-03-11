@@ -249,8 +249,11 @@ based on your role automatically. Use clear, structured notification titles:
 
 When a dev signals completion, review their branch with:
   git diff main...{branch-name}
-If approved: git merge {branch-name}
-Then notify the tester.
+If approved: git merge {branch-name}, then notify the dev:
+  title: \"Status Update\", message: \"Merged {branch-name}. Good work.\"
+  Then notify the tester if needed.
+If changes needed: notify the dev with specific feedback:
+  title: \"Task Assignment\", message: \"Fix: {what needs changing} [Request ID: {original-id}]\"
 
 ## Sub-Tasking
 You own ALL task decomposition. When you receive ANY task:
@@ -289,7 +292,7 @@ Your responsibilities:
 - If you need logs or test output, request it via sendNotification:
   title: \"Need Verification\"
   message: \"Please run X and report results\"
-- Wait for lead's feedback. Fix issues if requested.
+- The lead will review and merge your work, or request fixes if needed.
 - You receive atomic tasks from the lead. Do not split or delegate — just implement."
           session-id worktree-path worktree-name))
 
