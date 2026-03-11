@@ -15,10 +15,11 @@
 
 ;; Multi-agent team orchestration layer on top of agent-shell-emacs-mcp.
 ;;
-;; Supports three roles:
+;; Supports four roles:
 ;;   - lead: Supervisor — reviews, merges, dispatches, assigns tasks
 ;;   - dev: Implements features in isolated worktrees
 ;;   - tester: Runs tests/validation, reports results
+;;   - researcher: Explores codebase, finds code, answers questions about the project
 ;;
 ;; Two cooperation modes:
 ;;   - isolated: Agent gets its own git worktree
@@ -58,7 +59,7 @@ without prompting for confirmation."
   "UUID grouping this agent with its team.")
 
 (defvar-local agent-shell-team--role nil
-  "Role: dev, lead, or tester.")
+  "Role: dev, lead, tester, or researcher.")
 
 (defvar-local agent-shell-team--mode nil
   "Mode: isolated or neighbor.")
@@ -117,7 +118,7 @@ Uses `org-id-uuid' if available, falls back to uuidgen."
 (defun agent-shell-team--register-agent (session-id buffer role mode &optional worktree worktree-name)
   "Register an agent in the team SESSION-ID.
 BUFFER is the agent-shell buffer.
-ROLE is \"lead\", \"dev\", or \"tester\".
+ROLE is \"lead\", \"dev\", \"tester\", or \"researcher\".
 MODE is \"isolated\" or \"neighbor\".
 WORKTREE is the worktree path (for isolated mode).
 WORKTREE-NAME is the worktree name (for isolated mode)."
@@ -225,17 +226,25 @@ Format: *team:{session-short}:{role}:{worktree-name-or-main}*"
 (defun agent-shell-team--lead-prompt (session-id)
   "Generate lead system prompt for SESSION-ID."
   (format "You are the LEAD agent in a team session %s.
+
+## CRITICAL RULE: You are a MANAGER, not an implementer.
+NEVER write code, edit files, or implement tasks yourself.
+Your ONLY job is to decompose work, delegate to dev agents, review results,
+and coordinate the team. When you receive a task from the user, IMMEDIATELY
+break it down and assign subtasks to dev agents via sendNotification.
+Do NOT ask the user whether to delegate — just do it. That is your purpose.
+
 Your responsibilities:
+- Decompose tasks and assign them to dev agents immediately
 - Review commits from dev agents when they notify you
 - Merge approved worktree branches to the main branch
 - Dispatch tester agents to validate merged code
-- Assign new tasks to idle dev agents
-- Handle task decomposition (see Sub-Tasking below)
 
 Use sendNotification to communicate with other agents. Emacs routes messages
 based on your role automatically. Use clear, structured notification titles:
 - \"Task Assignment\" — assign work to a dev
 - \"Run Tests\" — request testing
+- \"Research Request\" — ask researcher to find/analyze something
 - \"Status Update\" — broadcast to all
 
 When a dev signals completion, review their branch with:
@@ -244,8 +253,8 @@ If approved: git merge {branch-name}
 Then notify the tester.
 
 ## Sub-Tasking
-You own ALL task decomposition. When you receive a broad task:
-1. Break it into atomic, independently implementable subtasks
+You own ALL task decomposition. When you receive ANY task:
+1. IMMEDIATELY break it into atomic, independently implementable subtasks
 2. Assign each subtask to an idle dev via sendNotification:
    title: \"Task Assignment\", message: \"Subtask: {description}\"
 3. If no idle devs are available, notify:
@@ -253,6 +262,9 @@ You own ALL task decomposition. When you receive a broad task:
 4. Track which subtasks belong to the same parent task so you know when
    ALL subtasks are done before requesting a test run.
 Devs never split tasks — they receive atomic units and execute them.
+NEVER implement subtasks yourself — always delegate to dev agents.
+Use the researcher agent when you need codebase exploration, finding files,
+or understanding code before assigning tasks to devs.
 
 ## Reports
 Task assignments include a Request ID and a report file path.
@@ -314,6 +326,24 @@ Your responsibilities:
 - You are the team's eyes and hands for observation. Run, observe, report."
           session-id working-dir))
 
+(defun agent-shell-team--researcher-prompt (session-id working-dir)
+  "Generate researcher prompt for SESSION-ID.
+WORKING-DIR is the shared directory."
+  (format "You are a RESEARCHER agent in a team session %s.
+Mode: neighbor (shared directory: %s)
+You are a READ-ONLY assistant. Do NOT modify source files or create commits.
+Your responsibilities:
+- Explore the codebase to find files, code patterns, and architecture
+- Read and analyze source code to answer questions
+- Search for specific implementations, definitions, or usages
+- Write a detailed report to the file path specified in your research request
+  Include: findings, relevant file paths with line numbers, code snippets, analysis
+- Report findings via sendNotification:
+  title: \"Research Complete\"
+  message: \"{brief summary of findings} [Request ID: {id from request}]\"
+- You are the team's knowledge scout. Search, read, analyze, report."
+          session-id working-dir))
+
 (defun agent-shell-team--get-system-prompt (role mode session-id &optional worktree-path worktree-name working-dir)
   "Generate system prompt for ROLE in MODE within SESSION-ID.
 WORKTREE-PATH, WORKTREE-NAME, WORKING-DIR depend on role/mode."
@@ -322,7 +352,8 @@ WORKTREE-PATH, WORKTREE-NAME, WORKING-DIR depend on role/mode."
     ("dev" (agent-shell-team--dev-prompt session-id worktree-path worktree-name))
     ("tester" (pcase mode
                 ("isolated" (agent-shell-team--tester-isolated-prompt session-id worktree-path))
-                (_ (agent-shell-team--tester-neighbor-prompt session-id (or working-dir default-directory)))))))
+                (_ (agent-shell-team--tester-neighbor-prompt session-id (or working-dir default-directory)))))
+    ("researcher" (agent-shell-team--researcher-prompt session-id (or working-dir default-directory)))))
 
 ;;; ACP request decorator — inject systemPrompt at session creation
 
@@ -383,7 +414,7 @@ This helps the lead find and read the report."
                                 (map-elt raw-input "message")))
              ;; For completion notifications, enrich with report path
              (enriched-message
-              (if (member notif-title '("Task Complete" "Test Results"))
+              (if (member notif-title '("Task Complete" "Test Results" "Research Complete"))
                   (agent-shell-team--enrich-completion-message
                    agent-shell-team--session-id notif-message)
                 notif-message)))
@@ -410,10 +441,14 @@ This helps the lead find and read the report."
        ("Log Report" "lead")
        ("Runtime Check" "lead")
        (_ "lead")))
+    ("researcher"
+     (pcase title
+       (_ "lead")))
     ("lead"
      (pcase title
        ("Task Assignment" "dev")
        ("Run Tests" "tester")
+       ("Research Request" "researcher")
        ("Status Update" "all")
        ("Need More Agents" "all")
        (_ "all")))))
@@ -434,7 +469,7 @@ FROM-ROLE is the sender's role.
 TARGET-ROLE is the inferred recipient (\"lead\", \"dev\", \"tester\", or \"all\").
 TITLE and MESSAGE are the notification content."
   ;; For task assignments and test requests, inject a request ID and report path
-  (let* ((needs-report (member title '("Task Assignment" "Run Tests")))
+  (let* ((needs-report (member title '("Task Assignment" "Run Tests" "Research Request")))
          (request-id (when needs-report (agent-shell-team--generate-request-id)))
          (reports-dir (when needs-report (agent-shell-team--reports-dir session-id)))
          (report-path (when request-id (expand-file-name (concat request-id ".md") reports-dir)))
@@ -579,7 +614,7 @@ _SESSION-ID is unused but kept for consistency."
 (defun agent-shell-team--start-agent (session-id role mode &optional directory worktree-path worktree-name)
   "Start a team agent and return its buffer.
 SESSION-ID is the team session UUID.
-ROLE is \"lead\", \"dev\", or \"tester\".
+ROLE is \"lead\", \"dev\", \"tester\", or \"researcher\".
 MODE is \"isolated\" or \"neighbor\".
 DIRECTORY is the working directory.
 WORKTREE-PATH and WORKTREE-NAME are for isolated mode."
@@ -694,11 +729,11 @@ When called from an existing team buffer:
          (session-id (if in-team-buffer
                          agent-shell-team--session-id
                        (agent-shell-team--generate-session-id)))
-         (role (completing-read "Role: " '("lead" "dev" "tester") nil t))
-         (mode (if (and in-team-buffer (not (equal role "lead")))
-                   (completing-read "Mode: " '("isolated" "neighbor") nil t)
-                 (if (equal role "lead")
-                     "neighbor"  ;; Lead always works on main tree
+         (role (completing-read "Role: " '("lead" "dev" "tester" "researcher") nil t))
+         (mode (if (member role '("lead" "researcher"))
+                   "neighbor"  ;; Lead and researcher always work on main tree
+                 (if in-team-buffer
+                     (completing-read "Mode: " '("isolated" "neighbor") nil t)
                    "isolated"))) ;; Default to isolated for new sessions
          (parent-dir default-directory)
          worktree-path worktree-name directory)
