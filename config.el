@@ -656,7 +656,7 @@
   (setq corfu-cycle t           ;; Enable cycling for `corfu-next/previous'
         corfu-preselect 'prompt ;; Always preselect the prompt
         ;; Popup positioning controls
-        corfu-min-width 50      ;; Minimum width of the popup
+        corfu-min-width 80      ;; Minimum width of the popup
         corfu-max-width 100     ;; Maximum width of the popup
         corfu-count 5          ;; More candidates shown
         corfu-scroll-margin 2   ;; Number of lines at the top/bottom during scrolling

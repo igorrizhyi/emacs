@@ -45,6 +45,13 @@
   :group 'agent-shell
   :prefix "agent-shell-team-")
 
+(defcustom agent-shell-team-skip-permissions nil
+  "When non-nil, spawn team agents with --dangerously-skip-permissions.
+This gives agents full trust to edit files, run commands, etc.
+without prompting for confirmation."
+  :type 'boolean
+  :group 'agent-shell-team)
+
 ;;; Buffer-local variables
 
 (defvar-local agent-shell-team--session-id nil
@@ -401,7 +408,7 @@ TITLE and MESSAGE are the notification content."
                                   (format "WARNING: target %s buffer is dead, message dropped"
                                           target-role))))))))
 
-;;; Message delivery via shell-maker-submit
+;;; Message delivery
 
 (defun agent-shell-team--prompt-agent (buffer message)
   "Deliver MESSAGE to BUFFER's agent via shell-maker-submit.
@@ -412,6 +419,25 @@ This goes through shell-maker's normal prompt flow so that:
   (when (buffer-live-p buffer)
     (with-current-buffer buffer
       (shell-maker-submit :input message))))
+
+(defun agent-shell-team--prompt-agent-silent (buffer message)
+  "Deliver MESSAGE to BUFFER's agent via raw ACP request.
+The message is processed by the LLM but does not appear in the shell buffer.
+Use for background context like team roster updates and announcements."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (when (and (boundp 'agent-shell--state)
+                 agent-shell--state)
+        (let ((session-id (map-nested-elt agent-shell--state '(:session :id)))
+              (client (map-elt agent-shell--state :client)))
+          (when (and session-id client)
+            (let ((content-blocks (list `((type . "text") (text . ,message)))))
+              (acp-send-request
+               :client client
+               :request (acp-make-session-prompt-request
+                         :session-id session-id
+                         :prompt content-blocks)
+               :buffer buffer))))))))
 
 ;;; Message queue & drain
 
@@ -498,7 +524,12 @@ ROLE is \"lead\", \"dev\", or \"tester\".
 MODE is \"isolated\" or \"neighbor\".
 DIRECTORY is the working directory.
 WORKTREE-PATH and WORKTREE-NAME are for isolated mode."
-  (let* ((buf-name (agent-shell-team--buffer-name session-id role worktree-name))
+  (let* ((agent-shell-anthropic-claude-acp-command
+          (if agent-shell-team-skip-permissions
+              (append agent-shell-anthropic-claude-acp-command
+                      '("--dangerously-skip-permissions"))
+            agent-shell-anthropic-claude-acp-command))
+         (buf-name (agent-shell-team--buffer-name session-id role worktree-name))
          (default-directory (or directory default-directory))
          (system-prompt (agent-shell-team--get-system-prompt
                          role mode session-id worktree-path worktree-name default-directory))
@@ -562,7 +593,7 @@ ROLE, MODE, and WORKTREE-NAME describe the new agent."
                    (not (eq agent-buf buffer)))
           ;; Build a team roster for context
           (let ((roster (agent-shell-team--build-roster session-id)))
-            (agent-shell-team--prompt-agent
+            (agent-shell-team--prompt-agent-silent
              agent-buf
              (format "TEAM UPDATE: A new %s agent has joined the session.\n\nCurrent team roster:\n%s"
                      role roster))))))))
