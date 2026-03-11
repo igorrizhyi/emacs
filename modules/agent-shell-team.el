@@ -272,7 +272,6 @@ based on your role automatically. Use clear, structured notification titles:
 - \"Task Assignment\" — assign work to a dev
 - \"Run Tests\" — request testing
 - \"Research Request\" — ask researcher to find/analyze something
-- \"Status Update\" — broadcast to all
 
 When a dev signals completion, review their branch with:
   git diff main...{branch-name}
