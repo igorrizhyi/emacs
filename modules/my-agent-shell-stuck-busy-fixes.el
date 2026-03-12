@@ -13,6 +13,8 @@
 
 ;;; Code:
 
+(message "agent-shell-team: stuck-busy-fixes loading...")
+
 ;; ---------------------------------------------------------------------------
 ;; Fix 1: agent-shell-interrupt — clear busy + stop heartbeat after cancel
 ;; ---------------------------------------------------------------------------
@@ -179,9 +181,16 @@ the busy flag, and writes a fresh prompt so the user can continue."
   (defun shell-maker--set-pm (pos)
     "Set the process mark in the current buffer to POS.
 Guarded against nil process."
-    (when-let ((proc (get-buffer-process
-                      (shell-maker-buffer shell-maker--config))))
-      (set-marker (process-mark proc) pos))))
+    (let ((proc (get-buffer-process
+                 (shell-maker-buffer shell-maker--config))))
+      (unless proc
+        (message "agent-shell-team: shell-maker--set-pm called with nil process in %s"
+                 (current-buffer)))
+      (when proc
+        (set-marker (process-mark proc) pos))))
+  (message "agent-shell-team: shell-maker--set-pm guarded"))
+
+(message "agent-shell-team: stuck-busy-fixes loaded")
 
 (provide 'my-agent-shell-stuck-busy-fixes)
 ;;; my-agent-shell-stuck-busy-fixes.el ends here

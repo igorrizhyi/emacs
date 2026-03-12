@@ -749,6 +749,9 @@ This goes through shell-maker's normal prompt flow so that:
 - shell-maker--busy is set correctly
 - ACP notifications render in-buffer instead of as stale minibuffer messages."
   (when (buffer-live-p buffer)
+    (message "agent-shell-team: prompt-agent to %s (process=%s, status=%s)"
+             (buffer-name buffer) (get-buffer-process buffer)
+             (agent-shell-team--agent-status buffer))
     (with-current-buffer buffer
       (shell-maker-submit :input (format "«TEAM»\n%s\n«/TEAM»" message)))))
 
@@ -859,6 +862,7 @@ ROLE is \"lead\", \"dev\", \"tester\", or \"researcher\".
 MODE is \"isolated\" or \"neighbor\".
 DIRECTORY is the working directory.
 WORKTREE-PATH and WORKTREE-NAME are for isolated mode."
+  (message "agent-shell-team: start-agent called for role=%s mode=%s" role mode)
   (let* ((agent-shell-anthropic-claude-acp-command
           (if agent-shell-team-skip-permissions
               (append agent-shell-anthropic-claude-acp-command
@@ -868,32 +872,39 @@ WORKTREE-PATH and WORKTREE-NAME are for isolated mode."
          (default-directory (or directory default-directory))
          (system-prompt (agent-shell-team--get-system-prompt
                          role mode session-id worktree-path worktree-name default-directory))
-         (config (agent-shell-team--make-config session-id role buf-name))
-         ;; Use agent-shell--start directly to force session-strategy 'new
-         ;; This prevents hanging on session selection prompts
-         (buffer (agent-shell--start
-                  :config config
-                  :no-focus nil
-                  :new-session t
-                  :session-strategy 'new
-                  :outgoing-request-decorator
-                  (agent-shell-team--make-request-decorator system-prompt))))
-    ;; Register in team session
-    (agent-shell-team--register-agent session-id buffer role mode worktree-path worktree-name)
-    ;; Subscribe to tool-call-update events for notification routing
-    ;; and notify existing team members about the new agent
-    (agent-shell-subscribe-to
-     :shell-buffer buffer
-     :event 'init-finished
-     :on-event (lambda (_event)
-                 (agent-shell-team--setup-tool-call-watcher buffer)
-                 ;; Notify existing agents about the new team member
-                 (agent-shell-team--announce-agent session-id buffer role mode worktree-name)
-                 ;; Activate custom doom-modeline
-                 (when (fboundp 'doom-modeline-set-modeline)
-                   (with-current-buffer buffer
-                     (doom-modeline-set-modeline 'agent-shell-team)))))
-    buffer))
+         (config (agent-shell-team--make-config session-id role buf-name)))
+    (message "agent-shell-team: about to call agent-shell--start with buffer-name=%s" buf-name)
+    (let ((buffer (agent-shell--start
+                   :config config
+                   :no-focus nil
+                   :new-session t
+                   :session-strategy 'new
+                   :outgoing-request-decorator
+                   (agent-shell-team--make-request-decorator system-prompt))))
+      (message "agent-shell-team: agent-shell--start returned buffer=%s (process=%s)"
+               buffer (get-buffer-process buffer))
+      ;; Register in team session
+      (message "agent-shell-team: registering agent...")
+      (agent-shell-team--register-agent session-id buffer role mode worktree-path worktree-name)
+      (message "agent-shell-team: agent registered")
+      ;; Subscribe to tool-call-update events for notification routing
+      ;; and notify existing team members about the new agent
+      (agent-shell-subscribe-to
+       :shell-buffer buffer
+       :event 'init-finished
+       :on-event (lambda (_event)
+                   (message "agent-shell-team: init-finished fired for %s (process=%s)"
+                            buffer (get-buffer-process buffer))
+                   (message "agent-shell-team: setting up watcher...")
+                   (agent-shell-team--setup-tool-call-watcher buffer)
+                   (message "agent-shell-team: announcing agent...")
+                   (agent-shell-team--announce-agent session-id buffer role mode worktree-name)
+                   ;; Activate custom doom-modeline
+                   (when (fboundp 'doom-modeline-set-modeline)
+                     (with-current-buffer buffer
+                       (doom-modeline-set-modeline 'agent-shell-team)))
+                   (message "agent-shell-team: init-finished complete for %s" buffer)))
+      buffer)))
 
 (defun agent-shell-team--make-config (session-id role buffer-name)
   "Create agent-shell config for a team agent.
@@ -983,17 +994,23 @@ When called from an existing team buffer:
          (parent-dir default-directory)
          worktree-path worktree-name directory)
 
+    (message "agent-shell-team: start called, session=%s role=%s mode=%s"
+             (agent-shell-team--short-session-id session-id) role mode)
+
     ;; Determine working directory
     (pcase mode
       ("isolated"
+       (message "agent-shell-team: creating worktree for %s..." role)
        (let ((wt (agent-shell-team--create-worktree session-id role)))
          (setq worktree-path (car wt)
                worktree-name (cdr wt)
-               directory worktree-path)))
+               directory worktree-path)
+         (message "agent-shell-team: worktree created: %s" worktree-name)))
       ("neighbor"
        (setq directory parent-dir)))
 
     ;; Start the agent
+    (message "agent-shell-team: spawning %s agent..." role)
     (let ((buffer (agent-shell-team--start-agent
                    session-id role mode directory worktree-path worktree-name)))
       ;; Start drain timer if we have team agents
