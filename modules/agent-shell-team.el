@@ -210,10 +210,17 @@ WORKTREE-NAME is the worktree name (for isolated mode)."
 
 ;;; Agent status
 
+(defun agent-shell-team--buffer-ready-p (buffer)
+  "Check if BUFFER has a live comint process (ready for shell-maker-submit)."
+  (and (buffer-live-p buffer)
+       (get-buffer-process buffer)
+       (process-live-p (get-buffer-process buffer))))
+
 (defun agent-shell-team--agent-status (buffer)
-  "Determine if BUFFER's agent is idle, busy, or dead."
+  "Determine if BUFFER's agent is idle, busy, initializing, or dead."
   (cond
    ((not (buffer-live-p buffer)) 'dead)
+   ((not (agent-shell-team--buffer-ready-p buffer)) 'initializing)
    ((agent-shell-team--buffer-busy-p buffer) 'busy)
    (t 'idle)))
 
@@ -600,7 +607,7 @@ TITLE and MESSAGE are the notification content."
             ('idle
              (agent-shell-team--prompt-agent
               buf (format "Message from %s: %s -- %s" from-role title enriched-message)))
-            ('busy
+            ((or 'busy 'initializing)
              (agent-shell-team--queue-message
               session-id buf (list :from from-role :title title :message enriched-message)))
             ('dead
@@ -726,12 +733,12 @@ SESSION-ID identifies the team.  GROUP contains the completed request IDs."
                              (string-join report-lines "\n"))))
         (agent-shell-team--log session-id
                                (format "[group %s] ALL COMPLETE, notifying lead" group-id))
-        (if (agent-shell-team--buffer-busy-p lead-buf)
-            (agent-shell-team--queue-message
-             session-id lead-buf
-             (list :from "system" :title "Group Complete" :message message))
-          (agent-shell-team--prompt-agent
-           lead-buf (format "Group Complete -- %s" message)))))))
+        (if (eq (agent-shell-team--agent-status lead-buf) 'idle)
+            (agent-shell-team--prompt-agent
+             lead-buf (format "Group Complete -- %s" message))
+          (agent-shell-team--queue-message
+           session-id lead-buf
+           (list :from "system" :title "Group Complete" :message message)))))))
 
 ;;; Message delivery
 
@@ -820,10 +827,9 @@ _SESSION-ID is unused but kept for consistency."
 
 (defun agent-shell-team--check-all-queues ()
   "Check all queued messages and tasks, drain idle agents, assign pending tasks."
-  ;; Drain message queues for idle agents
+  ;; Drain message queues for idle agents (skip initializing and busy)
   (maphash (lambda (buffer _messages)
-             (when (and (buffer-live-p buffer)
-                        (not (agent-shell-team--buffer-busy-p buffer)))
+             (when (eq (agent-shell-team--agent-status buffer) 'idle)
                (agent-shell-team--drain-queue buffer)))
            agent-shell-team--message-queue)
   ;; Try to assign pending tasks
@@ -1015,6 +1021,7 @@ When called from an existing team buffer:
                 (status-str (pcase status
                               ('idle "  idle")
                               ('busy "* busy")
+                              ('initializing "~ init")
                               ('dead "x dead"))))
            (push (format "  [%-6s] %-40s %s"
                          role
