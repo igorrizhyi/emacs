@@ -43,7 +43,7 @@ Wraps the process sentinel to resolve pending requests before cleanup."
     (apply orig-fn args)
     ;; After the original runs, the process is stored on the client.
     ;; We replace its sentinel with one that first drains pending requests.
-    (let* ((client (plist-get (car args) :client))
+    (let* ((client (plist-get args :client))
            (process (map-elt client :process))
            (orig-sentinel (process-sentinel process)))
       (set-process-sentinel
