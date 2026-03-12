@@ -837,7 +837,19 @@ Use for background context like team roster updates and announcements."
                :request (acp-make-session-prompt-request
                          :session-id session-id
                          :prompt content-blocks)
-               :buffer buffer))))))))
+               :buffer buffer
+               :on-success (lambda (_acp-response)
+                             (when (buffer-live-p buffer)
+                               (with-current-buffer buffer
+                                 (shell-maker-finish-output
+                                  :config shell-maker--config
+                                  :success t))))
+               :on-failure (lambda (_acp-error &optional _raw-message)
+                             (when (buffer-live-p buffer)
+                               (with-current-buffer buffer
+                                 (shell-maker-finish-output
+                                  :config shell-maker--config
+                                  :success nil)))))))))))
 
 ;;; Message queue & drain
 
@@ -881,6 +893,13 @@ _SESSION-ID is unused but kept for consistency."
 (defvar agent-shell-team--drain-timer nil
   "Timer for periodic queue drain checks.")
 
+(defvar agent-shell-team--busy-since (make-hash-table :test 'equal)
+  "Buffer -> timestamp (float-time) when the agent was first seen busy.
+Used by `agent-shell-team--check-all-queues' to detect stuck-busy agents.")
+
+(defconst agent-shell-team--stuck-busy-timeout 90
+  "Seconds after which a continuously busy agent is force-reset.")
+
 (defun agent-shell-team--start-drain-timer ()
   "Start periodic drain timer."
   (unless agent-shell-team--drain-timer
@@ -894,8 +913,36 @@ _SESSION-ID is unused but kept for consistency."
     (setq agent-shell-team--drain-timer nil)))
 
 (defun agent-shell-team--check-all-queues ()
-  "Check all queued messages and tasks, drain idle agents, assign pending tasks."
-  ;; Drain message queues for idle agents (skip busy and initializing)
+  "Check all queued messages and tasks, drain idle agents, assign pending tasks.
+Also detects agents stuck in busy state longer than
+`agent-shell-team--stuck-busy-timeout' seconds and force-resets them."
+  ;; --- Stuck-busy detection across all sessions ---
+  (maphash
+   (lambda (_session-id agents)
+     (dolist (agent agents)
+       (let ((buf (alist-get 'buffer agent)))
+         (when (buffer-live-p buf)
+           (let ((status (agent-shell-team--agent-status buf)))
+             (if (eq status 'busy)
+                 (let ((since (gethash buf agent-shell-team--busy-since)))
+                   (if since
+                       ;; Already tracked — check if stuck
+                       (when (> (- (float-time) since)
+                                agent-shell-team--stuck-busy-timeout)
+                         (message "[agent-shell-team] Force-resetting stuck-busy agent %s (busy for %ds)"
+                                  (buffer-name buf)
+                                  (round (- (float-time) since)))
+                         (remhash buf agent-shell-team--busy-since)
+                         (with-current-buffer buf
+                           (shell-maker-finish-output
+                            :config shell-maker--config
+                            :success nil)))
+                     ;; First time seeing this agent busy — record timestamp
+                     (puthash buf (float-time) agent-shell-team--busy-since)))
+               ;; Agent is not busy — clear any tracked timestamp
+               (remhash buf agent-shell-team--busy-since)))))))
+   agent-shell-team--sessions)
+  ;; --- Drain message queues for idle agents (skip busy and initializing) ---
   (maphash (lambda (buffer _messages)
              (when (eq (agent-shell-team--agent-status buffer) 'idle)
                (agent-shell-team--drain-queue buffer)))

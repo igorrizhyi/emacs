@@ -72,7 +72,7 @@ Wraps the process sentinel to resolve pending requests before cleanup."
 ;; ---------------------------------------------------------------------------
 
 (after! agent-shell
-  (defcustom agent-shell-response-timeout 300
+  (defcustom agent-shell-response-timeout 90
     "Maximum seconds to wait for an ACP response before timing out.
 When non-nil, a watchdog timer is started when a prompt is sent.
 If the response has not arrived within this many seconds the heartbeat
