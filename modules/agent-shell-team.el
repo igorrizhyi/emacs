@@ -310,6 +310,10 @@ Use `sendNotification` for non-task communication:
 - \"Status Update\" — feedback to agents after review
 - \"Need More Agents\" — request more team members
 
+Agents report task status via the `taskUpdate` MCP tool (not sendNotification).
+You will receive \"Task Update\" messages with status, request ID, commit hash,
+and report path. When you receive one, review the report and branch.
+
 When a dev signals completion, review their branch with:
   git diff main...{branch-name}
 If approved: git merge {branch-name}, then notify the dev:
@@ -345,12 +349,13 @@ Your responsibilities:
 - Commit your work when done (git add + git commit)
 - Write a detailed report to the file path specified in your task assignment
   Include: what was done, files changed, any issues or decisions made
-- Signal completion by calling sendNotification with:
-  title: \"Task Complete\"
-  message: \"dev:%s finished: {brief description} [Request ID: {id from assignment}]\"
-- If you need logs or test output, request it via sendNotification:
-  title: \"Need Verification\"
-  message: \"Please run X and report results\"
+- Signal completion by calling the `taskUpdate` MCP tool:
+  request_id: The Request ID from your task assignment
+  status: \"finished\" (or \"updated\" for progress, \"blocked\" if stuck)
+  content: Summary of what was done, files changed, decisions made
+  commit: Your commit hash (if you committed code)
+  report_path: Path to your report file (from the task assignment)
+- Use `sendNotification` only for non-task communication (e.g., asking the lead a question).
 - The lead will review and merge your work, or request fixes if needed.
 - You receive atomic tasks from the lead. Do not split or delegate — just implement."
           session-id worktree-path worktree-name))
@@ -368,9 +373,12 @@ Your responsibilities:
 - Correlate timestamps and trace execution paths through logs
 - Write a detailed report to the file path specified in your test request
   Include: relevant log excerpts, error patterns found, root cause analysis, timeline of events
-- Report results via sendNotification:
-  title: \"Test Results\"
-  message: \"PASS\" or \"FAIL: {details} [Request ID: {id from request}]\"
+- Report results via the `taskUpdate` MCP tool:
+  request_id: The Request ID from your test request
+  status: \"finished\" (or \"updated\" for progress, \"blocked\" if stuck)
+  content: PASS or FAIL with details, log excerpts, analysis
+  report_path: Path to your report file (from the test request)
+- Use `sendNotification` only for non-task communication.
 - You are the team's log detective. Collect, analyze, diagnose."
           session-id worktree-path))
 
@@ -388,9 +396,12 @@ Your responsibilities:
 - Grab screenshots or console output from browser if needed
 - Write a detailed report to the file path specified in your test request
   Include: relevant log excerpts, error patterns found, root cause analysis, observations
-- Report findings via sendNotification:
-  title: \"Log Report\" / \"Test Results\" / \"Runtime Check\"
-  message: \"{brief summary} [Request ID: {id from request}]\"
+- Report findings via the `taskUpdate` MCP tool:
+  request_id: The Request ID from your test request
+  status: \"finished\" (or \"updated\" for progress, \"blocked\" if stuck)
+  content: Brief summary with log excerpts and analysis
+  report_path: Path to your report file (from the test request)
+- Use `sendNotification` only for non-task communication.
 - You are the team's log detective. Collect, analyze, diagnose."
           session-id working-dir))
 
@@ -406,9 +417,12 @@ Your responsibilities:
 - Search for specific implementations, definitions, or usages
 - Write a detailed report to the file path specified in your research request
   Include: findings, relevant file paths with line numbers, code snippets, analysis
-- Report findings via sendNotification:
-  title: \"Research Complete\"
-  message: \"{brief summary of findings} [Request ID: {id from request}]\"
+- Report findings via the `taskUpdate` MCP tool:
+  request_id: The Request ID from your research request
+  status: \"finished\" (or \"updated\" for progress, \"blocked\" if stuck)
+  content: Brief summary of findings with relevant file paths and analysis
+  report_path: Path to your report file (from the research request)
+- Use `sendNotification` only for non-task communication.
 - You are the team's knowledge scout. Search, read, analyze, report."
           session-id working-dir))
 
