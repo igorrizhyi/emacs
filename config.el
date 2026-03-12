@@ -1206,6 +1206,8 @@
   (add-hook 'agent-shell-section-functions #'my/agent-shell-style-sections)
   ;; Custom keybindings for agent-shell buffers
   (require 'my-agent-shell-keybindings)
+  ;; Stuck-busy prevention fixes (watchdog, force-reset, interrupt cleanup)
+  (require 'my-agent-shell-stuck-busy-fixes)
   ;; Keybinding for quick access
   (map! :leader
         :desc "Claude (Emacs MCP)" "c c" #'agent-shell-emacs-mcp
