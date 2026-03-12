@@ -658,7 +658,17 @@ Extract tasks, generate IDs, register groups, and enqueue for assignment."
                (group-id (or (map-elt task 'group_id) (map-elt task "group_id")))
                (request-id (or (map-elt task 'request_id) (map-elt task "request_id")
                                (agent-shell-team--generate-request-id)))
-               (session-id agent-shell-team--session-id)
+               (session-id (or (map-elt task 'session_id)
+                               (map-elt task "session_id")
+                               agent-shell-team--session-id
+                               ;; Fallback: use sole session if only one exists
+                               (let ((sessions nil))
+                                 (maphash (lambda (k _v) (push k sessions))
+                                          agent-shell-team--sessions)
+                                 (when (= (length sessions) 1)
+                                   (car sessions)))))
+               (_warn (unless session-id
+                        (message "[agent-shell-team] WARNING: tasksPut has no session-id, dropping")))
                (reports-dir (agent-shell-team--reports-dir session-id))
                (report-path (expand-file-name (concat request-id ".md") reports-dir))
                (entry (list :role role
@@ -701,7 +711,17 @@ Route the status update directly to the lead agent's queue."
                      (map-elt raw-input "commit")))
          (report-path (or (map-elt raw-input 'report_path)
                           (map-elt raw-input "report_path")))
-         (session-id agent-shell-team--session-id)
+         (session-id (or (map-elt raw-input 'session_id)
+                        (map-elt raw-input "session_id")
+                        agent-shell-team--session-id
+                        ;; Fallback: use sole session if only one exists
+                        (let ((sessions nil))
+                          (maphash (lambda (k _v) (push k sessions))
+                                   agent-shell-team--sessions)
+                          (when (= (length sessions) 1)
+                            (car sessions)))))
+         (_warn (unless session-id
+                  (message "[agent-shell-team] WARNING: taskUpdate has no session-id, dropping")))
          (lead-buf (when session-id
                      (agent-shell-team--get-lead session-id))))
     (when lead-buf
