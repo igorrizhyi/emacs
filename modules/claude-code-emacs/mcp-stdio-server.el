@@ -176,7 +176,9 @@ Reads JSON-RPC requests from stdin, processes them, and writes responses to stdo
      (description . "Send a desktop notification")
      (inputSchema . ((type . "object")
                      (properties . ((title . ((type . "string")))
-                                   (message . ((type . "string")))))
+                                   (message . ((type . "string")))
+                                   (session_id . ((type . "string")
+                                                  (description . "Optional session ID for multi-session routing")))))
                      (required . ["title" "message"]))))
 
    `((name . "openDiffFile")
@@ -205,7 +207,9 @@ Reads JSON-RPC requests from stdin, processes them, and writes responses to stdo
                                                                                    (description . "Optional group ID to batch related subtasks. All tasks with the same group_id are tracked together and the lead is notified when ALL complete.")))
                                                                        (request_id . ((type . "string")
                                                                                      (description . "Optional custom request ID. Auto-generated if omitted.")))))
-                                                        (required . ["role" "message"])))))))
+                                                        (required . ["role" "message"])))))
+                                   (session_id . ((type . "string")
+                                                  (description . "Optional session ID for multi-session routing")))))
                      (required . ["tasks"]))))
 
    `((name . "taskUpdate")
@@ -221,7 +225,9 @@ Reads JSON-RPC requests from stdin, processes them, and writes responses to stdo
                                     (commit . ((type . "string")
                                                (description . "Commit hash if code was committed")))
                                     (report_path . ((type . "string")
-                                                    (description . "Path to detailed report file")))))
+                                                    (description . "Path to detailed report file")))
+                                    (session_id . ((type . "string")
+                                                   (description . "Optional session ID for multi-session routing")))))
                      (required . ["request_id" "status" "content"]))))))
 
 (defun claude-code-mcp-stdio--call-tool (tool-name args)
