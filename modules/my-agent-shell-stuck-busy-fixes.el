@@ -2,7 +2,7 @@
 
 ;;; Commentary:
 ;;
-;; Four fixes to prevent agent-shell from getting permanently stuck in
+;; Fixes to prevent agent-shell from getting permanently stuck in
 ;; a busy state.  These are applied as advice and redefinitions in
 ;; `after!' blocks so they survive `straight' package updates.
 ;;
@@ -10,6 +10,7 @@
 ;; Fix 2: ACP process sentinel resolves pending requests on exit
 ;; Fix 3: Watchdog timer for max response duration
 ;; Fix 4: agent-shell-force-reset escape hatch command
+;; Fix 5: Guard shell-maker--set-pm against nil process
 
 ;;; Code:
 
@@ -167,6 +168,18 @@ the busy flag, and writes a fresh prompt so the user can continue."
      (shell-maker--process)
      (concat "\n" (shell-maker-prompt shell-maker--config)))
     (message "[agent-shell] Force reset complete")))
+
+;; ---------------------------------------------------------------------------
+;; Fix 5: Guard shell-maker--set-pm against nil process
+;; ---------------------------------------------------------------------------
+
+(after! shell-maker
+  (defun shell-maker--set-pm (pos)
+    "Set the process mark in the current buffer to POS.
+Guarded against nil process during initialization."
+    (when-let ((proc (get-buffer-process
+                      (shell-maker-buffer shell-maker--config))))
+      (set-marker (process-mark proc) pos))))
 
 (provide 'my-agent-shell-stuck-busy-fixes)
 ;;; my-agent-shell-stuck-busy-fixes.el ends here
