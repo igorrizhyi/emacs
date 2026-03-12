@@ -44,6 +44,8 @@
 (require 'claude-code-mcp-protocol)  ;; For async request management
 (require 'cl-lib)
 
+(declare-function agent-shell-team--handle-tasks-put "agent-shell-team" (raw-input))
+
 ;;; Simple Enter-to-Capture MCP Command Execution
 ;; Instead of complex async output detection, user presses Enter to capture output
 
@@ -1183,8 +1185,9 @@ PARAMS should include a `tasks' array, each with `role' and `message'."
     (dolist (task (append tasks nil))  ;; convert vector to list
       (unless (cdr (assoc 'role task)) (error "Each task must have a role"))
       (unless (cdr (assoc 'message task)) (error "Each task must have a message")))
-    ;; The actual queue handling happens in agent-shell-team.el via tool-call-update event
-    ;; This handler just validates and returns success
+    ;; Directly call the team handler to enqueue tasks
+    (when (fboundp 'agent-shell-team--handle-tasks-put)
+      (agent-shell-team--handle-tasks-put params))
     `((success . t)
       (message . ,(format "Queued %d task(s)" (length tasks))))))
 
