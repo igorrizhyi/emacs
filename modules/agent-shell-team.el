@@ -503,7 +503,7 @@ This helps the lead find and read the report."
 
 (defun agent-shell-team--on-tool-call-update (event)
   "Handle tool-call-update EVENT.
-Route sendNotification calls between team agents and handle tasksPut for queue."
+Route sendNotification calls between team agents."
   (let* ((data (map-elt event :data))
          (tool-call (alist-get :tool-call data))
          (tool-title (alist-get :title tool-call))
@@ -511,9 +511,6 @@ Route sendNotification calls between team agents and handle tasksPut for queue."
          (raw-input (alist-get :raw-input tool-call)))
     (when (and tool-title (equal status "completed") agent-shell-team--session-id)
       (cond
-       ;; tasksPut — enqueue tasks for assignment
-       ((string-match-p "tasksPut" tool-title)
-        (agent-shell-team--handle-tasks-put raw-input))
        ;; sendNotification — route between agents + track completion
        ((string-match-p "sendNotification" tool-title)
         (let* ((notif-title (or (map-elt raw-input 'title)
