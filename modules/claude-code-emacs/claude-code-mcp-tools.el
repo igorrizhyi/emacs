@@ -1191,5 +1191,23 @@ PARAMS should include a `tasks' array, each with `role' and `message'."
     `((success . t)
       (message . ,(format "Queued %d task(s)" (length tasks))))))
 
+;;; Task update handler
+
+(declare-function agent-shell-team--handle-task-update "agent-shell-team" (raw-input))
+
+(defun claude-code-mcp-handle-taskUpdate (params)
+  "Handle taskUpdate MCP tool call.  Routes task status update to lead."
+  (let ((request-id (cdr (assoc 'request_id params)))
+        (status (cdr (assoc 'status params)))
+        (content (cdr (assoc 'content params))))
+    (unless request-id (error "request_id is required"))
+    (unless status (error "status is required"))
+    (unless content (error "content is required"))
+    ;; Directly call team handler
+    (when (fboundp 'agent-shell-team--handle-task-update)
+      (agent-shell-team--handle-task-update params))
+    `((success . t)
+      (message . ,(format "Task update received for %s" request-id)))))
+
 (provide 'claude-code-mcp-tools)
 ;;; claude-code-mcp-tools.el ends here

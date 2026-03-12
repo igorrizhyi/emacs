@@ -656,6 +656,47 @@ Extract tasks, generate IDs, register groups, and enqueue for assignment."
       ;; Ensure drain timer is running for retries
       (agent-shell-team--start-drain-timer))))
 
+(defun agent-shell-team--handle-task-update (raw-input)
+  "Process a taskUpdate tool call with RAW-INPUT.
+Route the status update directly to the lead agent's queue."
+  (let* ((request-id (or (map-elt raw-input 'request_id)
+                         (map-elt raw-input "request_id")))
+         (status (or (map-elt raw-input 'status)
+                     (map-elt raw-input "status")))
+         (content (or (map-elt raw-input 'content)
+                      (map-elt raw-input "content")))
+         (commit (or (map-elt raw-input 'commit)
+                     (map-elt raw-input "commit")))
+         (report-path (or (map-elt raw-input 'report_path)
+                          (map-elt raw-input "report_path")))
+         (session-id agent-shell-team--session-id)
+         (lead-buf (when session-id
+                     (agent-shell-team--get-lead session-id))))
+    (when lead-buf
+      (let* ((message (format "Task Update [%s] — %s\nRequest ID: %s%s%s\n\n%s"
+                              status
+                              request-id
+                              request-id
+                              (if commit (format "\nCommit: %s" commit) "")
+                              (if report-path (format "\nReport: %s" report-path) "")
+                              content))
+             (lead-status (agent-shell-team--agent-status lead-buf)))
+        ;; Log it
+        (agent-shell-team--log session-id
+                               (format "[taskUpdate] %s from request %s"
+                                       status request-id))
+        ;; Deliver or queue to lead
+        (pcase lead-status
+          ('idle (agent-shell-team--prompt-agent lead-buf message))
+          ((or 'busy 'initializing)
+           (agent-shell-team--queue-message session-id lead-buf
+                                            (list :from "agent" :title "Task Update" :message message)))
+          ('dead (agent-shell-team--log session-id "WARNING: lead buffer is dead")))
+        ;; Handle group completion tracking if status is "finished"
+        (when (equal status "finished")
+          (when-let ((group-id (gethash request-id agent-shell-team--request-to-group)))
+            (agent-shell-team--handle-task-completion request-id session-id nil)))))))
+
 (defun agent-shell-team--find-idle-agent (session-id role)
   "Find an idle agent in SESSION-ID matching ROLE."
   (cl-find-if

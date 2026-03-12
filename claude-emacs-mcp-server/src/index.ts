@@ -15,6 +15,10 @@ import {
   tasksPutOutputSchema,
 } from "./schemas/tasks-schema.js";
 import {
+  taskUpdateInputSchema,
+  taskUpdateOutputSchema,
+} from "./schemas/task-update-schema.js";
+import {
   getDiagnosticsInputSchema,
   getDiagnosticsOutputSchema,
 } from "./schemas/diagnostic-schema.js";
@@ -56,6 +60,7 @@ import {
   handleDescribeSymbol,
   handleSendNotification,
   handleTasksPut,
+  handleTaskUpdate,
   handleExecuteTerminalCommandInEmacs,
   handleGetTerminalContent,
   handleCreateTerminal,
@@ -321,6 +326,28 @@ function registerTools() {
     },
     async (args, _extra) => {
       const result = await handleTasksPut(bridge, args);
+      return {
+        content: result.content,
+        structuredContent: {
+          success: result.status === 'success',
+          message: result.message || '',
+        },
+        isError: result.isError,
+      };
+    }
+  );
+
+  // taskUpdate tool
+  server.registerTool(
+    "taskUpdate",
+    {
+      description:
+        "Push a task status update (finished/updated/blocked) to the team lead's queue",
+      inputSchema: taskUpdateInputSchema.shape,
+      outputSchema: taskUpdateOutputSchema.shape,
+    },
+    async (args, _extra) => {
+      const result = await handleTaskUpdate(bridge, args);
       return {
         content: result.content,
         structuredContent: {
