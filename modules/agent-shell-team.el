@@ -854,7 +854,7 @@ Use for background context like team roster updates and announcements."
                                (with-current-buffer buffer
                                  (shell-maker-finish-output
                                   :config shell-maker--config
-                                  :success nil)))))))))))
+                                  :success nil))))))))))))
 
 ;;; Message queue & drain
 
