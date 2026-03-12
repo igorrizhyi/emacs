@@ -107,6 +107,16 @@ Each entry is: ((buffer . #<buffer>) (role . \"dev\") (mode . \"isolated\")
 (defvar agent-shell-team--message-queue (make-hash-table :test 'equal)
   "Buffer -> list of pending messages waiting for agent to become idle.")
 
+(defvar agent-shell-team--task-queue nil
+  "FIFO queue of pending tasks.  Each entry is a plist:
+\(:role ROLE :message MSG :request-id ID :group-id GID :session-id SID :report-path PATH\)")
+
+(defvar agent-shell-team--task-groups (make-hash-table :test 'equal)
+  "Group ID -> plist (:pending (id1 id2) :completed (id3) :session-id SID).")
+
+(defvar agent-shell-team--request-to-group (make-hash-table :test 'equal)
+  "Request ID -> group ID mapping for completion lookups.")
+
 ;;; Session ID generation
 
 (defun agent-shell-team--generate-session-id ()
@@ -258,7 +268,7 @@ Format: *team:{session-short}:{role}:{worktree-name-or-main}*"
 NEVER write code, edit files, or implement tasks yourself.
 Your ONLY job is to decompose work, delegate to dev agents, review results,
 and coordinate the team. When you receive a task from the user, IMMEDIATELY
-break it down and assign subtasks to dev agents via sendNotification.
+break it down and assign subtasks to dev agents via tasksPut.
 Do NOT ask the user whether to delegate — just do it. That is your purpose.
 
 Your responsibilities:
@@ -267,36 +277,52 @@ Your responsibilities:
 - Merge approved worktree branches to the main branch
 - Dispatch tester agents to validate merged code
 
-Use sendNotification to communicate with other agents. Emacs routes messages
-based on your role automatically. Use clear, structured notification titles:
-- \"Task Assignment\" — assign work to a dev
-- \"Run Tests\" — request testing
-- \"Research Request\" — ask researcher to find/analyze something
+## Task Dispatch: use `tasksPut` MCP tool
+Use the `tasksPut` MCP tool to submit tasks. Emacs will automatically assign
+them to idle agents and queue them if none are available.
+
+Schema:
+```json
+{
+  \"tasks\": [
+    {
+      \"role\": \"dev\",           // required: dev, tester, researcher
+      \"message\": \"...\",        // required: task description
+      \"group_id\": \"group-1\",   // optional: batch related subtasks
+      \"request_id\": \"abc123\"   // optional: auto-generated if omitted
+    }
+  ]
+}
+```
+
+Use the same `group_id` for related subtasks. You will receive a single
+\"Group Complete\" notification when ALL tasks in the group finish, listing
+all report file paths.
+
+Use `sendNotification` for non-task communication:
+- \"Status Update\" — feedback to agents after review
+- \"Need More Agents\" — request more team members
 
 When a dev signals completion, review their branch with:
   git diff main...{branch-name}
 If approved: git merge {branch-name}, then notify the dev:
   title: \"Status Update\", message: \"Merged {branch-name}. Good work.\"
-  Then notify the tester if needed.
-If changes needed: notify the dev with specific feedback:
-  title: \"Task Assignment\", message: \"Fix: {what needs changing} [Request ID: {original-id}]\"
+  Then dispatch a tester if needed via tasksPut.
+If changes needed: send a new tasksPut with fix instructions.
 
 ## Sub-Tasking
 You own ALL task decomposition. When you receive ANY task:
 1. IMMEDIATELY break it into atomic, independently implementable subtasks
-2. Assign each subtask to an idle dev via sendNotification:
-   title: \"Task Assignment\", message: \"Subtask: {description}\"
-3. If no idle devs are available, notify:
-   title: \"Need More Agents\", message: \"N subtasks pending, only M devs available\"
-4. Track which subtasks belong to the same parent task so you know when
-   ALL subtasks are done before requesting a test run.
+2. Submit ALL subtasks via a single `tasksPut` call with the same `group_id`
+3. Emacs assigns them to idle agents automatically — no need to check availability
+4. You receive a \"Group Complete\" notification when all subtasks finish
 Devs never split tasks — they receive atomic units and execute them.
 NEVER implement subtasks yourself — always delegate to dev agents.
 Use the researcher agent when you need codebase exploration, finding files,
 or understanding code before assigning tasks to devs.
 
 ## Reports
-Task assignments include a Request ID and a report file path.
+Task assignments include a Request ID and a report file path (auto-injected by Emacs).
 When an agent reports completion, their message includes a path to a detailed
 report file (.agent-shell/reports/{session-id}/{request-id}.md).
 ALWAYS read the report file to review the agent's work before proceeding."
@@ -469,33 +495,41 @@ This helps the lead find and read the report."
       message)))
 
 (defun agent-shell-team--on-tool-call-update (event)
-  "Handle tool-call-update EVENT. Route sendNotification calls between team agents."
+  "Handle tool-call-update EVENT.
+Route sendNotification calls between team agents and handle tasksPut for queue."
   (let* ((data (map-elt event :data))
          (tool-call (alist-get :tool-call data))
          (tool-title (alist-get :title tool-call))
          (status (alist-get :status tool-call))
          (raw-input (alist-get :raw-input tool-call)))
-    ;; Only intercept completed sendNotification tool calls
-    (when (and tool-title
-               (string-match-p "sendNotification" tool-title)
-               (equal status "completed")
-               agent-shell-team--session-id)
-      (let* ((notif-title (or (map-elt raw-input 'title)
-                              (map-elt raw-input "title")))
-             (notif-message (or (map-elt raw-input 'message)
-                                (map-elt raw-input "message")))
-             ;; For completion notifications, enrich with report path
-             (enriched-message
-              (if (member notif-title '("Task Complete" "Test Results" "Research Complete"))
-                  (agent-shell-team--enrich-completion-message
-                   agent-shell-team--session-id notif-message)
-                notif-message)))
-        (when (and notif-title enriched-message)
-          (agent-shell-team--route-from-acp
-           agent-shell-team--session-id
-           agent-shell-team--role
-           notif-title
-           enriched-message))))))
+    (when (and tool-title (equal status "completed") agent-shell-team--session-id)
+      (cond
+       ;; tasksPut — enqueue tasks for assignment
+       ((string-match-p "tasksPut" tool-title)
+        (agent-shell-team--handle-tasks-put raw-input))
+       ;; sendNotification — route between agents + track completion
+       ((string-match-p "sendNotification" tool-title)
+        (let* ((notif-title (or (map-elt raw-input 'title)
+                                (map-elt raw-input "title")))
+               (notif-message (or (map-elt raw-input 'message)
+                                  (map-elt raw-input "message")))
+               ;; For completion notifications, enrich with report path
+               (enriched-message
+                (if (member notif-title '("Task Complete" "Test Results" "Research Complete"))
+                    (agent-shell-team--enrich-completion-message
+                     agent-shell-team--session-id notif-message)
+                  notif-message)))
+          (when (and notif-title enriched-message)
+            ;; Track group completion if this is a task completion
+            (when (member notif-title '("Task Complete" "Test Results" "Research Complete"))
+              (when-let ((request-id (agent-shell-team--extract-request-id notif-message)))
+                (agent-shell-team--handle-task-completion
+                 request-id agent-shell-team--session-id (current-buffer))))
+            (agent-shell-team--route-from-acp
+             agent-shell-team--session-id
+             agent-shell-team--role
+             notif-title
+             enriched-message))))))))
 
 ;;; Routing logic — infer target from sender role + notification title
 
@@ -573,6 +607,131 @@ TITLE and MESSAGE are the notification content."
              (agent-shell-team--log session-id
                                     (format "WARNING: target %s buffer is dead, message dropped"
                                             target-role)))))))))
+
+;;; Task queue — enqueue, assign, group tracking
+
+(defun agent-shell-team--handle-tasks-put (raw-input)
+  "Process a tasksPut tool call with RAW-INPUT.
+Extract tasks, generate IDs, register groups, and enqueue for assignment."
+  (let ((tasks (or (map-elt raw-input 'tasks)
+                   (map-elt raw-input "tasks"))))
+    (when tasks
+      (dolist (task (append tasks nil))  ;; convert vector to list
+        (let* ((role (or (map-elt task 'role) (map-elt task "role")))
+               (message (or (map-elt task 'message) (map-elt task "message")))
+               (group-id (or (map-elt task 'group_id) (map-elt task "group_id")))
+               (request-id (or (map-elt task 'request_id) (map-elt task "request_id")
+                               (agent-shell-team--generate-request-id)))
+               (session-id agent-shell-team--session-id)
+               (reports-dir (agent-shell-team--reports-dir session-id))
+               (report-path (expand-file-name (concat request-id ".md") reports-dir))
+               (entry (list :role role
+                            :message message
+                            :request-id request-id
+                            :group-id group-id
+                            :session-id session-id
+                            :report-path report-path)))
+          ;; Register in group tracker if group_id is present
+          (when group-id
+            (let ((group (or (gethash group-id agent-shell-team--task-groups)
+                             (list :pending nil :completed nil :session-id session-id))))
+              (plist-put group :pending (cons request-id (plist-get group :pending)))
+              (puthash group-id group agent-shell-team--task-groups))
+            (puthash request-id group-id agent-shell-team--request-to-group))
+          ;; Append to FIFO queue
+          (setq agent-shell-team--task-queue
+                (append agent-shell-team--task-queue (list entry)))
+          (agent-shell-team--log session-id
+                                 (format "[tasksPut] Queued %s task: %s (request: %s%s)"
+                                         role
+                                         (truncate-string-to-width message 60 nil nil "...")
+                                         request-id
+                                         (if group-id (format ", group: %s" group-id) "")))))
+      ;; Try to assign immediately
+      (agent-shell-team--try-assign-tasks)
+      ;; Ensure drain timer is running for retries
+      (agent-shell-team--start-drain-timer))))
+
+(defun agent-shell-team--find-idle-agent (session-id role)
+  "Find an idle agent in SESSION-ID matching ROLE."
+  (cl-find-if
+   (lambda (a)
+     (and (equal (alist-get 'role a) role)
+          (eq (agent-shell-team--agent-status (alist-get 'buffer a)) 'idle)))
+   (agent-shell-team--get-session-agents session-id)))
+
+(defun agent-shell-team--try-assign-tasks ()
+  "Try to assign queued tasks to idle agents."
+  (let ((remaining nil))
+    (dolist (task agent-shell-team--task-queue)
+      (let* ((role (plist-get task :role))
+             (session-id (plist-get task :session-id))
+             (idle-agent (agent-shell-team--find-idle-agent session-id role)))
+        (if idle-agent
+            (agent-shell-team--assign-task-to-agent idle-agent task)
+          (push task remaining))))
+    (setq agent-shell-team--task-queue (nreverse remaining))))
+
+(defun agent-shell-team--assign-task-to-agent (agent task)
+  "Assign TASK to AGENT by delivering enriched message."
+  (let* ((buf (alist-get 'buffer agent))
+         (request-id (plist-get task :request-id))
+         (report-path (plist-get task :report-path))
+         (session-id (plist-get task :session-id))
+         (message (plist-get task :message))
+         (enriched (format "%s\n\n[Request ID: %s]\nWrite your detailed report to: %s\nReference this Request ID in your completion notification."
+                           message request-id report-path)))
+    (agent-shell-team--log session-id
+                           (format "[assign] %s -> %s (request: %s)"
+                                   (plist-get task :role)
+                                   (buffer-name buf)
+                                   request-id))
+    (agent-shell-team--prompt-agent
+     buf (format "Task Assignment -- %s" enriched))))
+
+(defun agent-shell-team--handle-task-completion (request-id session-id from-buffer)
+  "Mark REQUEST-ID as complete.  If its group is fully done, notify lead.
+SESSION-ID identifies the team.  FROM-BUFFER is the completing agent."
+  (when-let ((group-id (gethash request-id agent-shell-team--request-to-group)))
+    (let ((group (gethash group-id agent-shell-team--task-groups)))
+      (when group
+        (plist-put group :completed (cons request-id (plist-get group :completed)))
+        (plist-put group :pending (delete request-id (plist-get group :pending)))
+        (agent-shell-team--log session-id
+                               (format "[group %s] %s complete, %d pending"
+                                       group-id request-id
+                                       (length (plist-get group :pending))))
+        (when (null (plist-get group :pending))
+          ;; ALL tasks in group complete — notify lead
+          (agent-shell-team--notify-group-complete session-id group-id group)
+          ;; Cleanup tracking
+          (dolist (rid (plist-get group :completed))
+            (remhash rid agent-shell-team--request-to-group))
+          (remhash group-id agent-shell-team--task-groups))))))
+
+(defun agent-shell-team--notify-group-complete (session-id group-id group)
+  "Notify the lead that all tasks in GROUP-ID are done.
+SESSION-ID identifies the team.  GROUP contains the completed request IDs."
+  (let* ((completed (plist-get group :completed))
+         (reports-dir (agent-shell-team--reports-dir session-id))
+         (report-lines (mapcar (lambda (rid)
+                                 (format "- %s: %s"
+                                         rid
+                                         (expand-file-name (concat rid ".md") reports-dir)))
+                               completed))
+         (lead-buf (agent-shell-team--get-lead session-id)))
+    (when lead-buf
+      (let ((message (format "All %d tasks in group `%s` are complete.\n\nReports:\n%s"
+                             (length completed) group-id
+                             (string-join report-lines "\n"))))
+        (agent-shell-team--log session-id
+                               (format "[group %s] ALL COMPLETE, notifying lead" group-id))
+        (if (agent-shell-team--buffer-busy-p lead-buf)
+            (agent-shell-team--queue-message
+             session-id lead-buf
+             (list :from "system" :title "Group Complete" :message message))
+          (agent-shell-team--prompt-agent
+           lead-buf (format "Group Complete -- %s" message)))))))
 
 ;;; Message delivery
 
@@ -660,14 +819,18 @@ _SESSION-ID is unused but kept for consistency."
     (setq agent-shell-team--drain-timer nil)))
 
 (defun agent-shell-team--check-all-queues ()
-  "Check all queued messages across all team sessions and drain idle agents."
+  "Check all queued messages and tasks, drain idle agents, assign pending tasks."
+  ;; Drain message queues for idle agents
   (maphash (lambda (buffer _messages)
              (when (and (buffer-live-p buffer)
                         (not (agent-shell-team--buffer-busy-p buffer)))
                (agent-shell-team--drain-queue buffer)))
            agent-shell-team--message-queue)
-  ;; Stop timer if no more queued messages
-  (when (zerop (hash-table-count agent-shell-team--message-queue))
+  ;; Try to assign pending tasks
+  (agent-shell-team--try-assign-tasks)
+  ;; Stop timer if no more queued messages AND no pending tasks
+  (when (and (zerop (hash-table-count agent-shell-team--message-queue))
+             (null agent-shell-team--task-queue))
     (agent-shell-team--stop-drain-timer)))
 
 ;;; Cleanup
