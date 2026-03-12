@@ -62,6 +62,7 @@
 (declare-function claude-code-mcp-handle-executeTerminalCommandInEmacs "claude-code-mcp-tools" (params))
 (declare-function claude-code-mcp-handle-getTerminalList "claude-code-mcp-tools" (params))
 (declare-function claude-code-mcp-handle-createTerminal "claude-code-mcp-tools" (params))
+(declare-function claude-code-mcp-handle-tasksPut "claude-code-mcp-tools" (params))
 
 ;;; JSON-RPC Communication
 

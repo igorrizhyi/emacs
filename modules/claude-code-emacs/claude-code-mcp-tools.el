@@ -1172,5 +1172,20 @@ PARAMS should include \\='title\\=' and \\='message\\='."
     `((success . t)
       (message . "Notification sent"))))
 
+;;; Task queue handler
+
+(defun claude-code-mcp-handle-tasksPut (params)
+  "Handle tasksPut MCP tool call.  Enqueues tasks for team assignment.
+PARAMS should include a \\='tasks\\=' array of objects with \\='role\\=' and \\='message\\='."
+  (let ((tasks (cdr (assoc 'tasks params))))
+    (unless tasks (error "tasks array is required"))
+    ;; Validate each task has role and message
+    (dolist (task (append tasks nil))  ;; convert vector to list
+      (unless (cdr (assoc 'role task)) (error "Each task must have a role"))
+      (unless (cdr (assoc 'message task)) (error "Each task must have a message")))
+    ;; The actual queue handling happens in agent-shell-team.el via hook
+    `((success . t)
+      (message . ,(format "Queued %d task(s)" (length tasks))))))
+
 (provide 'claude-code-mcp-tools)
 ;;; claude-code-mcp-tools.el ends here
