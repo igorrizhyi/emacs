@@ -1187,7 +1187,12 @@ PARAMS should include a `tasks' array, each with `role' and `message'."
       (unless (cdr (assoc 'message task)) (error "Each task must have a message")))
     ;; Directly call the team handler to enqueue tasks
     (when (fboundp 'agent-shell-team--handle-tasks-put)
-      (agent-shell-team--handle-tasks-put params))
+      (let ((agent-shell-team--session-id
+             (or (cdr (assoc 'session_id params))
+                 (cdr (assoc "session_id" params))
+                 (and (boundp 'agent-shell-team--session-id)
+                      agent-shell-team--session-id))))
+        (agent-shell-team--handle-tasks-put params)))
     `((success . t)
       (message . ,(format "Queued %d task(s)" (length tasks))))))
 
@@ -1205,7 +1210,12 @@ PARAMS should include a `tasks' array, each with `role' and `message'."
     (unless content (error "content is required"))
     ;; Directly call team handler
     (when (fboundp 'agent-shell-team--handle-task-update)
-      (agent-shell-team--handle-task-update params))
+      (let ((agent-shell-team--session-id
+             (or (cdr (assoc 'session_id params))
+                 (cdr (assoc "session_id" params))
+                 (and (boundp 'agent-shell-team--session-id)
+                      agent-shell-team--session-id))))
+        (agent-shell-team--handle-task-update params)))
     `((success . t)
       (message . ,(format "Task update received for %s" request-id)))))
 

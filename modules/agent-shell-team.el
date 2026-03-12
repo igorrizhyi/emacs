@@ -298,7 +298,8 @@ Schema:
       \"group_id\": \"group-1\",   // optional: batch related subtasks
       \"request_id\": \"abc123\"   // optional: auto-generated if omitted
     }
-  ]
+  ],
+  \"session_id\": \"%s\"          // optional: for multi-session routing
 }
 ```
 
@@ -350,7 +351,7 @@ Task assignments include a Request ID and a report file path (auto-injected by E
 When an agent reports completion, their message includes a path to a detailed
 report file (.agent-shell/reports/{session-id}/{request-id}.md).
 ALWAYS read the report file to review the agent's work before proceeding."
-          session-id))
+          session-id session-id))
 
 (defun agent-shell-team--dev-prompt (session-id worktree-path worktree-name)
   "Generate dev system prompt for SESSION-ID.
@@ -368,10 +369,11 @@ Your responsibilities:
   content: Summary of what was done, files changed, decisions made
   commit: Your commit hash (if you committed code)
   report_path: Path to your report file (from the task assignment)
+  session_id: \"%s\" (for multi-session routing)
 - Use `sendNotification` only for non-task communication (e.g., asking the lead a question).
 - The lead will review and merge your work, or request fixes if needed.
 - You receive atomic tasks from the lead. Do not split or delegate — just implement."
-          session-id worktree-path worktree-name))
+          session-id worktree-path worktree-name session-id))
 
 (defun agent-shell-team--tester-isolated-prompt (session-id worktree-path)
   "Generate tester prompt for isolated mode in SESSION-ID.
@@ -391,9 +393,10 @@ Your responsibilities:
   status: \"finished\" (or \"updated\" for progress, \"blocked\" if stuck)
   content: PASS or FAIL with details, log excerpts, analysis
   report_path: Path to your report file (from the test request)
+  session_id: \"%s\" (for multi-session routing)
 - Use `sendNotification` only for non-task communication.
 - You are the team's log detective. Collect, analyze, diagnose."
-          session-id worktree-path))
+          session-id worktree-path session-id))
 
 (defun agent-shell-team--tester-neighbor-prompt (session-id working-dir)
   "Generate tester prompt for neighbor mode in SESSION-ID.
@@ -414,9 +417,10 @@ Your responsibilities:
   status: \"finished\" (or \"updated\" for progress, \"blocked\" if stuck)
   content: Brief summary with log excerpts and analysis
   report_path: Path to your report file (from the test request)
+  session_id: \"%s\" (for multi-session routing)
 - Use `sendNotification` only for non-task communication.
 - You are the team's log detective. Collect, analyze, diagnose."
-          session-id working-dir))
+          session-id working-dir session-id))
 
 (defun agent-shell-team--researcher-prompt (session-id working-dir)
   "Generate researcher prompt for SESSION-ID.
@@ -435,9 +439,10 @@ Your responsibilities:
   status: \"finished\" (or \"updated\" for progress, \"blocked\" if stuck)
   content: Brief summary of findings with relevant file paths and analysis
   report_path: Path to your report file (from the research request)
+  session_id: \"%s\" (for multi-session routing)
 - Use `sendNotification` only for non-task communication.
 - You are the team's knowledge scout. Search, read, analyze, report."
-          session-id working-dir))
+          session-id working-dir session-id))
 
 (defun agent-shell-team--get-system-prompt (role mode session-id &optional worktree-path worktree-name working-dir)
   "Generate system prompt for ROLE in MODE within SESSION-ID.
