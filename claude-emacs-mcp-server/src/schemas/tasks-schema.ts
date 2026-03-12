@@ -8,6 +8,7 @@ export const tasksPutInputSchema = z.object({
     group_id: z.string().optional().describe('Batch group ID'),
     request_id: z.string().optional().describe('Custom request ID'),
   })).describe('Array of tasks to assign'),
+  session_id: z.string().optional().describe('Team session ID for multi-session routing'),
 });
 
 // Output schema for tasksPut tool

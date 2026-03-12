@@ -7,6 +7,7 @@ export const taskUpdateInputSchema = z.object({
   content: z.string().describe('What was done, problems encountered, results'),
   commit: z.string().optional().describe('Commit hash if code was committed'),
   report_path: z.string().optional().describe('Path to detailed report file'),
+  session_id: z.string().optional().describe('Team session ID for multi-session routing'),
 });
 
 // Output schema for taskUpdate tool

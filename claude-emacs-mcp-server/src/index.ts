@@ -298,7 +298,7 @@ function registerTools() {
     "sendNotification",
     {
       description:
-        "Send a desktop notification to alert the user when tasks complete or need attention",
+        "Send a desktop notification to alert the user when tasks complete or need attention. Accepts an optional session_id for multi-session routing.",
       inputSchema: sendNotificationInputSchema.shape,
       outputSchema: sendNotificationOutputSchema.shape,
     },
@@ -320,7 +320,7 @@ function registerTools() {
     "tasksPut",
     {
       description:
-        "Submit tasks to the team lead for assignment to dev/researcher/tester agents",
+        "Submit tasks to the team lead for assignment to dev/researcher/tester agents. Accepts an optional session_id for multi-session routing.",
       inputSchema: tasksPutInputSchema.shape,
       outputSchema: tasksPutOutputSchema.shape,
     },
@@ -342,7 +342,7 @@ function registerTools() {
     "taskUpdate",
     {
       description:
-        "Push a task status update (finished/updated/blocked) to the team lead's queue",
+        "Push a task status update (finished/updated/blocked) to the team lead's queue. Accepts an optional session_id for multi-session routing.",
       inputSchema: taskUpdateInputSchema.shape,
       outputSchema: taskUpdateOutputSchema.shape,
     },
