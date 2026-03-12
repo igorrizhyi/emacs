@@ -12,6 +12,7 @@ export { handleGetDefinition } from './definition-tools.js';
 export { handleFindReferences } from './reference-tools.js';
 export { handleDescribeSymbol } from './describe-tools.js';
 export { handleSendNotification } from './notification-tools.js';
+export { handleTasksPut } from './tasks-tools.js';
 export { 
   handleExecuteTerminalCommandInEmacs,
   handleGetTerminalContent,

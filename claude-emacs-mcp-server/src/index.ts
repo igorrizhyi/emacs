@@ -11,6 +11,10 @@ import {
   sendNotificationOutputSchema,
 } from "./schemas/notification-schema.js";
 import {
+  tasksPutInputSchema,
+  tasksPutOutputSchema,
+} from "./schemas/tasks-schema.js";
+import {
   getDiagnosticsInputSchema,
   getDiagnosticsOutputSchema,
 } from "./schemas/diagnostic-schema.js";
@@ -51,6 +55,7 @@ import {
   handleFindReferences,
   handleDescribeSymbol,
   handleSendNotification,
+  handleTasksPut,
   handleExecuteTerminalCommandInEmacs,
   handleGetTerminalContent,
   handleCreateTerminal,
@@ -299,6 +304,28 @@ function registerTools() {
         structuredContent: {
           status: result.status,
           message: result.message,
+        },
+        isError: result.isError,
+      };
+    }
+  );
+
+  // tasksPut tool
+  server.registerTool(
+    "tasksPut",
+    {
+      description:
+        "Submit tasks to the team lead for assignment to dev/researcher/tester agents",
+      inputSchema: tasksPutInputSchema.shape,
+      outputSchema: tasksPutOutputSchema.shape,
+    },
+    async (args, _extra) => {
+      const result = await handleTasksPut(bridge, args);
+      return {
+        content: result.content,
+        structuredContent: {
+          success: result.status === 'success',
+          message: result.message || '',
         },
         isError: result.isError,
       };
