@@ -168,5 +168,20 @@ the busy flag, and writes a fresh prompt so the user can continue."
      (concat "\n" (shell-maker-prompt shell-maker--config)))
     (message "[agent-shell] Force reset complete")))
 
+;; ---------------------------------------------------------------------------
+;; Fix 5: Guard shell-maker--set-pm against nil process
+;; ---------------------------------------------------------------------------
+;; During team agent initialization, messages can arrive before comint's
+;; process is attached.  shell-maker--set-pm calls (process-mark proc)
+;; where proc is nil, causing a "Wrong type argument: processp, nil" error.
+
+(after! shell-maker
+  (defun shell-maker--set-pm (pos)
+    "Set the process mark in the current buffer to POS.
+Guarded against nil process."
+    (when-let ((proc (get-buffer-process
+                      (shell-maker-buffer shell-maker--config))))
+      (set-marker (process-mark proc) pos))))
+
 (provide 'my-agent-shell-stuck-busy-fixes)
 ;;; my-agent-shell-stuck-busy-fixes.el ends here
