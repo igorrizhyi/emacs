@@ -629,15 +629,16 @@ Route sendNotification calls between team agents."
               (when-let ((request-id (agent-shell-team--extract-request-id notif-message)))
                 (agent-shell-team--handle-task-completion
                  request-id agent-shell-team--session-id (current-buffer))))
-            ;; Handle Agent Dismissed — route the farewell, then schedule cleanup
-            (when (equal notif-title "Agent Dismissed")
-              (agent-shell-team--handle-agent-dismiss
-               agent-shell-team--session-id enriched-message))
-            (agent-shell-team--route-from-acp
-             agent-shell-team--session-id
-             agent-shell-team--role
-             notif-title
-             enriched-message))))))))
+            ;; Handle Agent Dismissed — cleanup only, don't route
+            ;; (routing to "all" causes N echo-backs to the lead)
+            (if (equal notif-title "Agent Dismissed")
+                (agent-shell-team--handle-agent-dismiss
+                 agent-shell-team--session-id enriched-message)
+              (agent-shell-team--route-from-acp
+               agent-shell-team--session-id
+               agent-shell-team--role
+               notif-title
+               enriched-message)))))))))
 
 ;;; Routing logic — infer target from sender role + notification title
 
@@ -663,7 +664,6 @@ Route sendNotification calls between team agents."
        ("Task Assignment" "dev")
        ("Run Tests" "tester")
        ("Research Request" "researcher")
-       ("Agent Dismissed" "all")
        ("Status Update" "all")
        ("Need More Agents" "all")
        (_ "all")))))
