@@ -150,6 +150,20 @@ Uses `org-id-uuid' if available, falls back to uuidgen."
       (make-directory dir t))
     dir))
 
+(defun agent-shell-team--knowledge-dir ()
+  "Return knowledge directory path, creating it if needed."
+  (let ((dir (expand-file-name
+              ".agent-shell/knowledge/"
+              (or (projectile-project-root) default-directory))))
+    (unless (file-directory-p dir)
+      (make-directory dir t))
+    dir))
+
+(defun agent-shell-team--knowledge-file (role)
+  "Return the knowledge file path for ROLE."
+  (expand-file-name (format "%s.md" role)
+                    (agent-shell-team--knowledge-dir)))
+
 ;;; Registry functions
 
 (defun agent-shell-team--register-agent (session-id buffer role mode &optional worktree worktree-name)
@@ -350,7 +364,23 @@ works for dev tasks too.
 Task assignments include a Request ID and a report file path (auto-injected by Emacs).
 When an agent reports completion, their message includes a path to a detailed
 report file (.agent-shell/reports/{session-id}/{request-id}.md).
-ALWAYS read the report file to review the agent's work before proceeding."
+ALWAYS read the report file to review the agent's work before proceeding.
+
+## Knowledge Base
+The team maintains a shared knowledge base at `.agent-shell/knowledge/`.
+Role-specific files (e.g., `dev.md`, `tester.md`, `researcher.md`) store
+project-specific nuances, patterns, and lessons learned.
+
+Your responsibilities:
+- When reviewing reports, extract reusable insights (gotchas, conventions,
+  architecture decisions, environment quirks) and append them to the
+  appropriate knowledge file.
+- When assigning tasks, if a relevant knowledge file exists, include its path
+  in the task message and instruct the agent to read it first.
+  Example: \"Before starting, read the knowledge file: %s/dev.md\"
+- Knowledge from the user (preferences, constraints) should also be captured.
+- Keep knowledge files concise and organized by topic — not a raw log."
+          (agent-shell-team--knowledge-dir)
           session-id session-id))
 
 (defun agent-shell-team--dev-prompt (session-id worktree-path worktree-name)
@@ -372,7 +402,13 @@ Your responsibilities:
   session_id: \"%s\" (for multi-session routing)
 - Use `sendNotification` only for non-task communication (e.g., asking the lead a question).
 - The lead will review and merge your work, or request fixes if needed.
-- You receive atomic tasks from the lead. Do not split or delegate — just implement."
+- You receive atomic tasks from the lead. Do not split or delegate — just implement.
+
+## Knowledge Base
+- If the lead points you to a knowledge file, read it BEFORE starting work.
+- In your report, note any project-specific nuances you discovered:
+  gotchas, non-obvious conventions, environment quirks, workarounds.
+  The lead will extract these into the shared knowledge base."
           session-id worktree-path worktree-name session-id))
 
 (defun agent-shell-team--tester-isolated-prompt (session-id worktree-path)
@@ -395,7 +431,13 @@ Your responsibilities:
   report_path: Path to your report file (from the test request)
   session_id: \"%s\" (for multi-session routing)
 - Use `sendNotification` only for non-task communication.
-- You are the team's log detective. Collect, analyze, diagnose."
+- You are the team's log detective. Collect, analyze, diagnose.
+
+## Knowledge Base
+- If the lead points you to a knowledge file, read it BEFORE starting work.
+- In your report, note any diagnostic patterns, common failure modes, or
+  environment-specific issues you discovered. The lead will extract these
+  into the shared knowledge base."
           session-id worktree-path session-id))
 
 (defun agent-shell-team--tester-neighbor-prompt (session-id working-dir)
@@ -419,7 +461,13 @@ Your responsibilities:
   report_path: Path to your report file (from the test request)
   session_id: \"%s\" (for multi-session routing)
 - Use `sendNotification` only for non-task communication.
-- You are the team's log detective. Collect, analyze, diagnose."
+- You are the team's log detective. Collect, analyze, diagnose.
+
+## Knowledge Base
+- If the lead points you to a knowledge file, read it BEFORE starting work.
+- In your report, note any diagnostic patterns, common failure modes, or
+  environment-specific issues you discovered. The lead will extract these
+  into the shared knowledge base."
           session-id working-dir session-id))
 
 (defun agent-shell-team--researcher-prompt (session-id working-dir)
@@ -441,7 +489,13 @@ Your responsibilities:
   report_path: Path to your report file (from the research request)
   session_id: \"%s\" (for multi-session routing)
 - Use `sendNotification` only for non-task communication.
-- You are the team's knowledge scout. Search, read, analyze, report."
+- You are the team's knowledge scout. Search, read, analyze, report.
+
+## Knowledge Base
+- If the lead points you to a knowledge file, read it BEFORE starting work.
+- In your report, note any architectural insights, undocumented patterns,
+  or codebase conventions you discovered. The lead will extract these
+  into the shared knowledge base."
           session-id working-dir session-id))
 
 (defun agent-shell-team--get-system-prompt (role mode session-id &optional worktree-path worktree-name working-dir)
@@ -1034,8 +1088,14 @@ WORKTREE-PATH and WORKTREE-NAME are for isolated mode."
                             buffer (get-buffer-process buffer))
                    (message "agent-shell-team: setting up watcher...")
                    (agent-shell-team--setup-tool-call-watcher buffer)
-                   (message "agent-shell-team: announcing agent...")
-                   (agent-shell-team--announce-agent session-id buffer role mode worktree-name)
+                   ;; NOTE: Team announcements removed — they caused infinite
+                   ;; busy/idle loops as agents responded to roster updates.
+                   ;; Emacs already tracks agent status via the task queue.
+                   (agent-shell-team--log session-id
+                    (format "Agent joined: %s (%s mode%s) buffer=%s"
+                            role mode
+                            (if worktree-name (format ", worktree: %s" worktree-name) "")
+                            (buffer-name buffer)))
                    ;; Activate custom doom-modeline
                    (when (fboundp 'doom-modeline-set-modeline)
                      (with-current-buffer buffer
