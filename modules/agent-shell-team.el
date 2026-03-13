@@ -326,6 +326,10 @@ Schema:
 }
 ```
 
+### Task Routing
+- **Omit `target`** for new, independent tasks — Emacs assigns to any idle agent of that role (or auto-spawns one).
+- **Set `target`** to a worktree name for follow-up work: bug fixes after review, revision requests, or any task where the agent already has context.
+
 Use the same `group_id` for related subtasks. You will receive a single
 \"Group Complete\" notification when ALL tasks in the group finish, listing
 all report file paths.
