@@ -19,6 +19,10 @@ import {
   taskUpdateOutputSchema,
 } from "./schemas/task-update-schema.js";
 import {
+  dismissAgentInputSchema,
+  dismissAgentOutputSchema,
+} from "./schemas/dismiss-agent-schema.js";
+import {
   getDiagnosticsInputSchema,
   getDiagnosticsOutputSchema,
 } from "./schemas/diagnostic-schema.js";
@@ -61,6 +65,7 @@ import {
   handleSendNotification,
   handleTasksPut,
   handleTaskUpdate,
+  handleDismissAgent,
   handleExecuteTerminalCommandInEmacs,
   handleGetTerminalContent,
   handleCreateTerminal,
@@ -348,6 +353,28 @@ function registerTools() {
     },
     async (args, _extra) => {
       const result = await handleTaskUpdate(bridge, args);
+      return {
+        content: result.content,
+        structuredContent: {
+          success: result.status === 'success',
+          message: result.message || '',
+        },
+        isError: result.isError,
+      };
+    }
+  );
+
+  // dismissAgent tool
+  server.registerTool(
+    "dismissAgent",
+    {
+      description:
+        "Dismiss a team agent by buffer name or worktree name. Only callable by the lead. Cleans up the agent buffer and worktree.",
+      inputSchema: dismissAgentInputSchema.shape,
+      outputSchema: dismissAgentOutputSchema.shape,
+    },
+    async (args, _extra) => {
+      const result = await handleDismissAgent(bridge, args);
       return {
         content: result.content,
         structuredContent: {

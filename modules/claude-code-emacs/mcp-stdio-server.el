@@ -230,7 +230,16 @@ Reads JSON-RPC requests from stdin, processes them, and writes responses to stdo
                                                     (description . "Path to detailed report file")))
                                     (session_id . ((type . "string")
                                                    (description . "Optional session ID for multi-session routing")))))
-                     (required . ["request_id" "status" "content"]))))))
+                     (required . ["request_id" "status" "content"]))))
+
+   `((name . "dismissAgent")
+     (description . "Dismiss a team agent by buffer name or worktree name. Only callable by the lead.")
+     (inputSchema . ((type . "object")
+                     (properties . ((target . ((type . "string")
+                                               (description . "Buffer name or worktree name of the agent to dismiss")))
+                                    (session_id . ((type . "string")
+                                                   (description . "Optional session ID for multi-session routing")))))
+                     (required . ["target"]))))))
 
 (defun claude-code-mcp-stdio--call-tool (tool-name args)
   "Call MCP tool TOOL-NAME with ARGS and return result."

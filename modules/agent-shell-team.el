@@ -341,14 +341,15 @@ and report path. When you receive one, review the report and branch.
 When a dev signals completion, review their branch with:
   git diff main...{branch-name}
 If approved: git merge {branch-name}, then dismiss the dev:
-  sendNotification(title: \"Agent Dismissed\", message: \"Merged {branch-name}. Good work.\")
-  Emacs will auto-cleanup the agent buffer and worktree.
+  dismissAgent(target: \"worktree-name\")
+  This immediately cleans up the agent buffer and worktree. No notifications are sent.
   Then dispatch a tester if needed via tasksPut.
 If changes needed: send a new tasksPut with fix instructions and the `target` field set to the
 agent's worktree name or buffer name — this routes the task directly to that agent (useful for
 follow-up fixes where the agent already has context).
 
-\"Agent Dismissed\" can be used for any role (dev, tester, researcher) when their work is complete.
+Use `dismissAgent` for any role (dev, tester, researcher) when their work is complete.
+The `target` parameter accepts a worktree name or buffer name (substring match).
 
 ## Sub-Tasking
 You own ALL task decomposition. When you receive ANY task:
@@ -629,16 +630,11 @@ Route sendNotification calls between team agents."
               (when-let ((request-id (agent-shell-team--extract-request-id notif-message)))
                 (agent-shell-team--handle-task-completion
                  request-id agent-shell-team--session-id (current-buffer))))
-            ;; Handle Agent Dismissed — cleanup only, don't route
-            ;; (routing to "all" causes N echo-backs to the lead)
-            (if (equal notif-title "Agent Dismissed")
-                (agent-shell-team--handle-agent-dismiss
-                 agent-shell-team--session-id enriched-message)
-              (agent-shell-team--route-from-acp
-               agent-shell-team--session-id
-               agent-shell-team--role
-               notif-title
-               enriched-message)))))))))
+            (agent-shell-team--route-from-acp
+             agent-shell-team--session-id
+             agent-shell-team--role
+             notif-title
+             enriched-message))))))))
 
 ;;; Routing logic — infer target from sender role + notification title
 
@@ -719,26 +715,54 @@ TITLE and MESSAGE are the notification content."
 
 ;;; Agent dismiss — cleanup after lead approves work
 
-(defun agent-shell-team--handle-agent-dismiss (session-id message)
-  "Find and dismiss the agent mentioned in MESSAGE.
-Matches by worktree name (for isolated agents) or buffer name (for neighbor agents)."
-  (let ((all-agents (agent-shell-team--get-session-agents session-id)))
-    (dolist (agent all-agents)
-      (let ((wt-name (alist-get 'worktree-name agent))
-            (buf (alist-get 'buffer agent))
-            (role (alist-get 'role agent)))
-        ;; Don't dismiss the lead
-        (when (and (not (equal role "lead"))
-                   (or (and wt-name (string-match-p (regexp-quote wt-name) message))
-                       (and (not wt-name)
-                            (buffer-live-p buf)
-                            (string-match-p (regexp-quote (buffer-name buf)) message))))
-          (agent-shell-team--log session-id
-           (format "[dismiss] Scheduling cleanup for %s (%s)" role (buffer-name buf)))
-          ;; Delay to let the farewell message be delivered
-          (let ((wt-path (alist-get 'worktree agent)))
-            (run-with-timer 10 nil
-             #'agent-shell-team--cleanup-agent buf session-id wt-path)))))))
+(defun agent-shell-team--handle-dismiss-agent (raw-input)
+  "Handle dismissAgent MCP tool call with RAW-INPUT.
+Find the agent matching `target' and clean it up immediately.
+Only the lead role may call this.  Returns an alist with success/message."
+  (let* ((target (or (map-elt raw-input 'target)
+                     (map-elt raw-input "target")))
+         (session-id (or (map-elt raw-input 'session_id)
+                         (map-elt raw-input "session_id")
+                         agent-shell-team--session-id
+                         ;; Fallback: use sole session if only one exists
+                         (let ((sessions nil))
+                           (maphash (lambda (k _v) (push k sessions))
+                                    agent-shell-team--sessions)
+                           (when (= (length sessions) 1)
+                             (car sessions))))))
+    (cond
+     ;; Guard: only the lead may dismiss agents
+     ((not (equal agent-shell-team--role "lead"))
+      `((success . nil)
+        (message . "Only the lead can dismiss agents")))
+     ;; Guard: need a session
+     ((not session-id)
+      `((success . nil)
+        (message . "No session ID available")))
+     ;; Find and dismiss the matching agent
+     (t
+      (let ((all-agents (agent-shell-team--get-session-agents session-id))
+            (found nil))
+        (dolist (agent all-agents)
+          (let ((wt-name (alist-get 'worktree-name agent))
+                (buf (alist-get 'buffer agent))
+                (role (alist-get 'role agent)))
+            ;; Never dismiss the lead
+            (when (and (not (equal role "lead"))
+                       (not found)
+                       (or (and wt-name (string-match-p (regexp-quote target) wt-name))
+                           (and (buffer-live-p buf)
+                                (string-match-p (regexp-quote target) (buffer-name buf)))))
+              (setq found t)
+              (agent-shell-team--log session-id
+               (format "[dismissAgent] Cleaning up %s (%s)" role (buffer-name buf)))
+              (agent-shell-team--cleanup-agent
+               buf session-id (alist-get 'worktree agent)))))
+        (if found
+            `((success . t)
+              (message . ,(format "Agent matching '%s' dismissed" target)))
+          `((success . nil)
+            (message . ,(format "No agent found matching '%s'" target)))))))))
 
 (defun agent-shell-team--cleanup-agent (buffer session-id worktree-path)
   "Clean up BUFFER: unregister from session, kill buffer, optionally remove worktree."

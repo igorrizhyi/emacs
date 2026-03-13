@@ -14,7 +14,8 @@ export { handleDescribeSymbol } from './describe-tools.js';
 export { handleSendNotification } from './notification-tools.js';
 export { handleTasksPut } from './tasks-tools.js';
 export { handleTaskUpdate } from './task-update-tools.js';
-export { 
+export { handleDismissAgent } from './dismiss-agent-tools.js';
+export {
   handleExecuteTerminalCommandInEmacs,
   handleGetTerminalContent,
   handleCreateTerminal

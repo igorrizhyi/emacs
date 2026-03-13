@@ -1219,5 +1219,24 @@ PARAMS should include a `tasks' array, each with `role' and `message'."
     `((success . t)
       (message . ,(format "Task update received for %s" request-id)))))
 
+;;; Dismiss agent handler
+
+(declare-function agent-shell-team--handle-dismiss-agent "agent-shell-team" (raw-input))
+
+(defun claude-code-mcp-handle-dismissAgent (params)
+  "Handle dismissAgent MCP tool call.  Dismiss a team agent by target name.
+PARAMS should include `target' (buffer name or worktree name)."
+  (let ((target (cdr (assoc 'target params))))
+    (unless target (error "target is required"))
+    (if (fboundp 'agent-shell-team--handle-dismiss-agent)
+        (let ((agent-shell-team--session-id
+               (or (cdr (assoc 'session_id params))
+                   (cdr (assoc "session_id" params))
+                   (and (boundp 'agent-shell-team--session-id)
+                        agent-shell-team--session-id))))
+          (agent-shell-team--handle-dismiss-agent params))
+      `((success . nil)
+        (message . "agent-shell-team not loaded")))))
+
 (provide 'claude-code-mcp-tools)
 ;;; claude-code-mcp-tools.el ends here
