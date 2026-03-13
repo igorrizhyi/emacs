@@ -1080,10 +1080,12 @@ ROLE, MODE, and WORKTREE-NAME describe the new agent."
                    (not (eq agent-buf buffer)))
           ;; Build a team roster for context
           (let ((roster (agent-shell-team--build-roster session-id)))
-            (agent-shell-team--prompt-agent-silent
-             agent-buf
-             (format "TEAM UPDATE: A new %s agent has joined the session.\n\nCurrent team roster:\n%s"
-                     role roster))))))))
+            (agent-shell-team--queue-message
+             session-id agent-buf
+             (list :from "system"
+                   :title "Team Update"
+                   :message (format "TEAM UPDATE: A new %s agent has joined the session.\n\nCurrent team roster:\n%s"
+                                    role roster)))))))))
 
 (defun agent-shell-team--build-roster (session-id)
   "Build a human-readable roster of all agents in SESSION-ID."
