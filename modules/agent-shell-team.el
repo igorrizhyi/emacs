@@ -905,17 +905,27 @@ reached its max agent count, auto-spawn a new agent."
         (if idle-agent
             (agent-shell-team--assign-task-to-agent idle-agent task)
           ;; No idle agent — try auto-spawning if allowed
-          (if (and (not (equal role "lead"))
-                   (< (length (agent-shell-team--get-agents-by-role session-id role))
-                      agent-shell-team-max-agents-per-role))
-              (progn
-                (agent-shell-team--log session-id
-                 (format "[auto-spawn] No idle %s agent, spawning new one" role))
-                (agent-shell-team--auto-spawn-agent session-id role)
-                ;; Push task back — new agent is still initializing,
-                ;; it will be assigned on the next drain timer tick
-                (push task remaining))
-            (push task remaining)))))
+          (let ((role-agents (agent-shell-team--get-agents-by-role session-id role)))
+            (if (and (not (equal role "lead"))
+                     (< (length role-agents) agent-shell-team-max-agents-per-role)
+                     ;; Don't spawn if an ephemeral agent is still initializing
+                     ;; (prevents race: spawn fires every tick while agent starts up)
+                     (not (cl-some
+                           (lambda (a)
+                             (and (buffer-local-value 'agent-shell-team--ephemeral
+                                                     (alist-get 'buffer a))
+                                  (memq (agent-shell-team--agent-status
+                                         (alist-get 'buffer a))
+                                        '(initializing busy))))
+                           role-agents)))
+                (progn
+                  (agent-shell-team--log session-id
+                   (format "[auto-spawn] No idle %s agent, spawning new one" role))
+                  (agent-shell-team--auto-spawn-agent session-id role)
+                  ;; Push task back — new agent is still initializing,
+                  ;; it will be assigned on the next drain timer tick
+                  (push task remaining))
+              (push task remaining))))))
     (setq agent-shell-team--task-queue (nreverse remaining))))
 
 (defun agent-shell-team--assign-task-to-agent (agent task)
