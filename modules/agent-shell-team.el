@@ -1054,12 +1054,7 @@ MODE is \"isolated\" or \"neighbor\".
 DIRECTORY is the working directory.
 WORKTREE-PATH and WORKTREE-NAME are for isolated mode."
   (message "agent-shell-team: start-agent called for role=%s mode=%s" role mode)
-  (let* ((agent-shell-anthropic-claude-acp-command
-          (if agent-shell-team-skip-permissions
-              (append agent-shell-anthropic-claude-acp-command
-                      '("--dangerously-skip-permissions"))
-            agent-shell-anthropic-claude-acp-command))
-         (buf-name (agent-shell-team--buffer-name session-id role worktree-name))
+  (let* ((buf-name (agent-shell-team--buffer-name session-id role worktree-name))
          (default-directory (or directory default-directory))
          (system-prompt (agent-shell-team--get-system-prompt
                          role mode session-id worktree-path worktree-name default-directory))
@@ -1086,6 +1081,19 @@ WORKTREE-PATH and WORKTREE-NAME are for isolated mode."
        :on-event (lambda (_event)
                    (message "agent-shell-team: init-finished fired for %s (process=%s)"
                             buffer (get-buffer-process buffer))
+                   ;; Set bypassPermissions mode if configured
+                   (when agent-shell-team-skip-permissions
+                     (with-current-buffer buffer
+                       (acp-send-request
+                        :client (map-elt (agent-shell--state) :client)
+                        :request (acp-make-session-set-mode-request
+                                  :session-id (map-nested-elt (agent-shell--state) '(:session :id))
+                                  :mode-id "bypassPermissions")
+                        :buffer (current-buffer)
+                        :on-success (lambda (_acp-response)
+                                      (message "agent-shell-team: set bypassPermissions for %s" buffer))
+                        :on-failure (lambda (acp-error _raw-message)
+                                      (message "agent-shell-team: failed to set bypassPermissions: %s" acp-error)))))
                    (message "agent-shell-team: setting up watcher...")
                    (agent-shell-team--setup-tool-call-watcher buffer)
                    ;; NOTE: Team announcements removed — they caused infinite
