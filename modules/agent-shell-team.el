@@ -751,10 +751,6 @@ Only the lead role may call this.  Returns an alist with success/message."
                            (when (= (length sessions) 1)
                              (car sessions))))))
     (cond
-     ;; Guard: only the lead may dismiss agents
-     ((not (equal agent-shell-team--role "lead"))
-      `((success . nil)
-        (message . "Only the lead can dismiss agents")))
      ;; Guard: need a session
      ((not session-id)
       `((success . nil)
