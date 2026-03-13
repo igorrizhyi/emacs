@@ -53,6 +53,11 @@ without prompting for confirmation."
   :type 'boolean
   :group 'agent-shell-team)
 
+(defcustom agent-shell-team-max-agents-per-role 3
+  "Maximum number of agents per role per session."
+  :type 'integer
+  :group 'agent-shell-team)
+
 ;;; Faces for doom-modeline role badges
 
 (defface agent-shell-team-role-lead-face
@@ -96,6 +101,9 @@ without prompting for confirmation."
 
 (defvar-local agent-shell-team--worktree-name nil
   "Git worktree name (isolated mode only).")
+
+(defvar-local agent-shell-team--ephemeral nil
+  "When non-nil, this agent was auto-spawned and should be dismissed after task completion.")
 
 ;;; Global registry
 
@@ -811,8 +819,37 @@ Route the status update directly to the lead agent's queue."
           (eq (agent-shell-team--agent-status (alist-get 'buffer a)) 'idle)))
    (agent-shell-team--get-session-agents session-id)))
 
+(defun agent-shell-team--auto-spawn-agent (session-id role)
+  "Auto-spawn a new agent for ROLE in SESSION-ID.
+Devs and testers get isolated mode (worktree).
+Researchers get neighbor mode.
+Returns the new agent buffer."
+  (let* ((mode (if (member role '("dev" "tester")) "isolated" "neighbor"))
+         worktree-path worktree-name directory)
+    (pcase mode
+      ("isolated"
+       (let ((wt (agent-shell-team--create-worktree session-id role)))
+         (setq worktree-path (car wt)
+               worktree-name (cdr wt)
+               directory worktree-path)))
+      ("neighbor"
+       (setq directory default-directory)))
+    (let ((buffer (agent-shell-team--start-agent
+                   session-id role mode directory worktree-path worktree-name)))
+      (with-current-buffer buffer
+        (setq agent-shell-team--ephemeral t))
+      (agent-shell-team--start-drain-timer)
+      (agent-shell-team--log session-id
+       (format "Auto-spawned %s agent (%s mode%s) buffer=%s"
+               role mode
+               (if worktree-name (format ", worktree: %s" worktree-name) "")
+               (buffer-name buffer)))
+      buffer)))
+
 (defun agent-shell-team--try-assign-tasks ()
-  "Try to assign queued tasks to idle agents."
+  "Try to assign queued tasks to idle agents.
+When no idle agent exists for a non-lead role and the role hasn't
+reached its max agent count, auto-spawn a new agent."
   (let ((remaining nil))
     (dolist (task agent-shell-team--task-queue)
       (let* ((role (plist-get task :role))
@@ -820,7 +857,18 @@ Route the status update directly to the lead agent's queue."
              (idle-agent (agent-shell-team--find-idle-agent session-id role)))
         (if idle-agent
             (agent-shell-team--assign-task-to-agent idle-agent task)
-          (push task remaining))))
+          ;; No idle agent — try auto-spawning if allowed
+          (if (and (not (equal role "lead"))
+                   (< (length (agent-shell-team--get-agents-by-role session-id role))
+                      agent-shell-team-max-agents-per-role))
+              (progn
+                (agent-shell-team--log session-id
+                 (format "[auto-spawn] No idle %s agent, spawning new one" role))
+                (agent-shell-team--auto-spawn-agent session-id role)
+                ;; Push task back — new agent is still initializing,
+                ;; it will be assigned on the next drain timer tick
+                (push task remaining))
+            (push task remaining)))))
     (setq agent-shell-team--task-queue (nreverse remaining))))
 
 (defun agent-shell-team--assign-task-to-agent (agent task)
