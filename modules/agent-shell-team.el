@@ -47,7 +47,7 @@
   :prefix "agent-shell-team-")
 
 (defcustom agent-shell-team-skip-permissions t
-  "When non-nil, spawn team agents with --dangerously-skip-permissions.
+  "When non-nil, set bypassPermissions mode on team agent sessions.
 This gives agents full trust to edit files, run commands, etc.
 without prompting for confirmation."
   :type 'boolean
@@ -339,10 +339,13 @@ and report path. When you receive one, review the report and branch.
 
 When a dev signals completion, review their branch with:
   git diff main...{branch-name}
-If approved: git merge {branch-name}, then notify the dev:
-  title: \"Status Update\", message: \"Merged {branch-name}. Good work.\"
+If approved: git merge {branch-name}, then dismiss the dev:
+  sendNotification(title: \"Agent Dismissed\", message: \"Merged {branch-name}. Good work.\")
+  Emacs will auto-cleanup the agent buffer and worktree.
   Then dispatch a tester if needed via tasksPut.
-If changes needed: send a new tasksPut with fix instructions.
+If changes needed: send a new tasksPut with fix instructions (the same agent will receive it).
+
+\"Agent Dismissed\" can be used for any role (dev, tester, researcher) when their work is complete.
 
 ## Sub-Tasking
 You own ALL task decomposition. When you receive ANY task:
@@ -623,6 +626,10 @@ Route sendNotification calls between team agents."
               (when-let ((request-id (agent-shell-team--extract-request-id notif-message)))
                 (agent-shell-team--handle-task-completion
                  request-id agent-shell-team--session-id (current-buffer))))
+            ;; Handle Agent Dismissed — route the farewell, then schedule cleanup
+            (when (equal notif-title "Agent Dismissed")
+              (agent-shell-team--handle-agent-dismiss
+               agent-shell-team--session-id enriched-message))
             (agent-shell-team--route-from-acp
              agent-shell-team--session-id
              agent-shell-team--role
@@ -653,6 +660,7 @@ Route sendNotification calls between team agents."
        ("Task Assignment" "dev")
        ("Run Tests" "tester")
        ("Research Request" "researcher")
+       ("Agent Dismissed" "all")
        ("Status Update" "all")
        ("Need More Agents" "all")
        (_ "all")))))
@@ -705,6 +713,45 @@ TITLE and MESSAGE are the notification content."
              (agent-shell-team--log session-id
                                     (format "WARNING: target %s buffer is dead, message dropped"
                                             target-role)))))))))
+
+;;; Agent dismiss — cleanup after lead approves work
+
+(defun agent-shell-team--handle-agent-dismiss (session-id message)
+  "Find and dismiss the agent mentioned in MESSAGE.
+Matches by worktree name (for isolated agents) or buffer name (for neighbor agents)."
+  (let ((all-agents (agent-shell-team--get-session-agents session-id)))
+    (dolist (agent all-agents)
+      (let ((wt-name (alist-get 'worktree-name agent))
+            (buf (alist-get 'buffer agent))
+            (role (alist-get 'role agent)))
+        ;; Don't dismiss the lead
+        (when (and (not (equal role "lead"))
+                   (or (and wt-name (string-match-p (regexp-quote wt-name) message))
+                       (and (not wt-name)
+                            (buffer-live-p buf)
+                            (string-match-p (regexp-quote (buffer-name buf)) message))))
+          (agent-shell-team--log session-id
+           (format "[dismiss] Scheduling cleanup for %s (%s)" role (buffer-name buf)))
+          ;; Delay to let the farewell message be delivered
+          (let ((wt-path (alist-get 'worktree agent)))
+            (run-with-timer 10 nil
+             #'agent-shell-team--cleanup-agent buf session-id wt-path)))))))
+
+(defun agent-shell-team--cleanup-agent (buffer session-id worktree-path)
+  "Clean up BUFFER: unregister from session, kill buffer, optionally remove worktree."
+  (agent-shell-team--log session-id
+   (format "[cleanup] Killing agent buffer %s%s"
+           (if (buffer-live-p buffer) (buffer-name buffer) "(already dead)")
+           (if worktree-path (format ", removing worktree %s" worktree-path) "")))
+  (when (buffer-live-p buffer)
+    (agent-shell-team--unregister-agent buffer)
+    (kill-buffer buffer))
+  ;; Remove worktree if it exists
+  (when (and worktree-path (file-directory-p worktree-path))
+    (let ((default-directory (file-name-parent-directory worktree-path)))
+      (shell-command-to-string
+       (format "git worktree remove --force %s 2>&1"
+               (shell-quote-argument worktree-path))))))
 
 ;;; Task queue — enqueue, assign, group tracking
 
