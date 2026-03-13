@@ -318,7 +318,8 @@ Schema:
       \"role\": \"dev\",           // required: dev, tester, researcher
       \"message\": \"...\",        // required: task description
       \"group_id\": \"group-1\",   // optional: batch related subtasks
-      \"request_id\": \"abc123\"   // optional: auto-generated if omitted
+      \"request_id\": \"abc123\",  // optional: auto-generated if omitted
+      \"target\": \"worktree-name\" // optional: route to a specific agent
     }
   ],
   \"session_id\": \"%s\"          // optional: for multi-session routing
@@ -343,7 +344,9 @@ If approved: git merge {branch-name}, then dismiss the dev:
   sendNotification(title: \"Agent Dismissed\", message: \"Merged {branch-name}. Good work.\")
   Emacs will auto-cleanup the agent buffer and worktree.
   Then dispatch a tester if needed via tasksPut.
-If changes needed: send a new tasksPut with fix instructions (the same agent will receive it).
+If changes needed: send a new tasksPut with fix instructions and the `target` field set to the
+agent's worktree name or buffer name — this routes the task directly to that agent (useful for
+follow-up fixes where the agent already has context).
 
 \"Agent Dismissed\" can be used for any role (dev, tester, researcher) when their work is complete.
 
@@ -765,6 +768,7 @@ Extract tasks, generate IDs, register groups, and enqueue for assignment."
         (let* ((role (or (map-elt task 'role) (map-elt task "role")))
                (message (or (map-elt task 'message) (map-elt task "message")))
                (group-id (or (map-elt task 'group_id) (map-elt task "group_id")))
+               (target (or (map-elt task 'target) (map-elt task "target")))
                (request-id (or (map-elt task 'request_id) (map-elt task "request_id")
                                (agent-shell-team--generate-request-id)))
                (session-id (or (map-elt task 'session_id)
@@ -784,6 +788,7 @@ Extract tasks, generate IDs, register groups, and enqueue for assignment."
                             :message message
                             :request-id request-id
                             :group-id group-id
+                            :target target
                             :session-id session-id
                             :report-path report-path)))
           ;; Register in group tracker if group_id is present
@@ -901,31 +906,54 @@ reached its max agent count, auto-spawn a new agent."
     (dolist (task agent-shell-team--task-queue)
       (let* ((role (plist-get task :role))
              (session-id (plist-get task :session-id))
-             (idle-agent (agent-shell-team--find-idle-agent session-id role)))
-        (if idle-agent
-            (agent-shell-team--assign-task-to-agent idle-agent task)
-          ;; No idle agent — try auto-spawning if allowed
-          (let ((role-agents (agent-shell-team--get-agents-by-role session-id role)))
-            (if (and (not (equal role "lead"))
-                     (< (length role-agents) agent-shell-team-max-agents-per-role)
-                     ;; Don't spawn if an ephemeral agent is still initializing
-                     ;; (prevents race: spawn fires every tick while agent starts up)
-                     (not (cl-some
-                           (lambda (a)
-                             (and (buffer-local-value 'agent-shell-team--ephemeral
-                                                     (alist-get 'buffer a))
-                                  (memq (agent-shell-team--agent-status
-                                         (alist-get 'buffer a))
-                                        '(initializing busy))))
-                           role-agents)))
-                (progn
-                  (agent-shell-team--log session-id
-                   (format "[auto-spawn] No idle %s agent, spawning new one" role))
-                  (agent-shell-team--auto-spawn-agent session-id role)
-                  ;; Push task back — new agent is still initializing,
-                  ;; it will be assigned on the next drain timer tick
-                  (push task remaining))
-              (push task remaining))))))
+             (target (plist-get task :target))
+             (targeted-agent
+              (when target
+                (cl-find-if
+                 (lambda (a)
+                   (let ((buf (alist-get 'buffer a)))
+                     (and (buffer-live-p buf)
+                          (or (string-match-p (regexp-quote target) (buffer-name buf))
+                              (let ((wt (alist-get 'worktree-name a)))
+                                (and wt (string-match-p (regexp-quote target) wt)))))))
+                 (agent-shell-team--get-agents-by-role session-id role)))))
+        (cond
+         ;; Targeted assignment: agent found and idle — assign directly
+         ((and targeted-agent
+               (eq (agent-shell-team--agent-status (alist-get 'buffer targeted-agent)) 'idle))
+          (agent-shell-team--assign-task-to-agent targeted-agent task))
+         ;; Targeted assignment: agent found but busy — wait for it
+         ((and targeted-agent
+               (memq (agent-shell-team--agent-status (alist-get 'buffer targeted-agent))
+                     '(busy initializing)))
+          (push task remaining))
+         ;; Normal assignment: find any idle agent for this role
+         (t
+          (let ((idle-agent (agent-shell-team--find-idle-agent session-id role)))
+            (if idle-agent
+                (agent-shell-team--assign-task-to-agent idle-agent task)
+              ;; No idle agent — try auto-spawning if allowed
+              (let ((role-agents (agent-shell-team--get-agents-by-role session-id role)))
+                (if (and (not (equal role "lead"))
+                         (< (length role-agents) agent-shell-team-max-agents-per-role)
+                         ;; Don't spawn if an ephemeral agent is still initializing
+                         ;; (prevents race: spawn fires every tick while agent starts up)
+                         (not (cl-some
+                               (lambda (a)
+                                 (and (buffer-local-value 'agent-shell-team--ephemeral
+                                                         (alist-get 'buffer a))
+                                      (memq (agent-shell-team--agent-status
+                                             (alist-get 'buffer a))
+                                            '(initializing busy))))
+                               role-agents)))
+                    (progn
+                      (agent-shell-team--log session-id
+                       (format "[auto-spawn] No idle %s agent, spawning new one" role))
+                      (agent-shell-team--auto-spawn-agent session-id role)
+                      ;; Push task back — new agent is still initializing,
+                      ;; it will be assigned on the next drain timer tick
+                      (push task remaining))
+                  (push task remaining)))))))))
     (setq agent-shell-team--task-queue (nreverse remaining))))
 
 (defun agent-shell-team--assign-task-to-agent (agent task)
