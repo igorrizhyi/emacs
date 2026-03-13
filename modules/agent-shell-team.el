@@ -125,6 +125,9 @@ Each entry is: ((buffer . #<buffer>) (role . \"dev\") (mode . \"isolated\")
 (defvar agent-shell-team--request-to-group (make-hash-table :test 'equal)
   "Request ID -> group ID mapping for completion lookups.")
 
+(defvar agent-shell-team--request-to-buffer (make-hash-table :test 'equal)
+  "Map request-id to the agent buffer it was assigned to.")
+
 ;;; Session ID generation
 
 (defun agent-shell-team--generate-session-id ()
@@ -769,7 +772,9 @@ Only the lead role may call this.  Returns an alist with success/message."
                        (not found)
                        (or (and wt-name (string-match-p (regexp-quote target) wt-name))
                            (and (buffer-live-p buf)
-                                (string-match-p (regexp-quote target) (buffer-name buf)))))
+                                (string-match-p (regexp-quote target) (buffer-name buf)))
+                           (and (buffer-live-p buf)
+                                (eq buf (gethash target agent-shell-team--request-to-buffer)))))
               (setq found t)
               (agent-shell-team--log session-id
                (format "[dismissAgent] Cleaning up %s (%s)" role (buffer-name buf)))
@@ -787,6 +792,11 @@ Only the lead role may call this.  Returns an alist with success/message."
    (format "[cleanup] Killing agent buffer %s%s"
            (if (buffer-live-p buffer) (buffer-name buffer) "(already dead)")
            (if worktree-path (format ", removing worktree %s" worktree-path) "")))
+  ;; Clean up request-to-buffer mappings for this agent
+  (maphash (lambda (k v)
+             (when (eq v buffer)
+               (remhash k agent-shell-team--request-to-buffer)))
+           (copy-hash-table agent-shell-team--request-to-buffer))
   (when (buffer-live-p buffer)
     (agent-shell-team--unregister-agent buffer)
     (kill-buffer buffer))
@@ -1016,6 +1026,7 @@ reached its max agent count, auto-spawn a new agent."
                                    (plist-get task :role)
                                    (buffer-name buf)
                                    request-id))
+    (puthash request-id buf agent-shell-team--request-to-buffer)
     (agent-shell-team--prompt-agent
      buf (format "Task Assignment -- %s" enriched))))
 
