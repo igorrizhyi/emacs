@@ -1270,19 +1270,6 @@ WORKTREE-PATH and WORKTREE-NAME are for isolated mode."
        :on-event (lambda (_event)
                    (message "agent-shell-team: init-finished fired for %s (process=%s)"
                             buffer (get-buffer-process buffer))
-                   ;; Set bypassPermissions mode if configured
-                   (when agent-shell-team-skip-permissions
-                     (with-current-buffer buffer
-                       (acp-send-request
-                        :client (map-elt (agent-shell--state) :client)
-                        :request (acp-make-session-set-mode-request
-                                  :session-id (map-nested-elt (agent-shell--state) '(:session :id))
-                                  :mode-id "bypassPermissions")
-                        :buffer (current-buffer)
-                        :on-success (lambda (_acp-response)
-                                      (message "agent-shell-team: set bypassPermissions for %s" buffer))
-                        :on-failure (lambda (acp-error _raw-message)
-                                      (message "agent-shell-team: failed to set bypassPermissions: %s" acp-error)))))
                    (message "agent-shell-team: setting up watcher...")
                    (agent-shell-team--setup-tool-call-watcher buffer)
                    ;; NOTE: Team announcements removed — they caused infinite
@@ -1314,7 +1301,8 @@ SESSION-ID, ROLE, and BUFFER-NAME customize the config."
    :welcome-function #'agent-shell-emacs-mcp--welcome-message
    :client-maker #'agent-shell-emacs-mcp--make-client
    :default-model-id (lambda () agent-shell-anthropic-default-model-id)
-   :default-session-mode-id (lambda () agent-shell-anthropic-default-session-mode-id)
+   :default-session-mode-id (lambda () (or (and agent-shell-team-skip-permissions "bypassPermissions")
+                                            agent-shell-anthropic-default-session-mode-id))
    :install-instructions "See https://github.com/zed-industries/claude-code-acp for installation."))
 
 ;;; Team membership announcements
