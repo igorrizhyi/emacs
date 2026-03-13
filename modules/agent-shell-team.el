@@ -46,7 +46,7 @@
   :group 'agent-shell
   :prefix "agent-shell-team-")
 
-(defcustom agent-shell-team-skip-permissions nil
+(defcustom agent-shell-team-skip-permissions t
   "When non-nil, spawn team agents with --dangerously-skip-permissions.
 This gives agents full trust to edit files, run commands, etc.
 without prompting for confirmation."
