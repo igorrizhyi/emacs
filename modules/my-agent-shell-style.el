@@ -225,7 +225,9 @@ Skips regions already styled.  Safe to call repeatedly."
     (overlay-put ov 'face face)
     (overlay-put ov 'line-prefix padding)
     (overlay-put ov 'wrap-prefix padding)
+    (overlay-put ov 'before-string (propertize "\n" 'face face))
     (overlay-put ov 'after-string (propertize "\n" 'face face))
+    (overlay-put ov 'priority 100)
     (overlay-put ov 'evaporate nil)
     (overlay-put ov 'my-agent-shell-team-msg t)))
 
@@ -241,11 +243,18 @@ Skips regions already styled.  Safe to call repeatedly."
                 (m-end (match-end 0)))
             (unless (cl-some (lambda (ov) (overlay-get ov 'my-agent-shell-team-msg))
                              (overlays-in m-start m-end))
-              ;; Hide start marker
-              (let ((ov-ms (make-overlay m-start content-start nil t nil)))
+              ;; Hide start marker AND the following newline so the
+              ;; Claude> prompt line doesn't get the purple background.
+              (let* ((hide-end (save-excursion
+                                 (goto-char content-start)
+                                 (skip-chars-forward "\n")
+                                 (point)))
+                     (ov-ms (make-overlay m-start hide-end nil t nil)))
                 (overlay-put ov-ms 'invisible t)
-                (overlay-put ov-ms 'my-agent-shell-team-msg t))
-              ;; Hide end marker
+                (overlay-put ov-ms 'my-agent-shell-team-msg t)
+                ;; Style the content body (starting after the hidden newline)
+                (my/agent-shell--apply-team-message-overlay hide-end content-end))
+              ;; Hide end marker + trailing newlines
               (let* ((hide-start content-end)
                      (hide-end (save-excursion
                                  (goto-char m-end)
@@ -253,9 +262,7 @@ Skips regions already styled.  Safe to call repeatedly."
                                  (point)))
                      (ov-me (make-overlay hide-start hide-end nil t nil)))
                 (overlay-put ov-me 'invisible t)
-                (overlay-put ov-me 'my-agent-shell-team-msg t))
-              ;; Style the content body
-              (my/agent-shell--apply-team-message-overlay content-start content-end))))))))
+                (overlay-put ov-me 'my-agent-shell-team-msg t)))))))))
 
 (defun my/agent-shell--maybe-style-context ()
   "Post-command hook: style markers in agent-shell buffers."
