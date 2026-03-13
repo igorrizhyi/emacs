@@ -177,6 +177,14 @@ Uses `org-id-uuid' if available, falls back to uuidgen."
   (expand-file-name (format "%s.md" role)
                     (agent-shell-team--knowledge-dir)))
 
+(defun agent-shell-team--notify (title message)
+  "Send a desktop notification for team events."
+  (if (fboundp 'alert)
+      (alert message
+             :title title
+             :category 'agent-shell-team)
+    (message "[%s] %s" title message)))
+
 ;;; Registry functions
 
 (defun agent-shell-team--register-agent (session-id buffer role mode &optional worktree worktree-name)
@@ -884,6 +892,11 @@ Route the status update directly to the lead agent's queue."
         (agent-shell-team--log session-id
                                (format "[taskUpdate] %s from request %s"
                                        status request-id))
+        ;; Desktop notification for task lifecycle events
+        (when (member status '("finished" "blocked"))
+          (agent-shell-team--notify
+           (format "Task %s" (capitalize status))
+           (format "%s" request-id)))
         ;; Deliver or queue to lead
         (pcase lead-status
           ('idle (agent-shell-team--prompt-agent lead-buf message))
@@ -1043,6 +1056,9 @@ SESSION-ID identifies the team.  GROUP contains the completed request IDs."
                              (string-join report-lines "\n"))))
         (agent-shell-team--log session-id
                                (format "[group %s] ALL COMPLETE, notifying lead" group-id))
+        (agent-shell-team--notify
+         "Group Complete"
+         (format "All %d tasks in group `%s` done" (length completed) group-id))
         (if (eq (agent-shell-team--agent-status lead-buf) 'idle)
             (agent-shell-team--prompt-agent
              lead-buf (format "Group Complete -- %s" message))
