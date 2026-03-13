@@ -159,12 +159,17 @@ Uses `org-id-uuid' if available, falls back to uuidgen."
     dir))
 
 (defun agent-shell-team--knowledge-dir ()
-  "Return knowledge directory path, creating it if needed."
+  "Return knowledge directory path, creating it and seeding role files if needed."
   (let ((dir (expand-file-name
               ".agent-shell/knowledge/"
               (or (projectile-project-root) default-directory))))
     (unless (file-directory-p dir)
       (make-directory dir t))
+    (dolist (role '("dev" "tester" "researcher"))
+      (let ((file (expand-file-name (format "%s.md" role) dir)))
+        (unless (file-exists-p file)
+          (with-temp-file file
+            (insert (format "# %s Knowledge\n" (capitalize role)))))))
     dir))
 
 (defun agent-shell-team--knowledge-file (role)
