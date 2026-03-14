@@ -72,10 +72,11 @@
         (user-error "Shell is busy, try later"))
       (let ((parent (frame-parent (selected-frame))))
         (posframe-hide my/agent-shell-compose-buffer-name)
-        (when-let ((win (get-buffer-window target)))
-          (select-window win))
         (when parent
-          (select-frame-set-input-focus parent)))
+          (select-frame-set-input-focus parent)
+          (if-let ((win (get-buffer-window target)))
+              (select-window win)
+            (select-window (frame-selected-window parent)))))
       ;; Restore context posframe if pending context exists
       (when (and (boundp 'my/agent-shell--pending-context)
                  (buffer-local-value 'my/agent-shell--pending-context target)
@@ -92,18 +93,20 @@
   (let ((target my/agent-shell-compose--target-buffer)
         (parent (frame-parent (selected-frame))))
     (posframe-hide my/agent-shell-compose-buffer-name)
-    (when (and target (buffer-live-p target))
-      (when-let ((win (get-buffer-window target)))
-        (select-window win))
-      ;; Restore context posframe if pending context exists
-      (when (and (boundp 'my/agent-shell--pending-context)
-                 (buffer-local-value 'my/agent-shell--pending-context target)
-                 (fboundp 'my/agent-shell--show-context-posframe))
-        (my/agent-shell--show-context-posframe
-         (plist-get (buffer-local-value 'my/agent-shell--pending-context target) :text)
-         target)))
     (when parent
-      (select-frame-set-input-focus parent))))
+      (select-frame-set-input-focus parent)
+      (if (and target (buffer-live-p target)
+               (get-buffer-window target))
+          (select-window (get-buffer-window target))
+        (select-window (frame-selected-window parent))))
+    ;; Restore context posframe if pending context exists
+    (when (and target (buffer-live-p target)
+               (boundp 'my/agent-shell--pending-context)
+               (buffer-local-value 'my/agent-shell--pending-context target)
+               (fboundp 'my/agent-shell--show-context-posframe))
+      (my/agent-shell--show-context-posframe
+       (plist-get (buffer-local-value 'my/agent-shell--pending-context target) :text)
+       target))))
 
 (with-eval-after-load 'agent-shell
   (define-key agent-shell-mode-map (kbd "C-<return>") #'my/agent-shell-compose-popup))
