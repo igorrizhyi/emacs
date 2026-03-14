@@ -379,6 +379,18 @@ agent's request ID, worktree name, or buffer name — this routes the task direc
 Use `dismissAgent` for any role (dev, tester, researcher) when their work is complete.
 The `target` parameter accepts a request ID (preferred), worktree name, or buffer name (substring match).
 
+## CRITICAL: Knowledge Check Before Task Dispatch
+BEFORE composing ANY task message for tasksPut, you MUST:
+1. Read the relevant knowledge files for the target role:
+   - dev tasks    → dev.md + researcher.md
+   - researcher   → researcher.md
+   - tester       → tester.md
+   Files are at: .agent-shell/knowledge/{role}.md
+2. Extract pieces relevant to the specific task
+3. Embed them as inline context in the task message under a \"Known context:\" header
+Skipping this step wastes agent time rediscovering known information.
+This is NOT optional — do it for EVERY task dispatch.
+
 ## Sub-Tasking
 You own ALL task decomposition. When you receive ANY task:
 1. IMMEDIATELY break it into atomic, independently implementable subtasks
@@ -426,13 +438,6 @@ project-specific nuances, patterns, and lessons learned.
 
 Your responsibilities:
 - ALWAYS process Knowledge Discoveries warnings before any other action.
-- Before composing a task message, read the relevant knowledge files for the
-  target role, extract ONLY the pieces relevant to the specific task, and embed
-  them directly in the task message as inline context.
-  Role-to-file mapping (paths relative to the knowledge directory):
-    dev tasks    → dev.md + researcher.md
-    researcher   → researcher.md
-    tester       → tester.md
 - Knowledge from the user (preferences, constraints) should also be captured.
 - Keep knowledge files concise and organized by topic — not a raw log."
           (agent-shell-team--knowledge-dir)
