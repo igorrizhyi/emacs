@@ -918,9 +918,9 @@ Route the status update directly to the lead agent's queue."
                                        (buffer-local-value 'agent-shell-team--role agent-buf)))
                                (knowledge-path (when role
                                                  (agent-shell-team--knowledge-file role))))
-                          (concat message
-                                  (format "\n\n⚠️ This report contains Knowledge Discoveries. Update the knowledge file at %s before proceeding."
-                                          (or knowledge-path "the relevant role knowledge file"))))
+                          (concat (format "⚠️ This report contains Knowledge Discoveries. Update the knowledge file at %s before proceeding.\n\n"
+                                          (or knowledge-path "the relevant role knowledge file"))
+                                  message))
                       message))
                 message))
              (lead-status (agent-shell-team--agent-status lead-buf)))
