@@ -105,6 +105,9 @@ without prompting for confirmation."
 (defvar-local agent-shell-team--ephemeral nil
   "When non-nil, this agent was auto-spawned and should be dismissed after task completion.")
 
+(defvar-local agent-shell-team--watcher-setup-p nil
+  "When non-nil, the tool-call watcher has already been set up for this buffer.")
+
 ;;; Global registry
 
 (defvar agent-shell-team--sessions (make-hash-table :test 'equal)
@@ -917,6 +920,8 @@ Route the status update directly to the lead agent's queue."
            (agent-shell-team--queue-message session-id lead-buf
                                             (list :from "agent" :title "Task Update" :message message)))
           ('dead (agent-shell-team--log session-id "WARNING: lead buffer is dead")))
+        ;; Ensure drain timer is running when messages are queued
+        (agent-shell-team--start-drain-timer)
         ;; Handle group completion tracking if status is "finished"
         (when (equal status "finished")
           (when-let ((group-id (gethash request-id agent-shell-team--request-to-group)))
@@ -1277,8 +1282,12 @@ WORKTREE-PATH and WORKTREE-NAME are for isolated mode."
        :on-event (lambda (_event)
                    (message "agent-shell-team: init-finished fired for %s (process=%s)"
                             buffer (get-buffer-process buffer))
-                   (message "agent-shell-team: setting up watcher...")
-                   (agent-shell-team--setup-tool-call-watcher buffer)
+                   ;; Guard: only set up tool-call watcher once per buffer
+                   (unless (buffer-local-value 'agent-shell-team--watcher-setup-p buffer)
+                     (message "agent-shell-team: setting up watcher...")
+                     (agent-shell-team--setup-tool-call-watcher buffer)
+                     (with-current-buffer buffer
+                       (setq agent-shell-team--watcher-setup-p t)))
                    ;; NOTE: Team announcements removed — they caused infinite
                    ;; busy/idle loops as agents responded to roster updates.
                    ;; Emacs already tracks agent status via the task queue.
