@@ -1208,6 +1208,8 @@
   (require 'my-agent-shell-keybindings)
   ;; Stuck-busy prevention fixes (watchdog, force-reset, interrupt cleanup)
   (require 'my-agent-shell-stuck-busy-fixes)
+  ;; Posframe-based prompt composition popup (C-RET to open)
+  (require 'my-agent-shell-compose)
   ;; Keybinding for quick access
   (map! :leader
         :desc "Claude (Emacs MCP)" "c c" #'agent-shell-emacs-mcp

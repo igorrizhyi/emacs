@@ -298,14 +298,15 @@
 If already in the lead buffer, toggle back to the previous buffer."
   (interactive)
   (let ((lead-buffer
-         (catch 'found
-           (maphash (lambda (_sid agents)
-                      (dolist (agent agents)
-                        (when (and (equal (alist-get 'role agent) "lead")
-                                   (buffer-live-p (alist-get 'buffer agent)))
-                          (throw 'found (alist-get 'buffer agent)))))
-                    agent-shell-team--sessions)
-           nil)))
+         (when (boundp 'agent-shell-team--sessions)
+           (catch 'found
+             (maphash (lambda (_sid agents)
+                        (dolist (agent agents)
+                          (when (and (equal (alist-get 'role agent) "lead")
+                                     (buffer-live-p (alist-get 'buffer agent)))
+                            (throw 'found (alist-get 'buffer agent)))))
+                      agent-shell-team--sessions)
+             nil))))
     (cond
      ;; Already in the lead buffer — toggle back
      ((and lead-buffer (eq (current-buffer) lead-buffer))
@@ -322,6 +323,7 @@ If already in the lead buffer, toggle back to the previous buffer."
 
      ;; No lead session — start one
      (t
+      (require 'agent-shell-team)
       (let* ((session-id (agent-shell-team--generate-session-id))
              (buf (agent-shell-team--start-agent session-id "lead" "neighbor" default-directory nil nil)))
         (switch-to-buffer buf)
