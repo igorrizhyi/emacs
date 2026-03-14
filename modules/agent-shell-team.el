@@ -451,8 +451,9 @@ Include the new branch name in your taskUpdate so the lead knows what to merge.
 
 ## Knowledge Base
 - If the lead points you to a knowledge file, read it BEFORE starting work.
-- In your report, note any project-specific nuances you discovered:
-  gotchas, non-obvious conventions, environment quirks, workarounds.
+- In your report, include a `## Knowledge Discoveries` section at the end.
+  List any reusable insights: gotchas, conventions, environment quirks,
+  architecture decisions. Use bullet points. If none, write \"None\".
   The lead will extract these into the shared knowledge base."
           session-id worktree-path worktree-name session-id))
 
@@ -480,9 +481,10 @@ Your responsibilities:
 
 ## Knowledge Base
 - If the lead points you to a knowledge file, read it BEFORE starting work.
-- In your report, note any diagnostic patterns, common failure modes, or
-  environment-specific issues you discovered. The lead will extract these
-  into the shared knowledge base."
+- In your report, include a `## Knowledge Discoveries` section at the end.
+  List any reusable insights: gotchas, conventions, environment quirks,
+  architecture decisions. Use bullet points. If none, write \"None\".
+  The lead will extract these into the shared knowledge base."
           session-id worktree-path session-id))
 
 (defun agent-shell-team--tester-neighbor-prompt (session-id working-dir)
@@ -510,9 +512,10 @@ Your responsibilities:
 
 ## Knowledge Base
 - If the lead points you to a knowledge file, read it BEFORE starting work.
-- In your report, note any diagnostic patterns, common failure modes, or
-  environment-specific issues you discovered. The lead will extract these
-  into the shared knowledge base."
+- In your report, include a `## Knowledge Discoveries` section at the end.
+  List any reusable insights: gotchas, conventions, environment quirks,
+  architecture decisions. Use bullet points. If none, write \"None\".
+  The lead will extract these into the shared knowledge base."
           session-id working-dir session-id))
 
 (defun agent-shell-team--researcher-prompt (session-id working-dir)
@@ -538,9 +541,10 @@ Your responsibilities:
 
 ## Knowledge Base
 - If the lead points you to a knowledge file, read it BEFORE starting work.
-- In your report, note any architectural insights, undocumented patterns,
-  or codebase conventions you discovered. The lead will extract these
-  into the shared knowledge base."
+- In your report, include a `## Knowledge Discoveries` section at the end.
+  List any reusable insights: gotchas, conventions, environment quirks,
+  architecture decisions. Use bullet points. If none, write \"None\".
+  The lead will extract these into the shared knowledge base."
           session-id working-dir session-id))
 
 (defun agent-shell-team--get-system-prompt (role mode session-id &optional worktree-path worktree-name working-dir)
@@ -1008,9 +1012,11 @@ reached its max agent count, auto-spawn a new agent."
          (request-id (plist-get task :request-id))
          (report-path (plist-get task :report-path))
          (session-id (plist-get task :session-id))
+         (role (plist-get task :role))
          (message (plist-get task :message))
-         (enriched (format "%s\n\n[Request ID: %s]\nWrite your detailed report to: %s\nReference this Request ID in your completion notification."
-                           message request-id report-path)))
+         (knowledge-path (agent-shell-team--knowledge-file role))
+         (enriched (format "%s\n\nBefore starting, read the knowledge file for your role: %s\n\n[Request ID: %s]\nWrite your detailed report to: %s\nReference this Request ID in your completion notification."
+                           message knowledge-path request-id report-path)))
     (agent-shell-team--log session-id
                            (format "[assign] %s -> %s (request: %s)"
                                    (plist-get task :role)
