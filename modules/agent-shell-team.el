@@ -1030,6 +1030,11 @@ reached its max agent count, auto-spawn a new agent."
                        (memq (agent-shell-team--agent-status (alist-get 'buffer targeted-agent))
                              '(busy initializing)))
                   (push task remaining))
+                 ;; Targeted assignment: agent NOT found — re-queue to wait
+                 (target
+                  (agent-shell-team--log session-id
+                   (format "[assign] Targeted agent %S not found for role %s, re-queuing" target role))
+                  (push task remaining))
                  ;; Normal assignment: find any idle agent for this role
                  (t
                   (let ((idle-agent (agent-shell-team--find-idle-agent session-id role)))
