@@ -195,10 +195,20 @@ Returns nil if no connection info exists for the project in this instance."
 
 ;;; Port Registration
 
+(defun claude-code-mcp--resolve-main-project-root (path)
+  "If PATH is inside a .claude/worktrees/ dir, return the parent project root.
+Worktree agents have cwd like /project/.claude/worktrees/abc/ but should
+use /project/ as their project root for MCP connection scoping."
+  (let ((pos (string-match "/\\.claude/worktrees/" path)))
+    (if pos
+        (substring path 0 pos)
+      path)))
+
 (defun claude-code-mcp-register-port (project-root port)
-  "Register PORT for PROJECT-ROOT."
-  ;; Normalize project root by removing trailing slash
-  (let ((normalized-root (claude-code-normalize-project-root project-root)))
+  "Register PORT for PROJECT-ROOT.
+Resolves worktree paths to the main project root before normalization."
+  (let* ((resolved-root (claude-code-mcp--resolve-main-project-root project-root))
+         (normalized-root (claude-code-normalize-project-root resolved-root)))
     ;; Initialize connection info for this project
     (claude-code-mcp-initialize-connection-info normalized-root)
     ;; Store port in connection info for reconnection
@@ -210,9 +220,10 @@ Returns nil if no connection info exists for the project in this instance."
 (defun claude-code-mcp-unregister-port (project-root)
   "Unregister the MCP port for PROJECT-ROOT and disconnect.
 This function is called when the MCP server shuts down or when
-the Claude Code session ends.  It normalizes the project root
-and disconnects the WebSocket connection for that project."
-  (let* ((normalized-root (claude-code-normalize-project-root project-root)))
+the Claude Code session ends.  It resolves worktree paths, normalizes
+the project root, and disconnects the WebSocket connection."
+  (let* ((resolved-root (claude-code-mcp--resolve-main-project-root project-root))
+         (normalized-root (claude-code-normalize-project-root resolved-root)))
     (claude-code-mcp-disconnect normalized-root)))
 
 ;;; Connection Management
