@@ -87,7 +87,7 @@
         (with-selected-window win
           (posframe-show posframe-buf
                          :position (point-max)
-                         :poshandler #'posframe-poshandler-window-bottom-center
+                         :poshandler #'posframe-poshandler-window-top-center
                          :border-width 1
                          :border-color "#3a5a6a"
                          :background-color "#1a2a37"
