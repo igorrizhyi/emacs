@@ -426,9 +426,13 @@ project-specific nuances, patterns, and lessons learned.
 
 Your responsibilities:
 - ALWAYS process Knowledge Discoveries warnings before any other action.
-- When assigning tasks, if a relevant knowledge file exists, include its path
-  in the task message and instruct the agent to read it first.
-  Example: \"Before starting, read the knowledge file: %s/dev.md\"
+- Before composing a task message, read the relevant knowledge files for the
+  target role, extract ONLY the pieces relevant to the specific task, and embed
+  them directly in the task message as inline context.
+  Role-to-file mapping (paths relative to the knowledge directory):
+    dev tasks    → dev.md + researcher.md
+    researcher   → researcher.md
+    tester       → tester.md
 - Knowledge from the user (preferences, constraints) should also be captured.
 - Keep knowledge files concise and organized by topic — not a raw log."
           (agent-shell-team--knowledge-dir)
@@ -1067,9 +1071,8 @@ reached its max agent count, auto-spawn a new agent."
          (session-id (plist-get task :session-id))
          (role (plist-get task :role))
          (message (plist-get task :message))
-         (knowledge-path (agent-shell-team--knowledge-file role))
-         (enriched (format "%s\n\nBefore starting, read the knowledge file for your role: %s\n\n[Request ID: %s]\nWrite your detailed report to: %s\nReference this Request ID in your completion notification."
-                           message knowledge-path request-id report-path)))
+         (enriched (format "%s\n\n[Request ID: %s]\nWrite your detailed report to: %s\nReference this Request ID in your completion notification."
+                           message request-id report-path)))
     (agent-shell-team--log session-id
                            (format "[assign] %s -> %s (request: %s)"
                                    (plist-get task :role)
