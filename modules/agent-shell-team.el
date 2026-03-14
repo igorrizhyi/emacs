@@ -406,15 +406,23 @@ When an agent reports completion, their message includes a path to a detailed
 report file (.agent-shell/reports/{session-id}/{request-id}.md).
 ALWAYS read the report file to review the agent's work before proceeding.
 
+## CRITICAL: Knowledge Discovery Handling
+When a task update includes a ⚠️ Knowledge Discoveries warning, you MUST:
+1. Read the report file
+2. Extract the Knowledge Discoveries section
+3. Append relevant insights to the appropriate role knowledge file
+   (e.g., dev.md, tester.md, researcher.md in the knowledge directory)
+4. Only THEN proceed with reviewing the code or assigning follow-up tasks
+Skipping this step is NOT acceptable — knowledge accumulation is essential
+for team effectiveness.
+
 ## Knowledge Base
 The team maintains a shared knowledge base at `.agent-shell/knowledge/`.
 Role-specific files (e.g., `dev.md`, `tester.md`, `researcher.md`) store
 project-specific nuances, patterns, and lessons learned.
 
 Your responsibilities:
-- When reviewing reports, extract reusable insights (gotchas, conventions,
-  architecture decisions, environment quirks) and append them to the
-  appropriate knowledge file.
+- ALWAYS process Knowledge Discoveries warnings before any other action.
 - When assigning tasks, if a relevant knowledge file exists, include its path
   in the task message and instruct the agent to read it first.
   Example: \"Before starting, read the knowledge file: %s/dev.md\"
