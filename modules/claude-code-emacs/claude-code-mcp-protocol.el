@@ -42,6 +42,7 @@
 (declare-function claude-code-mcp-get-websocket "claude-code-mcp-connection" (project-root))
 (declare-function claude-code-mcp-set-websocket "claude-code-mcp-connection" (websocket project-root))
 (declare-function claude-code-mcp-handle-pong "claude-code-mcp-connection" (project-root))
+(declare-function claude-code-mcp-handle-connection-lost "claude-code-mcp-connection" (project-root))
 
 ;; Tool handler forward declarations
 (declare-function claude-code-mcp-handle-getOpenBuffers "claude-code-mcp-tools" (params))
@@ -236,7 +237,8 @@ are sent back on this exact connection to avoid cross-agent routing."
 (defun claude-code-mcp-on-close (_websocket project-root)
   "Handle WebSocket close for PROJECT-ROOT."
   (claude-code-mcp-set-websocket nil project-root)
-  (message "MCP WebSocket connection closed for project %s" project-root))
+  (message "MCP WebSocket connection closed for project %s" project-root)
+  (claude-code-mcp-handle-connection-lost project-root))
 
 (provide 'claude-code-mcp-protocol)
 ;;; claude-code-mcp-protocol.el ends here
