@@ -783,6 +783,8 @@ Only the lead role may call this.  Returns an alist with success/message."
          (session-id (or (map-elt raw-input 'session_id)
                          (map-elt raw-input "session_id")
                          agent-shell-team--session-id))
+         (force (or (map-elt raw-input 'force)
+                    (map-elt raw-input "force")))
          (_warn (unless session-id
                   (message "[agent-shell-team] WARNING: dismissAgent has no session-id, dropping"))))
     (cond
@@ -806,16 +808,50 @@ Only the lead role may call this.  Returns an alist with success/message."
                                 (string-match-p (regexp-quote target) (buffer-name buf)))
                            (and (buffer-live-p buf)
                                 (eq buf (gethash target agent-shell-team--request-to-buffer)))))
-              (setq found t)
-              (agent-shell-team--log session-id
-               (format "[dismissAgent] Cleaning up %s (%s)" role (buffer-name buf)))
-              (agent-shell-team--cleanup-agent
-               buf session-id (alist-get 'worktree agent)))))
-        (if found
-            `((success . t)
-              (message . ,(format "Agent matching '%s' dismissed" target)))
+              (let ((status (agent-shell-team--agent-status buf)))
+                (if (and (memq status '(busy initializing))
+                         (not force))
+                    ;; Refuse to dismiss busy/initializing agents without force
+                    (let ((current-request-id nil))
+                      (maphash (lambda (k v)
+                                 (when (eq v buf)
+                                   (setq current-request-id k)))
+                               agent-shell-team--request-to-buffer)
+                      (setq found 'refused)
+                      (agent-shell-team--log session-id
+                       (format "[dismissAgent] REFUSED: %s (%s) is %s, request: %s"
+                               role (buffer-name buf) status current-request-id)))
+                  ;; OK to dismiss
+                  (setq found t)
+                  (agent-shell-team--log session-id
+                   (format "[dismissAgent] Cleaning up %s (%s)" role (buffer-name buf)))
+                  (agent-shell-team--cleanup-agent
+                   buf session-id (alist-get 'worktree agent)))))))
+        (cond
+         ((eq found 'refused)
+          (let ((current-request-id nil)
+                (status nil))
+            ;; Re-find the agent to get status info for error message
+            (dolist (agent all-agents)
+              (let ((wt-name (alist-get 'worktree-name agent))
+                    (buf (alist-get 'buffer agent)))
+                (when (or (and wt-name (string-match-p (regexp-quote target) wt-name))
+                          (and (buffer-live-p buf)
+                               (string-match-p (regexp-quote target) (buffer-name buf))))
+                  (setq status (agent-shell-team--agent-status buf))
+                  (maphash (lambda (k v)
+                             (when (eq v buf)
+                               (setq current-request-id k)))
+                           agent-shell-team--request-to-buffer))))
+            `((success . nil)
+              (message . ,(format "Cannot dismiss agent '%s': status is %s (request: %s). Use force: true to override."
+                                  target status (or current-request-id "unknown"))))))
+         ((eq found t)
+          `((success . t)
+            (message . ,(format "Agent matching '%s' dismissed" target))))
+         (t
           `((success . nil)
-            (message . ,(format "No agent found matching '%s'" target)))))))))
+            (message . ,(format "No agent found matching '%s'" target))))))))))
 
 (defun agent-shell-team--cleanup-agent (buffer session-id worktree-path)
   "Clean up BUFFER: unregister from session, kill buffer, optionally remove worktree."
@@ -823,11 +859,28 @@ Only the lead role may call this.  Returns an alist with success/message."
    (format "[cleanup] Killing agent buffer %s%s"
            (if (buffer-live-p buffer) (buffer-name buffer) "(already dead)")
            (if worktree-path (format ", removing worktree %s" worktree-path) "")))
-  ;; Clean up request-to-buffer mappings for this agent
-  (maphash (lambda (k v)
-             (when (eq v buffer)
-               (remhash k agent-shell-team--request-to-buffer)))
-           (copy-hash-table agent-shell-team--request-to-buffer))
+  ;; Clean up request-to-buffer mappings and associated group tracking for this agent
+  (let ((removed-request-ids nil))
+    (maphash (lambda (k v)
+               (when (eq v buffer)
+                 (push k removed-request-ids)
+                 (remhash k agent-shell-team--request-to-buffer)))
+             (copy-hash-table agent-shell-team--request-to-buffer))
+    ;; Clean up group tracking for removed request-ids
+    (dolist (rid removed-request-ids)
+      (when-let ((group-id (gethash rid agent-shell-team--request-to-group)))
+        (let ((group (gethash group-id agent-shell-team--task-groups)))
+          (when group
+            (plist-put group :pending (delete rid (plist-get group :pending)))
+            (agent-shell-team--log session-id
+             (format "[cleanup] Removed request %s from group %s, %d pending"
+                     rid group-id (length (plist-get group :pending))))
+            (when (null (plist-get group :pending))
+              (agent-shell-team--notify-group-complete session-id group-id group)
+              (dolist (completed-rid (plist-get group :completed))
+                (remhash completed-rid agent-shell-team--request-to-group))
+              (remhash group-id agent-shell-team--task-groups))))
+        (remhash rid agent-shell-team--request-to-group))))
   (when (buffer-live-p buffer)
     (agent-shell-team--unregister-agent buffer)
     (kill-buffer buffer))
@@ -1092,6 +1145,11 @@ reached its max agent count, auto-spawn a new agent."
                                    (plist-get task :role)
                                    (buffer-name buf)
                                    request-id))
+    ;; Remove stale request-id mappings for this buffer before adding the new one
+    (maphash (lambda (k v)
+               (when (eq v buf)
+                 (remhash k agent-shell-team--request-to-buffer)))
+             (copy-hash-table agent-shell-team--request-to-buffer))
     (puthash request-id buf agent-shell-team--request-to-buffer)
     (agent-shell-team--prompt-agent
      buf (format "Task Assignment -- %s" enriched))))
