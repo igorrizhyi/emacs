@@ -893,6 +893,37 @@ Route the status update directly to the lead agent's queue."
                               (if commit (format "\nCommit: %s" commit) "")
                               (if report-path (format "\nReport: %s" report-path) "")
                               content))
+             ;; Check report for Knowledge Discoveries on finished tasks
+             (message
+              (if (and (equal status "finished")
+                       report-path
+                       (file-readable-p report-path))
+                  (let ((has-discoveries
+                         (with-temp-buffer
+                           (insert-file-contents report-path)
+                           (goto-char (point-min))
+                           (and (re-search-forward "^## Knowledge Discoveries" nil t)
+                                (let ((section-start (match-end 0)))
+                                  (not (string-match-p
+                                        "\\`[ \t\n]*\\(?:None\\|N/A\\)?[ \t\n]*\\'"
+                                        (buffer-substring-no-properties
+                                         section-start
+                                         (or (save-excursion
+                                               (goto-char section-start)
+                                               (when (re-search-forward "^## " nil t)
+                                                 (match-beginning 0)))
+                                             (point-max))))))))))
+                    (if has-discoveries
+                        (let* ((agent-buf (gethash request-id agent-shell-team--request-to-buffer))
+                               (role (when (buffer-live-p agent-buf)
+                                       (buffer-local-value 'agent-shell-team--role agent-buf)))
+                               (knowledge-path (when role
+                                                 (agent-shell-team--knowledge-file role))))
+                          (if knowledge-path
+                              (concat message "\n\n⚠️ This report contains Knowledge Discoveries. Update the knowledge file at " knowledge-path " before proceeding.")
+                            message))
+                      message))
+                message))
              (lead-status (agent-shell-team--agent-status lead-buf)))
         ;; Log it
         (agent-shell-team--log session-id
