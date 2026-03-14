@@ -294,14 +294,21 @@
     (my-layout-show-in-left-sidebar magit-buffer)))
 
 (defun my-layout-smart-agent-shell ()
-  "Smart agent-shell handler: start, show, or switch back."
+  "Switch to the agent-shell team lead buffer, or start a new team session.
+If already in the lead buffer, toggle back to the previous buffer."
   (interactive)
-  (let ((agent-buffer (seq-find (lambda (buf)
-                                  (string-match-p "Claude Code Agent" (buffer-name buf)))
-                                (buffer-list))))
+  (let ((lead-buffer
+         (catch 'found
+           (maphash (lambda (_sid agents)
+                      (dolist (agent agents)
+                        (when (and (equal (alist-get 'role agent) "lead")
+                                   (buffer-live-p (alist-get 'buffer agent)))
+                          (throw 'found (alist-get 'buffer agent)))))
+                    agent-shell-team--sessions)
+           nil)))
     (cond
-     ;; Already in an agent-shell buffer — switch to previous buffer
-     ((and agent-buffer (eq (current-buffer) agent-buffer))
+     ;; Already in the lead buffer — toggle back
+     ((and lead-buffer (eq (current-buffer) lead-buffer))
       (let ((prev (seq-find (lambda (buf)
                               (and (not (eq buf (current-buffer)))
                                    (buffer-live-p buf)
@@ -309,10 +316,16 @@
                             (buffer-list))))
         (when prev (switch-to-buffer prev))))
 
-     ;; Agent-shell buffer exists or not — always use agent-shell to switch
-     ;; (adds context about the file we came from)
+     ;; Lead buffer exists — switch to it
+     (lead-buffer
+      (switch-to-buffer lead-buffer))
+
+     ;; No lead session — start one
      (t
-      (agent-shell-emacs-mcp)))))
+      (let* ((session-id (agent-shell-team--generate-session-id))
+             (buf (agent-shell-team--start-agent session-id "lead" "neighbor" default-directory nil nil)))
+        (switch-to-buffer buf)
+        (agent-shell-team--start-drain-timer))))))
 
 (defun my-layout-show-file-main-center (file-path &optional line-num)
   "Show FILE-PATH in main center window, optionally go to LINE-NUM."
