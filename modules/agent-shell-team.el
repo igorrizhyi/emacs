@@ -753,13 +753,9 @@ Only the lead role may call this.  Returns an alist with success/message."
                      (map-elt raw-input "target")))
          (session-id (or (map-elt raw-input 'session_id)
                          (map-elt raw-input "session_id")
-                         agent-shell-team--session-id
-                         ;; Fallback: use sole session if only one exists
-                         (let ((sessions nil))
-                           (maphash (lambda (k _v) (push k sessions))
-                                    agent-shell-team--sessions)
-                           (when (= (length sessions) 1)
-                             (car sessions))))))
+                         agent-shell-team--session-id))
+         (_warn (unless session-id
+                  (message "[agent-shell-team] WARNING: dismissAgent has no session-id, dropping"))))
     (cond
      ;; Guard: need a session
      ((not session-id)
@@ -830,13 +826,7 @@ Extract tasks, generate IDs, register groups, and enqueue for assignment."
                                (agent-shell-team--generate-request-id)))
                (session-id (or (map-elt task 'session_id)
                                (map-elt task "session_id")
-                               agent-shell-team--session-id
-                               ;; Fallback: use sole session if only one exists
-                               (let ((sessions nil))
-                                 (maphash (lambda (k _v) (push k sessions))
-                                          agent-shell-team--sessions)
-                                 (when (= (length sessions) 1)
-                                   (car sessions)))))
+                               agent-shell-team--session-id))
                (_warn (unless session-id
                         (message "[agent-shell-team] WARNING: tasksPut has no session-id, dropping")))
                (reports-dir (agent-shell-team--reports-dir session-id))
@@ -884,13 +874,7 @@ Route the status update directly to the lead agent's queue."
                           (map-elt raw-input "report_path")))
          (session-id (or (map-elt raw-input 'session_id)
                         (map-elt raw-input "session_id")
-                        agent-shell-team--session-id
-                        ;; Fallback: use sole session if only one exists
-                        (let ((sessions nil))
-                          (maphash (lambda (k _v) (push k sessions))
-                                   agent-shell-team--sessions)
-                          (when (= (length sessions) 1)
-                            (car sessions)))))
+                        agent-shell-team--session-id))
          (_warn (unless session-id
                   (message "[agent-shell-team] WARNING: taskUpdate has no session-id, dropping")))
          (lead-buf (when session-id

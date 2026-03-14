@@ -86,8 +86,11 @@ Returns a Claude Code config that includes our Emacs MCP server."
   (agent-shell-emacs-mcp--ensure-mcp-ready)
   ;; Track this session
   (puthash (buffer-name buffer) (current-time) agent-shell-emacs-mcp--active-sessions)
-  ;; Create the anthropic client (reuse their client creation)
-  (agent-shell-anthropic-make-claude-client :buffer buffer))
+  ;; Create the anthropic client with EMACS_INSTANCE_ID for session isolation
+  (let ((agent-shell-anthropic-claude-environment
+         (cons (format "EMACS_INSTANCE_ID=%d" (emacs-pid))
+               agent-shell-anthropic-claude-environment)))
+    (agent-shell-anthropic-make-claude-client :buffer buffer)))
 
 (defun agent-shell-emacs-mcp--welcome-message (config)
   "Welcome message for Emacs MCP integrated Claude in CONFIG."

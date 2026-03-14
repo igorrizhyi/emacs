@@ -762,14 +762,19 @@ async function main() {
   const sessionId = normalizeProjectRoot(process.cwd());
   
   // Determine target Emacs instance for this MCP server
-  const runningPids = await getRunningEmacsPids();
-  let targetInstanceId: number | undefined;
-  
-  // Try to determine which Emacs instance should handle this project
-  // For now, we'll use the last started instance (highest PID) as it's likely the one that started Claude Code
-  if (runningPids.length > 0) {
-    targetInstanceId = Math.max(...runningPids);
-    log(`Target Emacs instance determined: ${targetInstanceId} (latest among: ${runningPids.join(', ')})`);
+  const envInstanceId = process.env.EMACS_INSTANCE_ID
+    ? parseInt(process.env.EMACS_INSTANCE_ID, 10)
+    : undefined;
+  let targetInstanceId = envInstanceId;
+
+  if (!targetInstanceId) {
+    const runningPids = await getRunningEmacsPids();
+    if (runningPids.length > 0) {
+      targetInstanceId = Math.max(...runningPids);
+    }
+  }
+  if (targetInstanceId) {
+    log(`Target Emacs instance: ${targetInstanceId}${envInstanceId ? ' (from env)' : ' (pid heuristic)'}`);
   }
 
   // Start Emacs bridge with port 0 for automatic assignment and target instance

@@ -25,7 +25,8 @@ export async function handleTasksPut(bridge: EmacsBridge, args: TasksPutArgs): P
 
   try {
     const result = await bridge.request('tasksPut', {
-      tasks: args.tasks
+      tasks: args.tasks,
+      session_id: args.session_id,
     });
 
     const success = (result as any).success === true;
