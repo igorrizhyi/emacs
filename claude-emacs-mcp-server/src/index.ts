@@ -659,6 +659,7 @@ async function notifyAllEmacsInstances(port: number): Promise<boolean> {
   const projectRoot = normalizeProjectRoot(process.cwd());
   const elisp = `(claude-code-mcp-register-port "${projectRoot}" ${port})`;
   const runningPids = await getRunningEmacsPids();
+  runningPids.sort((a, b) => b - a); // Most recent PID first
 
   for (const pid of runningPids) {
     const serverName = `emacs-${pid}`;

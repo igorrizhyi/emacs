@@ -220,10 +220,29 @@ export class EmacsBridge extends EventEmitter {
       }
     }
     
-    // Fallback to session-based or first client
+    // Fallback to session-based lookup
+    if (!client && this.sessionId) {
+      const sessionClient = this.clients.get(this.sessionId);
+      if (sessionClient) {
+        client = sessionClient;
+        this.log(`Found client by exact session match: ${this.sessionId}`);
+      }
+    }
+
+    // Try matching by project root (sessionId is projectRoot, client keys are "PID:projectRoot")
+    if (!client && this.sessionId) {
+      for (const [sid, info] of this.clientInstances.entries()) {
+        if (info.projectRoot === this.sessionId) {
+          client = info.ws;
+          this.log(`Found client by project root match: session=${sid}`);
+          break;
+        }
+      }
+    }
+
+    // Last resort: arbitrary first client
     if (!client) {
-      const sessionClient = this.sessionId ? this.clients.get(this.sessionId) : null;
-      client = sessionClient || Array.from(this.clients.values())[0];
+      client = Array.from(this.clients.values())[0];
     }
 
     if (!client) {
