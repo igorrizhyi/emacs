@@ -115,7 +115,7 @@
 
 (defun my/agent-shell-context-advice (result)
   "After-advice: intercept context, remove from buffer, show in posframe."
-  (when result
+  (when (and result (listp result))
     (let* ((buffer (alist-get :buffer result))
            (start (alist-get :start result))
            (end (alist-get :end result)))
