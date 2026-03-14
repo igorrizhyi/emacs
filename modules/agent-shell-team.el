@@ -557,7 +557,14 @@ Your responsibilities:
 - In your report, include a `## Knowledge Discoveries` section at the end.
   List any reusable insights: gotchas, conventions, environment quirks,
   architecture decisions. Use bullet points. If none, write \"None\".
-  The lead will extract these into the shared knowledge base."
+  The lead will extract these into the shared knowledge base.
+- When investigating a BUG, also include relevant bug insights — but also only if they
+  pass this filter (skip trivial/obvious errors):
+  - Deceptive APIs: accepts input that looks correct but silently needs something else
+  - Misleading errors: real cause hidden behind a cascading or unrelated error message
+  - Implicit contracts: undocumented units, expected formats, ordering requirements
+  Do NOT include: syntax errors, wrong argument counts, or anything a stack trace
+  points at directly. The test: \"would reading this save someone a debugging session?\""
           session-id working-dir session-id))
 
 (defun agent-shell-team--get-system-prompt (role mode session-id &optional worktree-path worktree-name working-dir)
