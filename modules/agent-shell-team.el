@@ -364,15 +364,17 @@ and report path. When you receive one, review the report and branch.
 When a dev signals completion, review their branch with:
   git diff main...{branch-name}
 If approved: git merge {branch-name}, then dismiss the dev:
-  dismissAgent(target: \"worktree-name\")
+  dismissAgent(target: \"request-id\")
+  The `target` parameter accepts a request ID (preferred), worktree name, or buffer name.
+  Request ID is the most reliable identifier since agents may rename their branches.
   This immediately cleans up the agent buffer and worktree. No notifications are sent.
   Then dispatch a tester if needed via tasksPut.
 If changes needed: send a new tasksPut with fix instructions and the `target` field set to the
-agent's worktree name or buffer name — this routes the task directly to that agent (useful for
-follow-up fixes where the agent already has context).
+agent's request ID, worktree name, or buffer name — this routes the task directly to that agent
+(useful for follow-up fixes where the agent already has context).
 
 Use `dismissAgent` for any role (dev, tester, researcher) when their work is complete.
-The `target` parameter accepts a worktree name or buffer name (substring match).
+The `target` parameter accepts a request ID (preferred), worktree name, or buffer name (substring match).
 
 ## Sub-Tasking
 You own ALL task decomposition. When you receive ANY task:
