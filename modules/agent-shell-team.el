@@ -439,6 +439,13 @@ Your responsibilities:
 - The lead will review and merge your work, or request fixes if needed.
 - You receive atomic tasks from the lead. Do not split or delegate — just implement.
 
+## Branch Naming (do this FIRST)
+Immediately after receiving a task, rename your branch before any other work:
+  git branch -m <prefix>/<short-slug>
+Prefixes: feature/, fix/, refactor/, docs/, test/, chore/
+Slug: 2-4 word kebab-case summary (e.g. feature/dark-mode-toggle, fix/auth-token-expiry).
+Include the new branch name in your taskUpdate so the lead knows what to merge.
+
 ## Knowledge Base
 - If the lead points you to a knowledge file, read it BEFORE starting work.
 - In your report, note any project-specific nuances you discovered:
