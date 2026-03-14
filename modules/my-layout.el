@@ -319,15 +319,24 @@ If already in the lead buffer, toggle back to the previous buffer."
 
      ;; Lead buffer exists — switch to it
      (lead-buffer
-      (switch-to-buffer lead-buffer))
+      (let ((text (unless (derived-mode-p 'agent-shell-mode)
+                    (agent-shell--context :shell-buffer lead-buffer))))
+        (switch-to-buffer lead-buffer)
+        (when text
+          (agent-shell--insert-to-shell-buffer :text text :shell-buffer lead-buffer))))
 
      ;; No lead session — start one
      (t
       (require 'agent-shell-team)
-      (let* ((session-id (agent-shell-team--generate-session-id))
+      (let* ((context-buffer (current-buffer))
+             (session-id (agent-shell-team--generate-session-id))
              (buf (agent-shell-team--start-agent session-id "lead" "neighbor" default-directory nil nil)))
         (switch-to-buffer buf)
-        (agent-shell-team--start-drain-timer))))))
+        (agent-shell-team--start-drain-timer)
+        (unless (with-current-buffer context-buffer (derived-mode-p 'agent-shell-mode))
+          (when-let ((text (with-current-buffer context-buffer
+                            (agent-shell--context :shell-buffer buf))))
+            (agent-shell--insert-to-shell-buffer :text text :shell-buffer buf))))))))
 
 (defun my-layout-show-file-main-center (file-path &optional line-num)
   "Show FILE-PATH in main center window, optionally go to LINE-NUM."
