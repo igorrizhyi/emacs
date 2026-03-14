@@ -894,12 +894,18 @@ Route the status update directly to the lead agent's queue."
          (lead-buf (when session-id
                      (agent-shell-team--get-lead session-id))))
     (when lead-buf
-      (let* ((message (format "Task Update [%s] — %s\nRequest ID: %s%s%s\n\n%s"
+      (let* ((agent-buf (gethash request-id agent-shell-team--request-to-buffer))
+             (agent-wt (when agent-buf
+                         (cl-loop for agent in (agent-shell-team--get-session-agents session-id)
+                                  when (eq (alist-get 'buffer agent) agent-buf)
+                                  return (alist-get 'worktree-name agent))))
+             (message (format "Task Update [%s] — %s\nRequest ID: %s%s%s%s\n\n%s"
                               status
                               request-id
                               request-id
                               (if commit (format "\nCommit: %s" commit) "")
                               (if report-path (format "\nReport: %s" report-path) "")
+                              (if agent-wt (format "\nAgent: %s" agent-wt) "")
                               content))
              ;; Check report for Knowledge Discoveries on finished tasks
              (message
@@ -921,8 +927,7 @@ Route the status update directly to the lead agent's queue."
                                    (and (not (string-empty-p text))
                                         (not (string-match-p "\\`\\(?:none\\|n/a\\)\\'" (downcase text)))))))))))
                     (if has-discoveries
-                        (let* ((agent-buf (gethash request-id agent-shell-team--request-to-buffer))
-                               (role (when (and agent-buf (buffer-live-p agent-buf))
+                        (let* ((role (when (and agent-buf (buffer-live-p agent-buf))
                                        (buffer-local-value 'agent-shell-team--role agent-buf)))
                                (knowledge-path (when role
                                                  (agent-shell-team--knowledge-file role))))
