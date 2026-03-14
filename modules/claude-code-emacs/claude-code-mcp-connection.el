@@ -88,7 +88,8 @@
   "Hash table mapping instance-specific project keys to connection info.
 Key format: \"{instance-id}:{project-root}\" (e.g., \"12345:/path/to/project\")
 Each value is an alist with keys:
-  - websocket: The WebSocket connection  
+  - websocket: The WebSocket connection
+  - port: The MCP server port (for reconnection)
   - request-id: Counter for JSON-RPC request IDs
   - pending-requests: Hash table of pending requests
   - connection-attempts: Number of connection attempts
@@ -165,6 +166,7 @@ Creates a new connection info structure with default values."
   (let* ((instance-key (claude-code-mcp-make-instance-project-key project-root))
          ;; QUESTION: '((websocket . nil)) みたいな書き方だと setcdr したときに全て変更されるのはなんで？
          (info (list (cons 'websocket nil)
+                     (cons 'port nil)
                      (cons 'request-id 0)
                      (cons 'pending-requests (make-hash-table :test 'equal))
                      (cons 'connection-attempts 0)
@@ -199,6 +201,9 @@ Returns nil if no connection info exists for the project in this instance."
   (let ((normalized-root (claude-code-normalize-project-root project-root)))
     ;; Initialize connection info for this project
     (claude-code-mcp-initialize-connection-info normalized-root)
+    ;; Store port in connection info for reconnection
+    (let ((info (claude-code-mcp-get-connection-info normalized-root)))
+      (setcdr (assoc 'port info) port))
     (message "MCP server registered on port %d for project %s" port normalized-root)
     (claude-code-mcp-try-connect-async normalized-root port)))
 
@@ -345,13 +350,20 @@ If CALLBACK is provided, call it with connection result."
     (setcdr (assoc 'last-pong-time info) (current-time))))
 
 (defun claude-code-mcp-handle-connection-lost (project-root)
-  "Handle lost connection for PROJECT-ROOT."
+  "Handle lost connection for PROJECT-ROOT and attempt reconnection."
   (message "MCP WebSocket connection lost for project %s, attempting reconnect..." project-root)
   ;; Stop timers
   (claude-code-mcp-stop-ping-timer project-root)
   (claude-code-mcp-stop-ping-timeout project-root)
   ;; Close existing connection
-  (claude-code-mcp-disconnect project-root))
+  (claude-code-mcp-disconnect project-root)
+  ;; Actually attempt reconnection
+  (let* ((info (claude-code-mcp-get-connection-info project-root))
+         (port (cdr (assoc 'port info))))
+    (when port
+      (setcdr (assoc 'connection-attempts info) 0)
+      (run-at-time claude-code-mcp-connection-retry-delay nil
+                   #'claude-code-mcp-try-connect-async project-root port))))
 
 ;;; Event notification functions
 
