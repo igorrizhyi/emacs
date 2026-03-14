@@ -152,7 +152,9 @@ Uses `org-id-uuid' if available, falls back to uuidgen."
 
 (defun agent-shell-team--short-session-id (session-id)
   "Return first 4 chars of SESSION-ID for display."
-  (substring session-id 0 (min 4 (length session-id))))
+  (if session-id
+      (substring session-id 0 (min 4 (length session-id)))
+    "????"))
 
 (defun agent-shell-team--generate-request-id ()
   "Generate a short unique request ID for task tracking."
@@ -910,32 +912,33 @@ Extract tasks, generate IDs, register groups, and enqueue for assignment."
                                (map-elt task "session_id")
                                agent-shell-team--session-id))
                (_warn (unless session-id
-                        (message "[agent-shell-team] WARNING: tasksPut has no session-id, dropping")))
-               (reports-dir (agent-shell-team--reports-dir session-id))
-               (report-path (expand-file-name (concat request-id ".md") reports-dir))
-               (entry (list :role role
-                            :message message
-                            :request-id request-id
-                            :group-id group-id
-                            :target target
-                            :session-id session-id
-                            :report-path report-path)))
-          ;; Register in group tracker if group_id is present
-          (when group-id
-            (let ((group (or (gethash group-id agent-shell-team--task-groups)
-                             (list :pending nil :completed nil :session-id session-id))))
-              (plist-put group :pending (cons request-id (plist-get group :pending)))
-              (puthash group-id group agent-shell-team--task-groups))
-            (puthash request-id group-id agent-shell-team--request-to-group))
-          ;; Append to FIFO queue
-          (setq agent-shell-team--task-queue
-                (append agent-shell-team--task-queue (list entry)))
-          (agent-shell-team--log session-id
-                                 (format "[tasksPut] Queued %s task: %s (request: %s%s)"
-                                         role
-                                         (truncate-string-to-width message 60 nil nil "...")
-                                         request-id
-                                         (if group-id (format ", group: %s" group-id) "")))))
+                        (message "[agent-shell-team] WARNING: tasksPut has no session-id, dropping"))))
+          (when session-id
+            (let* ((reports-dir (agent-shell-team--reports-dir session-id))
+                   (report-path (expand-file-name (concat request-id ".md") reports-dir))
+                   (entry (list :role role
+                                :message message
+                                :request-id request-id
+                                :group-id group-id
+                                :target target
+                                :session-id session-id
+                                :report-path report-path)))
+              ;; Register in group tracker if group_id is present
+              (when group-id
+                (let ((group (or (gethash group-id agent-shell-team--task-groups)
+                                 (list :pending nil :completed nil :session-id session-id))))
+                  (plist-put group :pending (cons request-id (plist-get group :pending)))
+                  (puthash group-id group agent-shell-team--task-groups))
+                (puthash request-id group-id agent-shell-team--request-to-group))
+              ;; Append to FIFO queue
+              (setq agent-shell-team--task-queue
+                    (append agent-shell-team--task-queue (list entry)))
+              (agent-shell-team--log session-id
+                                     (format "[tasksPut] Queued %s task: %s (request: %s%s)"
+                                             role
+                                             (truncate-string-to-width message 60 nil nil "...")
+                                             request-id
+                                             (if group-id (format ", group: %s" group-id) "")))))))
       ;; Try to assign immediately
       (agent-shell-team--try-assign-tasks)
       ;; Ensure drain timer is running for retries
