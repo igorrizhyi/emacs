@@ -467,7 +467,6 @@ Slug: 2-4 word kebab-case summary (e.g. feature/dark-mode-toggle, fix/auth-token
 Include the new branch name in your taskUpdate so the lead knows what to merge.
 
 ## Knowledge Base
-- If the lead points you to a knowledge file, read it BEFORE starting work.
 - In your report, include a `## Knowledge Discoveries` section at the end.
   List any reusable insights: gotchas, conventions, environment quirks,
   architecture decisions. Use bullet points. If none, write \"None\".
@@ -497,7 +496,6 @@ Your responsibilities:
 - You are the team's log detective. Collect, analyze, diagnose.
 
 ## Knowledge Base
-- If the lead points you to a knowledge file, read it BEFORE starting work.
 - In your report, include a `## Knowledge Discoveries` section at the end.
   List any reusable insights: gotchas, conventions, environment quirks,
   architecture decisions. Use bullet points. If none, write \"None\".
@@ -528,7 +526,6 @@ Your responsibilities:
 - You are the team's log detective. Collect, analyze, diagnose.
 
 ## Knowledge Base
-- If the lead points you to a knowledge file, read it BEFORE starting work.
 - In your report, include a `## Knowledge Discoveries` section at the end.
   List any reusable insights: gotchas, conventions, environment quirks,
   architecture decisions. Use bullet points. If none, write \"None\".
@@ -557,7 +554,6 @@ Your responsibilities:
 - You are the team's knowledge scout. Search, read, analyze, report.
 
 ## Knowledge Base
-- If the lead points you to a knowledge file, read it BEFORE starting work.
 - In your report, include a `## Knowledge Discoveries` section at the end.
   List any reusable insights: gotchas, conventions, environment quirks,
   architecture decisions. Use bullet points. If none, write \"None\".
