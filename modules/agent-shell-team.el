@@ -994,7 +994,7 @@ reached its max agent count, auto-spawn a new agent."
                                                          (alist-get 'buffer a))
                                       (memq (agent-shell-team--agent-status
                                              (alist-get 'buffer a))
-                                            '(initializing busy))))
+                                            '(initializing))))
                                role-agents)))
                     (progn
                       (agent-shell-team--log session-id
@@ -1289,7 +1289,10 @@ WORKTREE-PATH and WORKTREE-NAME are for isolated mode."
                    (when (fboundp 'doom-modeline-set-modeline)
                      (with-current-buffer buffer
                        (doom-modeline-set-modeline 'agent-shell-team)))
-                   (message "agent-shell-team: init-finished complete for %s" buffer)))
+                   (message "agent-shell-team: init-finished complete for %s" buffer)
+                   ;; Immediately try assigning queued tasks to this newly ready agent
+                   ;; instead of waiting up to 3s for the next drain timer tick
+                   (agent-shell-team--try-assign-tasks)))
       buffer)))
 
 (defun agent-shell-team--make-config (session-id role buffer-name)
