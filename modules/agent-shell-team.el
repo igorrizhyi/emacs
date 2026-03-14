@@ -920,8 +920,6 @@ Route the status update directly to the lead agent's queue."
            (agent-shell-team--queue-message session-id lead-buf
                                             (list :from "agent" :title "Task Update" :message message)))
           ('dead (agent-shell-team--log session-id "WARNING: lead buffer is dead")))
-        ;; Ensure drain timer is running when messages are queued
-        (agent-shell-team--start-drain-timer)
         ;; Handle group completion tracking if status is "finished"
         (when (equal status "finished")
           (when-let ((group-id (gethash request-id agent-shell-team--request-to-group)))
@@ -1137,7 +1135,8 @@ Use for background context like team roster updates and announcements."
   "Queue MSG for BUFFER for later delivery.
 _SESSION-ID is unused but kept for consistency."
   (let ((existing (gethash buffer agent-shell-team--message-queue)))
-    (puthash buffer (append existing (list msg)) agent-shell-team--message-queue)))
+    (puthash buffer (append existing (list msg)) agent-shell-team--message-queue)
+    (agent-shell-team--start-drain-timer)))
 
 (defun agent-shell-team--drain-queue (buffer)
   "Deliver any queued messages to BUFFER now that agent is idle."
