@@ -233,10 +233,10 @@ Reads JSON-RPC requests from stdin, processes them, and writes responses to stdo
                      (required . ["request_id" "status" "content"]))))
 
    `((name . "dismissAgent")
-     (description . "Dismiss a team agent by buffer name or worktree name. Only callable by the lead.")
+     (description . "Dismiss a team agent by buffer name, worktree name, or request ID. Only callable by the lead. Cleans up the agent buffer and worktree.")
      (inputSchema . ((type . "object")
                      (properties . ((target . ((type . "string")
-                                               (description . "Buffer name or worktree name of the agent to dismiss")))
+                                               (description . "Buffer name, worktree name, or request ID of the agent to dismiss")))
                                     (session_id . ((type . "string")
                                                    (description . "Optional session ID for multi-session routing")))))
                      (required . ["target"]))))))
