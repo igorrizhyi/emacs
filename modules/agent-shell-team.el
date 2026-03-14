@@ -989,7 +989,8 @@ Returns the new agent buffer."
       ("neighbor"
        (setq directory default-directory)))
     (let ((buffer (agent-shell-team--start-agent
-                   session-id role mode directory worktree-path worktree-name)))
+                   session-id role mode directory worktree-path worktree-name
+                   :no-focus t)))
       (with-current-buffer buffer
         (setq agent-shell-team--ephemeral t))
       (agent-shell-team--start-drain-timer)
@@ -1292,7 +1293,7 @@ Also detects agents stuck in busy state longer than
 
 ;;; Agent spawning
 
-(defun agent-shell-team--start-agent (session-id role mode &optional directory worktree-path worktree-name)
+(cl-defun agent-shell-team--start-agent (session-id role mode &optional directory worktree-path worktree-name &key no-focus)
   "Start a team agent and return its buffer.
 SESSION-ID is the team session UUID.
 ROLE is \"lead\", \"dev\", \"tester\", or \"researcher\".
@@ -1308,7 +1309,7 @@ WORKTREE-PATH and WORKTREE-NAME are for isolated mode."
     (message "agent-shell-team: about to call agent-shell--start with buffer-name=%s" buf-name)
     (let ((buffer (agent-shell--start
                    :config config
-                   :no-focus nil
+                   :no-focus no-focus
                    :new-session t
                    :session-strategy 'new
                    :outgoing-request-decorator
