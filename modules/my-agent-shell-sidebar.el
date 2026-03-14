@@ -14,6 +14,10 @@
 (require 'cl-lib)
 
 (declare-function shell-maker-submit "shell-maker")
+(declare-function evil-define-key* "evil-core")
+(declare-function evil-set-initial-state "evil-core")
+(declare-function evil-emacs-state "evil-states")
+(declare-function evil-normal-state "evil-states")
 (defvar agent-shell-team--sessions)
 (declare-function agent-shell-team--agent-status "agent-shell-team")
 (declare-function agent-shell-team--short-session-id "agent-shell-team")
@@ -207,6 +211,21 @@
                 (header-line (:background "#1a2232" :foreground "#c0d0e0"
                                :weight bold :box nil)))))
 
+;; Evil-mode integration: bind keys in normal state so they take priority
+(when (fboundp 'evil-define-key*)
+  (evil-define-key* 'normal my/team-sidebar-mode-map
+    "n" #'my/team-sidebar-next-agent
+    "p" #'my/team-sidebar-prev-agent
+    (kbd "RET") #'my/team-sidebar-switch-to-agent
+    "k" #'my/team-sidebar-kill-agent
+    "q" #'my/team-sidebar-quit
+    "g" #'my/team-sidebar-refresh
+    "i" #'my/team-sidebar-prompt))
+
+;; Open sidebar in normal state (not motion state from special-mode parent)
+(when (fboundp 'evil-set-initial-state)
+  (evil-set-initial-state 'my/team-sidebar-mode 'normal))
+
 ;;; ---- Navigation Commands ----------------------------------------------------
 
 (defun my/team-sidebar--agent-at-point ()
@@ -290,8 +309,13 @@
   :lighter " Prompt"
   :keymap my/team-sidebar-prompt-mode-map
   (if my/team-sidebar-prompt-mode
-      (setq buffer-read-only nil)
-    (setq buffer-read-only t)))
+      (progn
+        (setq buffer-read-only nil)
+        (when (fboundp 'evil-emacs-state)
+          (evil-emacs-state)))
+    (setq buffer-read-only t)
+    (when (fboundp 'evil-normal-state)
+      (evil-normal-state))))
 
 (defun my/team-sidebar-prompt ()
   "Enter inline prompt mode: insert a markdown code block at the top."
