@@ -1,1 +1,3 @@
 .local
+.agent-shell/
+.claude-code-mcp.log
