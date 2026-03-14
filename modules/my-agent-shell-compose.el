@@ -72,19 +72,12 @@
         (user-error "Shell is busy, try later"))
       (let ((parent (frame-parent (selected-frame)))
             (win (get-buffer-window target)))
-        (posframe-hide my/agent-shell-compose-buffer-name)
+        (posframe-delete-frame my/agent-shell-compose-buffer-name)
         (when parent
-          (raise-frame parent)
           (select-frame-set-input-focus parent)
           (if (and win (window-live-p win))
               (select-window win)
-            (select-window (frame-selected-window parent)))
-          (run-at-time 0.01 nil
-                       (lambda ()
-                         (when (frame-live-p parent)
-                           (select-frame-set-input-focus parent)
-                           (when (and win (window-live-p win))
-                             (select-window win)))))))
+            (select-window (frame-selected-window parent))))))
       ;; Restore context posframe if pending context exists
       (when (and (boundp 'my/agent-shell--pending-context)
                  (buffer-local-value 'my/agent-shell--pending-context target)
@@ -102,19 +95,12 @@
          (parent (frame-parent (selected-frame)))
          (win (and target (buffer-live-p target)
                    (get-buffer-window target))))
-    (posframe-hide my/agent-shell-compose-buffer-name)
+    (posframe-delete-frame my/agent-shell-compose-buffer-name)
     (when parent
-      (raise-frame parent)
       (select-frame-set-input-focus parent)
       (if (and win (window-live-p win))
           (select-window win)
-        (select-window (frame-selected-window parent)))
-      (run-at-time 0.01 nil
-                   (lambda ()
-                     (when (frame-live-p parent)
-                       (select-frame-set-input-focus parent)
-                       (when (and win (window-live-p win))
-                         (select-window win))))))
+        (select-window (frame-selected-window parent)))))
     ;; Restore context posframe if pending context exists
     (when (and target (buffer-live-p target)
                (boundp 'my/agent-shell--pending-context)
