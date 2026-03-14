@@ -43,6 +43,8 @@
                                 :position (point-max)
                                 :poshandler #'posframe-poshandler-window-bottom-center
                                 :accept-focus t
+                                :font (font-spec :family (face-attribute 'default :family)
+                                                 :size (max 8 (/ (font-get (face-attribute 'default :font) :size) 2)))
                                 :border-width 1
                                 :border-color "#3a7a9a"
                                 :background-color "#1a2a37"
@@ -67,9 +69,12 @@
         (user-error "Target shell buffer no longer exists"))
       (when (with-current-buffer target (shell-maker-busy))
         (user-error "Shell is busy, try later"))
-      (posframe-hide my/agent-shell-compose-buffer-name)
-      (when-let ((win (get-buffer-window target)))
-        (select-window win))
+      (let ((parent (frame-parent (selected-frame))))
+        (posframe-hide my/agent-shell-compose-buffer-name)
+        (when-let ((win (get-buffer-window target)))
+          (select-window win))
+        (when parent
+          (select-frame-set-input-focus parent)))
       ;; Restore context posframe if pending context exists
       (when (and (boundp 'my/agent-shell--pending-context)
                  (buffer-local-value 'my/agent-shell--pending-context target)
@@ -83,7 +88,8 @@
 (defun my/agent-shell-compose-cancel ()
   "Cancel composition and return to the agent-shell buffer."
   (interactive)
-  (let ((target my/agent-shell-compose--target-buffer))
+  (let ((target my/agent-shell-compose--target-buffer)
+        (parent (frame-parent (selected-frame))))
     (posframe-hide my/agent-shell-compose-buffer-name)
     (when (and target (buffer-live-p target))
       (when-let ((win (get-buffer-window target)))
@@ -94,7 +100,9 @@
                  (fboundp 'my/agent-shell--show-context-posframe))
         (my/agent-shell--show-context-posframe
          (plist-get (buffer-local-value 'my/agent-shell--pending-context target) :text)
-         target)))))
+         target)))
+    (when parent
+      (select-frame-set-input-focus parent))))
 
 (with-eval-after-load 'agent-shell
   (define-key agent-shell-mode-map (kbd "C-<return>") #'my/agent-shell-compose-popup))
