@@ -43,8 +43,9 @@
                                 :position (point-max)
                                 :poshandler #'posframe-poshandler-window-bottom-center
                                 :accept-focus t
-                                :font (font-spec :family (face-attribute 'default :family)
-                                                 :size (max 8 (/ (font-get (face-attribute 'default :font) :size) 2)))
+                                :font (format "%s-%d"
+                                              (face-attribute 'default :family)
+                                              (max 8 (/ (face-attribute 'default :height) 10 2)))
                                 :border-width 1
                                 :border-color "#3a7a9a"
                                 :background-color "#1a2a37"
