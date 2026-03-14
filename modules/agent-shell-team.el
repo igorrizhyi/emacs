@@ -893,7 +893,7 @@ Route the status update directly to the lead agent's queue."
                               (if commit (format "\nCommit: %s" commit) "")
                               (if report-path (format "\nReport: %s" report-path) "")
                               content))
-             ;; Check for knowledge discoveries in finished reports
+             ;; Check report for Knowledge Discoveries on finished tasks
              (message
               (if (and (equal status "finished")
                        report-path
@@ -911,7 +911,7 @@ Route the status update directly to the lead agent's queue."
                                  (let ((text (string-trim (buffer-substring-no-properties
                                                            section-start section-end))))
                                    (and (not (string-empty-p text))
-                                        (not (string-match-p "\\`none\\'" (downcase text)))))))))))
+                                        (not (string-match-p "\\`\\(?:none\\|n/a\\)\\'" (downcase text)))))))))))
                     (if has-discoveries
                         (let* ((agent-buf (gethash request-id agent-shell-team--request-to-buffer))
                                (role (when (and agent-buf (buffer-live-p agent-buf))
