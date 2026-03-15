@@ -119,6 +119,14 @@
            when (my/team-sidebar--lead-buffer-p buf)
            return buf))
 
+(defun my/team-sidebar--any-team-buffer-visible-p ()
+  "Return the first visible team buffer in the selected frame, or nil."
+  (cl-loop for win in (window-list nil 'no-minibuf)
+           for buf = (window-buffer win)
+           when (and (buffer-live-p buf)
+                     (string-match-p "\\*team:[a-z0-9]\\{4\\}:" (buffer-name buf)))
+           return buf))
+
 (defun my/team-sidebar--session-id-from-lead (buf)
   "Extract session-id from a lead BUF via `agent-shell-team--sessions'."
   (when (and (boundp 'agent-shell-team--sessions) (buffer-live-p buf))
@@ -771,7 +779,7 @@ Registered on `window-buffer-change-functions' and
   (when (and (not my/team-sidebar--toggling)
              (not (active-minibuffer-window)))
     (let ((my/team-sidebar--toggling t))
-      (if (my/team-sidebar--any-lead-visible-p)
+      (if (my/team-sidebar--any-team-buffer-visible-p)
           (my/team-sidebar--show)
         (my/team-sidebar--hide)))))
 
