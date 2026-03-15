@@ -1011,6 +1011,7 @@ Only the lead role may call this.  Returns an alist with success/message."
                 (remhash completed-rid agent-shell-team--request-to-group))
               (remhash group-id agent-shell-team--task-groups))))
         (remhash rid agent-shell-team--request-to-group))))
+  (remhash buffer agent-shell-team--last-activity)
   (when (buffer-live-p buffer)
     (agent-shell-team--unregister-agent buffer)
     (kill-buffer buffer))
@@ -1513,12 +1514,21 @@ _SESSION-ID is unused but kept for consistency."
 (defvar agent-shell-team--drain-timer nil
   "Timer for periodic queue drain checks.")
 
-(defvar agent-shell-team--busy-since (make-hash-table :test 'equal)
-  "Buffer -> timestamp (float-time) when the agent was first seen busy.
-Used by `agent-shell-team--check-all-queues' to detect stuck-busy agents.")
+(defvar agent-shell-team--last-activity (make-hash-table :test 'eq)
+  "Map buffer -> float-time of last ACP notification received.
+Used to detect truly stuck agents (no output while busy).")
 
-(defconst agent-shell-team--stuck-busy-timeout 90
-  "Seconds after which a continuously busy agent is force-reset.")
+(defcustom agent-shell-team--stuck-timeout 180
+  "Seconds of no ACP output after which a busy agent is considered stuck."
+  :type 'integer
+  :group 'agent-shell-team)
+
+(defun agent-shell-team--track-activity (&rest _)
+  "Record that the current buffer received ACP activity."
+  (when (buffer-live-p (current-buffer))
+    (puthash (current-buffer) (float-time) agent-shell-team--last-activity)))
+
+(advice-add 'agent-shell--on-notification :before #'agent-shell-team--track-activity)
 
 (defun agent-shell-team--start-drain-timer ()
   "Start periodic drain timer."
@@ -1534,33 +1544,37 @@ Used by `agent-shell-team--check-all-queues' to detect stuck-busy agents.")
 
 (defun agent-shell-team--check-all-queues ()
   "Check all queued messages and tasks, drain idle agents, assign pending tasks.
-Also detects agents stuck in busy state longer than
-`agent-shell-team--stuck-busy-timeout' seconds and force-resets them."
+Also detects agents stuck in busy state with no ACP output for
+`agent-shell-team--stuck-timeout' seconds and force-resets them."
   ;; --- Stuck-busy detection across all sessions ---
   (maphash
    (lambda (_session-id agents)
      (dolist (agent agents)
        (let ((buf (alist-get 'buffer agent)))
          (when (buffer-live-p buf)
-           (let ((status (agent-shell-team--agent-status buf)))
-             (if (eq status 'busy)
-                 (let ((since (gethash buf agent-shell-team--busy-since)))
-                   (if since
-                       ;; Already tracked — check if stuck
-                       (when (> (- (float-time) since)
-                                agent-shell-team--stuck-busy-timeout)
-                         (message "[agent-shell-team] Force-resetting stuck-busy agent %s (busy for %ds)"
-                                  (buffer-name buf)
-                                  (round (- (float-time) since)))
-                         (remhash buf agent-shell-team--busy-since)
-                         (with-current-buffer buf
-                           (shell-maker-finish-output
-                            :config shell-maker--config
-                            :success nil)))
-                     ;; First time seeing this agent busy — record timestamp
-                     (puthash buf (float-time) agent-shell-team--busy-since)))
-               ;; Agent is not busy — clear any tracked timestamp
-               (remhash buf agent-shell-team--busy-since)))))))
+           (if (eq (agent-shell-team--agent-status buf) 'busy)
+               (let ((last-act (gethash buf agent-shell-team--last-activity)))
+                 (if (and last-act
+                          (> (- (float-time) last-act)
+                             agent-shell-team--stuck-timeout))
+                     ;; Truly stuck: no output for N seconds while busy
+                     (progn
+                       (message "[agent-shell-team] Force-resetting truly stuck agent %s (no output for %ds)"
+                                (buffer-name buf)
+                                (round (- (float-time) last-act)))
+                       (remhash buf agent-shell-team--last-activity)
+                       (with-current-buffer buf
+                         (when (fboundp 'agent-shell-heartbeat-stop)
+                           (agent-shell-heartbeat-stop))
+                         (shell-maker-interrupt)
+                         (shell-maker-finish-output
+                          :config shell-maker--config
+                          :success nil)))
+                   ;; Still receiving output or first time — seed if needed
+                   (unless last-act
+                     (puthash buf (float-time) agent-shell-team--last-activity))))
+             ;; Agent is not busy — clear any tracked timestamp
+             (remhash buf agent-shell-team--last-activity))))))
    agent-shell-team--sessions)
   ;; --- Drain pending-for-lead queue (messages queued before lead registered) ---
   (let ((delivered-sessions nil))
@@ -1596,8 +1610,9 @@ Also detects agents stuck in busy state longer than
   "Clean up team registration when buffer is killed."
   (when agent-shell-team--session-id
     (agent-shell-team--unregister-agent (current-buffer))
-    ;; Clean up any queued messages for this buffer
-    (remhash (current-buffer) agent-shell-team--message-queue)))
+    ;; Clean up any queued messages and activity tracking for this buffer
+    (remhash (current-buffer) agent-shell-team--message-queue)
+    (remhash (current-buffer) agent-shell-team--last-activity)))
 
 (add-hook 'kill-buffer-hook #'agent-shell-team--buffer-kill-hook)
 
