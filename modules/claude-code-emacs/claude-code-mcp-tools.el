@@ -1190,13 +1190,7 @@ PARAMS should include a `tasks' array, each with `role' and `message'."
       (let ((agent-shell-team--session-id
              (or (cdr (assoc 'session_id params))
                  (cdr (assoc "session_id" params))
-                 (and (boundp 'agent-shell-team--session-id)
-                      agent-shell-team--session-id)
-                 ;; Fallback: if only one session exists, use it
-                 (when (and (boundp 'agent-shell-team--sessions)
-                            (hash-table-p agent-shell-team--sessions)
-                            (= 1 (hash-table-count agent-shell-team--sessions)))
-                   (car (hash-table-keys agent-shell-team--sessions))))))
+                 agent-shell-team--session-id)))
         (agent-shell-team--handle-tasks-put params)))
     `((success . t)
       (message . ,(format "Queued %d task(s)" (length tasks))))))
@@ -1219,13 +1213,7 @@ PARAMS should include a `tasks' array, each with `role' and `message'."
              (let ((agent-shell-team--session-id
                     (or (cdr (assoc 'session_id params))
                         (cdr (assoc "session_id" params))
-                        (and (boundp 'agent-shell-team--session-id)
-                             agent-shell-team--session-id)
-                        ;; Fallback: if only one session exists, use it
-                        (when (and (boundp 'agent-shell-team--sessions)
-                                   (hash-table-p agent-shell-team--sessions)
-                                   (= 1 (hash-table-count agent-shell-team--sessions)))
-                          (car (hash-table-keys agent-shell-team--sessions))))))
+                        agent-shell-team--session-id)))
                (agent-shell-team--handle-task-update params)))))
       `((success . ,(if delivered t :json-false))
         (message . ,(if delivered
@@ -1245,13 +1233,7 @@ PARAMS should include `target' (buffer name or worktree name)."
         (let ((agent-shell-team--session-id
                (or (cdr (assoc 'session_id params))
                    (cdr (assoc "session_id" params))
-                   (and (boundp 'agent-shell-team--session-id)
-                        agent-shell-team--session-id)
-                   ;; Fallback: if only one session exists, use it
-                   (when (and (boundp 'agent-shell-team--sessions)
-                              (hash-table-p agent-shell-team--sessions)
-                              (= 1 (hash-table-count agent-shell-team--sessions)))
-                     (car (hash-table-keys agent-shell-team--sessions))))))
+                   agent-shell-team--session-id)))
           (agent-shell-team--handle-dismiss-agent params))
       `((success . nil)
         (message . "agent-shell-team not loaded")))))

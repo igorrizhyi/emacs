@@ -87,8 +87,8 @@ without prompting for confirmation."
 
 ;;; Buffer-local variables
 
-(defvar-local agent-shell-team--session-id nil
-  "UUID grouping this agent with its team.")
+(defvar agent-shell-team--session-id nil
+  "Global team session ID. One session per Emacs instance.")
 
 (defvar-local agent-shell-team--role nil
   "Role: dev, lead, tester, or researcher.")
@@ -281,8 +281,7 @@ WORKTREE-NAME is the worktree name (for isolated mode)."
     (puthash session-id (cons agent agents) agent-shell-team--sessions)
     ;; Set buffer-local vars
     (with-current-buffer buffer
-      (setq agent-shell-team--session-id session-id
-            agent-shell-team--role role
+      (setq agent-shell-team--role role
             agent-shell-team--mode mode
             agent-shell-team--worktree-path worktree
             agent-shell-team--worktree-name worktree-name))))
@@ -413,8 +412,7 @@ Schema:
       \"request_id\": \"abc123\",  // optional: auto-generated if omitted
       \"target\": \"worktree-name\" // optional: route to a specific agent
     }
-  ],
-  \"session_id\": \"%s\"          // optional: for multi-session routing
+  ]
 }
 ```
 
@@ -530,7 +528,7 @@ Your responsibilities:
 - Knowledge from the user (preferences, constraints) should also be captured.
 - Keep knowledge files concise and organized by topic — not a raw log."
           (agent-shell-team--knowledge-dir)
-          session-id session-id)))
+          session-id)))
     (let ((knowledge-content (let ((f (agent-shell-team--knowledge-file "lead")))
                                (when (file-exists-p f)
                                  (with-temp-buffer
@@ -556,7 +554,6 @@ Your responsibilities:
   content: Summary of what was done, files changed, decisions made
   commit: Your commit hash (if you committed code)
   report_path: Path to your report file (from the task assignment)
-  session_id: \"%s\" (for multi-session routing)
 - Use `sendNotification` only for non-task communication (e.g., asking the lead a question).
 - The lead will review and merge your work, or request fixes if needed.
 - You receive atomic tasks from the lead. Do not split or delegate — just implement.
@@ -573,7 +570,7 @@ Include the new branch name in your taskUpdate so the lead knows what to merge.
   List any reusable insights: gotchas, conventions, environment quirks,
   architecture decisions. Use bullet points. If none, write \"None\".
   The lead will extract these into the shared knowledge base."
-          session-id worktree-path worktree-name session-id))
+          session-id worktree-path worktree-name))
 
 (defun agent-shell-team--tester-isolated-prompt (session-id worktree-path)
   "Generate tester prompt for isolated mode in SESSION-ID.
@@ -593,7 +590,6 @@ Your responsibilities:
   status: \"finished\" (or \"updated\" for progress, \"blocked\" if stuck)
   content: PASS or FAIL with details, log excerpts, analysis
   report_path: Path to your report file (from the test request)
-  session_id: \"%s\" (for multi-session routing)
 - Use `sendNotification` only for non-task communication.
 - You are the team's log detective. Collect, analyze, diagnose.
 
@@ -602,7 +598,7 @@ Your responsibilities:
   List any reusable insights: gotchas, conventions, environment quirks,
   architecture decisions. Use bullet points. If none, write \"None\".
   The lead will extract these into the shared knowledge base."
-          session-id worktree-path session-id))
+          session-id worktree-path))
 
 (defun agent-shell-team--tester-neighbor-prompt (session-id working-dir)
   "Generate tester prompt for neighbor mode in SESSION-ID.
@@ -623,7 +619,6 @@ Your responsibilities:
   status: \"finished\" (or \"updated\" for progress, \"blocked\" if stuck)
   content: Brief summary with log excerpts and analysis
   report_path: Path to your report file (from the test request)
-  session_id: \"%s\" (for multi-session routing)
 - Use `sendNotification` only for non-task communication.
 - You are the team's log detective. Collect, analyze, diagnose.
 
@@ -632,7 +627,7 @@ Your responsibilities:
   List any reusable insights: gotchas, conventions, environment quirks,
   architecture decisions. Use bullet points. If none, write \"None\".
   The lead will extract these into the shared knowledge base."
-          session-id working-dir session-id))
+          session-id working-dir))
 
 (defun agent-shell-team--researcher-prompt (session-id working-dir)
   "Generate researcher prompt for SESSION-ID.
@@ -651,7 +646,6 @@ Your responsibilities:
   status: \"finished\" (or \"updated\" for progress, \"blocked\" if stuck)
   content: Brief summary of findings with relevant file paths and analysis
   report_path: Path to your report file (from the research request)
-  session_id: \"%s\" (for multi-session routing)
 - Use `sendNotification` only for non-task communication.
 - You are the team's knowledge scout. Search, read, analyze, report.
 
@@ -667,7 +661,7 @@ Your responsibilities:
   - Implicit contracts: undocumented units, expected formats, ordering requirements
   Do NOT include: syntax errors, wrong argument counts, or anything a stack trace
   points at directly. The test: \"would reading this save someone a debugging session?\""
-          session-id working-dir session-id))
+          session-id working-dir))
 
 (defun agent-shell-team--get-system-prompt (role mode session-id &optional worktree-path worktree-name working-dir)
   "Generate system prompt for ROLE in MODE within SESSION-ID.
@@ -888,9 +882,7 @@ Only the lead role may call this.  Returns an alist with success/message."
                          (map-elt raw-input "session_id")
                          agent-shell-team--session-id))
          (force (or (map-elt raw-input 'force)
-                    (map-elt raw-input "force")))
-         (_warn (unless session-id
-                  (message "[agent-shell-team] WARNING: dismissAgent has no session-id, dropping"))))
+                    (map-elt raw-input "force"))))
     (cond
      ;; Guard: need a session
      ((not session-id)
@@ -1012,9 +1004,7 @@ Extract tasks, generate IDs, register groups, and enqueue for assignment."
                                (agent-shell-team--generate-request-id)))
                (session-id (or (map-elt task 'session_id)
                                (map-elt task "session_id")
-                               agent-shell-team--session-id))
-               (_warn (unless session-id
-                        (message "[agent-shell-team] WARNING: tasksPut has no session-id, dropping"))))
+                               agent-shell-team--session-id)))
           (when session-id
             (let* ((reports-dir (agent-shell-team--reports-dir session-id))
                    (report-path (expand-file-name (concat request-id ".md") reports-dir))
@@ -1074,8 +1064,6 @@ Route the status update directly to the lead agent's queue."
          (session-id (or (map-elt raw-input 'session_id)
                         (map-elt raw-input "session_id")
                         agent-shell-team--session-id))
-         (_warn (unless session-id
-                  (message "[agent-shell-team] WARNING: taskUpdate has no session-id, dropping")))
          (lead-buf (when session-id
                      (agent-shell-team--get-lead session-id))))
     ;; Build the message text regardless of whether lead-buf exists
@@ -1659,10 +1647,10 @@ When called from an existing team buffer:
   - Prompts for role and mode (isolated/neighbor)
   - Adds the new agent to the existing session"
   (interactive)
-  (let* ((in-team-buffer (and agent-shell-team--session-id t))
-         (session-id (if in-team-buffer
-                         agent-shell-team--session-id
-                       (agent-shell-team--generate-session-id)))
+  (let* ((session-id (or agent-shell-team--session-id
+                        (setq agent-shell-team--session-id
+                              (agent-shell-team--generate-session-id))))
+         (in-team-buffer (not (null (gethash session-id agent-shell-team--sessions))))
          (role (completing-read "Role: " '("lead" "dev" "tester" "researcher") nil t))
          (mode (if (member role '("lead" "researcher"))
                    "neighbor"  ;; Lead and researcher always work on main tree

@@ -18,6 +18,7 @@
 (declare-function evil-set-initial-state "evil-core")
 (declare-function evil-emacs-state "evil-states")
 (declare-function evil-normal-state "evil-states")
+(defvar agent-shell-team--session-id)
 (defvar agent-shell-team--sessions)
 (declare-function agent-shell-team--agent-status "agent-shell-team")
 (declare-function agent-shell-team--short-session-id "agent-shell-team")
@@ -89,9 +90,6 @@
 
 ;;; ---- Sidebar Buffer Local State ---------------------------------------------
 
-(defvar-local my/team-sidebar--session-id nil
-  "Session ID associated with this sidebar buffer.")
-
 (defvar-local my/team-sidebar--refresh-timer nil
   "Timer for periodic refresh.")
 
@@ -126,18 +124,6 @@
                         (string-match-p "\\*team:[a-z0-9]\\{4\\}:" (buffer-name buf)))
                    (equal buf (get-buffer my/team-sidebar-buffer-name)))
            return buf))
-
-(defun my/team-sidebar--session-id-from-lead (buf)
-  "Extract session-id from a lead BUF via `agent-shell-team--sessions'."
-  (when (and (boundp 'agent-shell-team--sessions) (buffer-live-p buf))
-    (catch 'found
-      (maphash (lambda (sid agents)
-                 (cl-loop for agent in agents
-                          when (and (equal (alist-get 'role agent) "lead")
-                                    (eq (alist-get 'buffer agent) buf))
-                          do (throw 'found sid)))
-               agent-shell-team--sessions)
-      nil)))
 
 (defun my/team-sidebar--find-lead-buffer (session-id)
   "Find the lead buffer for SESSION-ID."
@@ -338,7 +324,7 @@
     ;; Message queue for lead
     (when (and (boundp 'agent-shell-team--message-queue)
                (hash-table-p agent-shell-team--message-queue))
-      (let ((lead-buf (my/team-sidebar--find-lead-buffer my/team-sidebar--session-id)))
+      (let ((lead-buf (my/team-sidebar--find-lead-buffer agent-shell-team--session-id)))
         (when lead-buf
           (let ((msgs (gethash lead-buf agent-shell-team--message-queue)))
             (when msgs
@@ -360,7 +346,7 @@
                (> (hash-table-count agent-shell-team--task-groups) 0))
       (let ((group-content nil))
         (maphash (lambda (gid group)
-                   (when (equal (plist-get group :session-id) my/team-sidebar--session-id)
+                   (when (equal (plist-get group :session-id) agent-shell-team--session-id)
                      (let ((pending (length (plist-get group :pending)))
                            (completed (length (plist-get group :completed))))
                        (push (format "  %s %d/%d\n"
@@ -741,7 +727,7 @@
   (let ((text (my/team-sidebar--extract-prompt-text)))
     (if (or (null text) (string-empty-p text))
         (message "Empty prompt, nothing to submit.")
-      (let* ((sid my/team-sidebar--session-id)
+      (let* ((sid agent-shell-team--session-id)
              (lead-buf (my/team-sidebar--find-lead-buffer sid)))
         (if (not (buffer-live-p lead-buf))
             (message "Lead buffer not found for session %s" sid)
@@ -778,13 +764,6 @@
                     (dedicated . t)))))
         (when win
           (my/team-sidebar--set-window-params win))))
-    ;; Update session-id from visible lead
-    (let ((lead (my/team-sidebar--any-lead-visible-p)))
-      (when lead
-        (let ((sid (my/team-sidebar--session-id-from-lead lead)))
-          (when sid
-            (with-current-buffer buf
-              (setq my/team-sidebar--session-id sid))))))
     ;; Start refresh timer
     (my/team-sidebar--ensure-timer)
     ;; Initial render
