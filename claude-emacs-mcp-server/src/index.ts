@@ -609,11 +609,11 @@ function registerResources() {
   log("Resources registered successfully");
 }
 
-// Get running Emacs process PIDs using ps command
+// Get running Emacs process PIDs using ps command (excludes emacsclient)
 async function getRunningEmacsPids(): Promise<number[]> {
   try {
     const { stdout } = await execAsync(
-      'ps -eo pid,comm | grep -E "emacs|Emacs" | grep -v grep | awk "{print $1}"'
+      "ps -eo pid,comm | grep -v grep | grep -v emacsclient | grep -E '[Ee]macs' | awk '{print $1}'"
     );
     const pids = stdout
       .trim()
@@ -654,106 +654,51 @@ async function getTargetInstanceId(
   return null;
 }
 
-// Try to notify all running Emacs instances until one accepts
-async function notifyAllEmacsInstances(port: number): Promise<boolean> {
-  const projectRoot = normalizeProjectRoot(process.cwd());
+// Notify a specific Emacs instance, or discover the sole running instance
+async function notifyEmacsInstance(port: number, projectRoot: string, instanceId?: number): Promise<boolean> {
   const elisp = `(claude-code-mcp-register-port "${projectRoot}" ${port})`;
-  const runningPids = await getRunningEmacsPids();
-  runningPids.sort((a, b) => b - a); // Most recent PID first
 
-  for (const pid of runningPids) {
-    const serverName = `emacs-${pid}`;
+  if (instanceId) {
+    // Direct: use emacs-{instanceId} server name
+    const serverName = `emacs-${instanceId}`;
     try {
       await execAsync(`emacsclient -s ${serverName} --eval '${elisp}'`);
-      log(
-        `Successfully notified Emacs instance ${pid} about port ${port} for project ${projectRoot}`
-      );
+      log(`Successfully notified Emacs instance ${instanceId} about port ${port} for project ${projectRoot}`);
       return true;
     } catch (error) {
-      log(`Failed to notify Emacs instance ${pid}: ${error}`);
-      // Continue to next PID
+      log(`Failed to notify Emacs instance ${instanceId}: ${error}`);
+      return false;
     }
   }
-  return false;
+
+  // Fallback: check how many Emacs instances are running
+  const pids = await getRunningEmacsPids();
+  if (pids.length === 0) {
+    log('No running Emacs instances found');
+    return false;
+  }
+  if (pids.length > 1) {
+    log(`Multiple Emacs instances found (PIDs: ${pids.join(', ')}). Set EMACS_INSTANCE_ID env var or launch claude from within Emacs.`);
+    return false;
+  }
+  // Exactly one instance — safe to use
+  const serverName = `emacs-${pids[0]}`;
+  try {
+    await execAsync(`emacsclient -s ${serverName} --eval '${elisp}'`);
+    log(`Successfully notified Emacs instance ${pids[0]} about port ${port} for project ${projectRoot}`);
+    return true;
+  } catch (error) {
+    log(`Failed to notify Emacs instance ${pids[0]}: ${error}`);
+    return false;
+  }
 }
 
-// Notify Emacs about the port
+// Notify Emacs about the port using direct instance targeting
 async function notifyEmacsPort(port: number, targetInstanceId?: number): Promise<void> {
   const projectRoot = normalizeProjectRoot(process.cwd());
-
-  // If we have a target instance, use it directly
-  if (targetInstanceId) {
-    const elisp = `(claude-code-mcp-register-port "${projectRoot}" ${port})`;
-    const serverName = `emacs-${targetInstanceId}`;
-    try {
-      await execAsync(`emacsclient -s ${serverName} --eval '${elisp}'`);
-      log(
-        `Successfully notified target Emacs instance ${targetInstanceId} about port ${port} for project ${projectRoot}`
-      );
-      return;
-    } catch (error) {
-      log(
-        `Failed to notify target instance ${targetInstanceId}: ${error}`
-      );
-    }
-  }
-
-  // First try from existing WebSocket connections
-  const connectedInstanceId = bridge.getInstanceIdForProject(projectRoot);
-  if (connectedInstanceId) {
-    const elisp = `(claude-code-mcp-register-port "${projectRoot}" ${port})`;
-    const serverName = `emacs-${connectedInstanceId}`;
-    try {
-      await execAsync(`emacsclient -s ${serverName} --eval '${elisp}'`);
-      log(
-        `Notified connected Emacs instance ${connectedInstanceId} about port ${port} for project ${projectRoot}`
-      );
-      return;
-    } catch (error) {
-      log(
-        `Failed to notify connected instance ${connectedInstanceId}: ${error}`
-      );
-    }
-  }
-
-  // Fallback: try all running Emacs instances
-  const success = await notifyAllEmacsInstances(port);
+  const success = await notifyEmacsInstance(port, projectRoot, targetInstanceId);
   if (!success) {
-    // Final fallback to default emacsclient
-    const elisp = `(claude-code-mcp-register-port "${projectRoot}" ${port})`;
-    await notifyEmacsPortFallback(elisp, port, projectRoot);
-  }
-}
-
-async function notifyEmacsPortFallback(
-  elisp: string,
-  port: number,
-  projectRoot: string
-): Promise<void> {
-  try {
-    await execAsync(`emacsclient --eval '${elisp}'`);
-    log(
-      `Notified Emacs about port ${port} for project ${projectRoot} (fallback)`
-    );
-  } catch (error) {
-    log(`Failed to notify Emacs via emacsclient: ${error}`);
-    // Continue even if notification fails - Emacs might not be running in server mode
-  }
-
-  // Also write port info to a file as fallback
-  try {
-    const portFile = path.join(
-      os.tmpdir(),
-      `claude-code-mcp-${projectRoot.replace(/[^a-zA-Z0-9]/g, "_")}.port`
-    );
-    await fs.promises.writeFile(
-      portFile,
-      JSON.stringify({ port, projectRoot }),
-      "utf8"
-    );
-    log(`Wrote port info to ${portFile}`);
-  } catch (error) {
-    log(`Failed to write port file: ${error}`);
+    log(`Warning: Failed to notify any Emacs instance about port ${port} for project ${projectRoot}`);
   }
 }
 
