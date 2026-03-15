@@ -250,15 +250,35 @@ Otherwise append as a new entry."
   (let ((dir (agent-shell-team--tasks-dir))
         (sessions nil))
     (dolist (file (directory-files dir nil "\\.el$"))
-      (let* ((sid (file-name-sans-extension file))
-             (tasks (agent-shell-team--load-tasks sid))
-             (latest (cl-reduce #'max
-                                (mapcar (lambda (tk) (or (plist-get tk :created-at) 0)) tasks)
-                                :initial-value 0)))
-        (when tasks
-          (push (cons sid (cons latest tasks)) sessions))))
+      (let* ((sid (file-name-sans-extension file)))
+        ;; Skip non-UUID filenames (e.g. worktree-named orphan files)
+        (when (string-match-p
+               "^[0-9a-f]\\{8\\}-[0-9a-f]\\{4\\}-[0-9a-f]\\{4\\}-[0-9a-f]\\{4\\}-[0-9a-f]\\{12\\}$"
+               sid)
+          (let* ((tasks (agent-shell-team--load-tasks sid))
+                 (latest (cl-reduce #'max
+                                    (mapcar (lambda (tk) (or (plist-get tk :created-at) 0)) tasks)
+                                    :initial-value 0)))
+            (when tasks
+              (push (cons sid (cons latest tasks)) sessions))))))
     (mapcar (lambda (entry) (cons (car entry) (cddr entry)))
             (sort sessions (lambda (a b) (> (cadr a) (cadr b)))))))
+
+(defun agent-shell-team--find-session-for-request (request-id)
+  "Find the session-id that contains a task with REQUEST-ID.
+Scans persisted .el files in the tasks directory.  Returns the
+session-id (filename sans extension) if found, nil otherwise."
+  (let ((dir (agent-shell-team--tasks-dir))
+        (found nil))
+    (cl-dolist (file (directory-files dir nil "\\.el$"))
+      (let* ((sid (file-name-sans-extension file))
+             (tasks (agent-shell-team--load-tasks sid)))
+        (when (cl-some (lambda (tk)
+                         (equal (plist-get tk :request-id) request-id))
+                       tasks)
+          (setq found sid)
+          (cl-return found))))
+    found))
 
 (defun agent-shell-team--notify (title message)
   "Send a desktop notification for team events."
@@ -1072,6 +1092,7 @@ Route the status update directly to the lead agent's queue."
          (session-id (or (gethash request-id agent-shell-team--request-to-session)
                         (map-elt raw-input 'session_id)
                         (map-elt raw-input "session_id")
+                        (agent-shell-team--find-session-for-request request-id)
                         agent-shell-team--session-id))
          (lead-buf (when session-id
                      (agent-shell-team--get-lead session-id))))
