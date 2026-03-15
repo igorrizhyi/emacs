@@ -91,7 +91,8 @@
 ;; File associations
 (add-to-list 'auto-mode-alist '("\\.jstxt\\'" . js-mode))
 (with-eval-after-load 'lsp-mode
-  (add-to-list 'lsp-language-id-configuration '(js-mode . "javascript")))
+  (add-to-list 'lsp-language-id-configuration '(js-mode . "javascript"))
+  (add-to-list 'lsp-language-id-configuration '(markdown-view-mode . "markdown")))
 
 ;; Disable automatic project switching when opening files
 (setq projectile-track-known-projects-automatically nil)
