@@ -57,7 +57,9 @@
                                 :lines-truncate nil)))
       (select-frame-set-input-focus frame)
       (select-window (frame-root-window frame))
-      (setq cursor-type 'box))))
+      (setq cursor-type 'box)
+      (when (fboundp 'evil-emacs-state)
+        (evil-emacs-state)))))
 
 (defun my/agent-shell-compose-submit ()
   "Submit the composed prompt to the target agent-shell buffer."

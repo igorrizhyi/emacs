@@ -250,6 +250,8 @@
     (define-key map "g" #'my/team-sidebar-refresh)
     (define-key map "i" #'my/team-sidebar-prompt)
     (define-key map (kbd "C-<return>") #'my/team-sidebar-compose)
+    (define-key map (kbd "<up>") #'my/team-sidebar-prev-agent)
+    (define-key map (kbd "<down>") #'my/team-sidebar-next-agent)
     map)
   "Keymap for `my/team-sidebar-mode'.")
 
@@ -276,7 +278,9 @@
     "q" #'my/team-sidebar-quit
     "g" #'my/team-sidebar-refresh
     "i" #'my/team-sidebar-prompt
-    (kbd "C-<return>") #'my/team-sidebar-compose))
+    (kbd "C-<return>") #'my/team-sidebar-compose
+    (kbd "<up>") #'my/team-sidebar-prev-agent
+    (kbd "<down>") #'my/team-sidebar-next-agent))
 
 ;; Open sidebar in normal state (not motion state from special-mode parent)
 (when (fboundp 'evil-set-initial-state)
@@ -407,8 +411,10 @@
       (run-at-time 0 nil
                    (lambda (buf)
                      (when (buffer-live-p buf)
-                       (with-current-buffer buf
-                         (evil-emacs-state))))
+                       (let ((win (get-buffer-window buf)))
+                         (when (and win (window-live-p win))
+                           (select-window win)
+                           (evil-emacs-state)))))
                    (current-buffer)))))
 
 (defun my/team-sidebar--extract-prompt-text ()
