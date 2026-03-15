@@ -27,6 +27,8 @@
 (defvar agent-shell-team--request-to-buffer)
 (defvar agent-shell-team--task-groups)
 (defvar agent-shell-team--request-to-group)
+(declare-function agent-shell-team--load-all-sessions "agent-shell-team")
+(declare-function agent-shell-team--load-tasks "agent-shell-team")
 
 ;;; ---- Constants & Buffer Name ------------------------------------------------
 
@@ -62,6 +64,30 @@
   '((t :foreground "#e46a6a"))
   "Face for dead status.")
 
+(defface my/team-sidebar-history-header
+  '((t :weight bold :foreground "#8090a0"))
+  "Face for history section header.")
+
+(defface my/team-sidebar-history-session
+  '((t :foreground "#7a8a9a"))
+  "Face for history session headers.")
+
+(defface my/team-sidebar-history-finished
+  '((t :foreground "#6ae46a"))
+  "Face for finished task indicator.")
+
+(defface my/team-sidebar-history-blocked
+  '((t :foreground "#e46a6a"))
+  "Face for blocked task indicator.")
+
+(defface my/team-sidebar-history-assigned
+  '((t :foreground "#e4c96a"))
+  "Face for assigned/in-progress task indicator.")
+
+(defface my/team-sidebar-history-pending
+  '((t :foreground "#6ab0e4"))
+  "Face for pending task indicator.")
+
 ;;; ---- Sidebar Buffer Local State ---------------------------------------------
 
 (defvar-local my/team-sidebar--session-id nil
@@ -69,6 +95,15 @@
 
 (defvar-local my/team-sidebar--refresh-timer nil
   "Timer for periodic refresh.")
+
+(defvar-local my/team-sidebar--history-cache nil
+  "Cached result of `agent-shell-team--load-all-sessions'.")
+
+(defvar-local my/team-sidebar--history-cache-time 0
+  "Time when history cache was last updated.")
+
+(defvar-local my/team-sidebar--expanded-sessions nil
+  "List of session IDs whose history sections are expanded.")
 
 ;;; ---- Utility ----------------------------------------------------------------
 
@@ -103,6 +138,93 @@
       (cl-loop for agent in agents
                when (equal (alist-get 'role agent) "lead")
                return (alist-get 'buffer agent)))))
+
+;;; ---- History Helpers --------------------------------------------------------
+
+(defun my/team-sidebar--get-history (&optional force)
+  "Return cached history sessions, refreshing if stale or FORCE is non-nil."
+  (when (fboundp 'agent-shell-team--load-all-sessions)
+    (let ((now (float-time)))
+      (when (or force
+                (null my/team-sidebar--history-cache)
+                (> (- now my/team-sidebar--history-cache-time) 30))
+        (setq my/team-sidebar--history-cache
+              (agent-shell-team--load-all-sessions)
+              my/team-sidebar--history-cache-time now)))
+    my/team-sidebar--history-cache))
+
+(defun my/team-sidebar--task-status-indicator (task)
+  "Return a status indicator string for TASK plist."
+  (let ((status (plist-get task :status)))
+    (pcase status
+      ("finished"  (propertize "✓" 'face 'my/team-sidebar-history-finished))
+      ("blocked"   (propertize "✗" 'face 'my/team-sidebar-history-blocked))
+      ((or "assigned" "in-progress")
+       (propertize "●" 'face 'my/team-sidebar-history-assigned))
+      (_           (propertize "○" 'face 'my/team-sidebar-history-pending)))))
+
+(defun my/team-sidebar--task-label (task)
+  "Return a short label for TASK from :request-id or :message."
+  (or (plist-get task :request-id)
+      (let ((msg (or (plist-get task :message) "")))
+        (truncate-string-to-width msg 25 nil nil "…"))))
+
+(defun my/team-sidebar--session-date (tasks)
+  "Extract a date string from TASKS list using :created-at of first task."
+  (let ((ts (cl-loop for task in tasks
+                     for ca = (plist-get task :created-at)
+                     when ca minimize ca)))
+    (if ts
+        (format-time-string "%Y-%m-%d" (seconds-to-time ts))
+      "unknown")))
+
+(defun my/team-sidebar--insert-history ()
+  "Insert history section with collapsible sessions."
+  (let ((sessions (my/team-sidebar--get-history)))
+    (when sessions
+      (insert (propertize "── History ──────────────"
+                          'face 'my/team-sidebar-history-header)
+              "\n")
+      (let ((first t))
+        (dolist (entry sessions)
+          (let* ((sid (car entry))
+                 (tasks (cdr entry))
+                 (short-id (if (> (length sid) 8) (substring sid 0 8) sid))
+                 (date (my/team-sidebar--session-date tasks))
+                 (expanded (or (and first (not (memq 'initialized
+                                                     my/team-sidebar--expanded-sessions)))
+                               (member sid my/team-sidebar--expanded-sessions)))
+                 (toggle-char (if expanded "▾" "▸"))
+                 (inv-sym (intern (format "session-%s" sid)))
+                 (header-start (point)))
+            ;; Session header line
+            (insert (propertize (format "%s %s (%s)" toggle-char date short-id)
+                                'face 'my/team-sidebar-history-session)
+                    "\n")
+            (put-text-property header-start (1- (point))
+                               'my/sidebar-session sid)
+            ;; Task lines (with invisible property for collapsing)
+            (let ((tasks-start (point)))
+              (dolist (task tasks)
+                (let ((indicator (my/team-sidebar--task-status-indicator task))
+                      (label (my/team-sidebar--task-label task))
+                      (role (or (plist-get task :role) "?"))
+                      (task-line-start (point)))
+                  (insert (format "  %s %s [%s]\n" indicator label role))
+                  (put-text-property task-line-start (1- (point))
+                                     'my/sidebar-task task)))
+              ;; Apply invisible property to task lines
+              (put-text-property tasks-start (point) 'invisible inv-sym)
+              ;; Set up visibility
+              (if expanded
+                  (remove-from-invisibility-spec (cons inv-sym t))
+                (add-to-invisibility-spec (cons inv-sym t))))
+            ;; After first session, auto-expand logic done
+            (when (and first (not (member sid my/team-sidebar--expanded-sessions)))
+              (push sid my/team-sidebar--expanded-sessions)
+              (push 'initialized my/team-sidebar--expanded-sessions))
+            (setq first nil)))
+        (insert "\n")))))
 
 ;;; ---- Status Rendering -------------------------------------------------------
 
@@ -235,6 +357,12 @@
             (insert line))
           (insert "\n")
           (setq has-content t))))
+    ;; History section
+    (when (fboundp 'agent-shell-team--load-all-sessions)
+      (let ((before (point)))
+        (my/team-sidebar--insert-history)
+        (when (> (point) before)
+          (setq has-content t))))
     (unless has-content
       (insert "\n  No active sessions.\n"))))
 
@@ -250,8 +378,9 @@
     (define-key map "g" #'my/team-sidebar-refresh)
     (define-key map "i" #'my/team-sidebar-prompt)
     (define-key map (kbd "C-<return>") #'my/team-sidebar-compose)
-    (define-key map (kbd "<up>") #'my/team-sidebar-prev-agent)
-    (define-key map (kbd "<down>") #'my/team-sidebar-next-agent)
+    (define-key map (kbd "<up>") #'my/team-sidebar-prev-item)
+    (define-key map (kbd "<down>") #'my/team-sidebar-next-item)
+    (define-key map (kbd "<tab>") #'my/team-sidebar-toggle-section)
     map)
   "Keymap for `my/team-sidebar-mode'.")
 
@@ -261,6 +390,7 @@
   (setq cursor-type 'bar
         truncate-lines t
         buffer-read-only t
+        buffer-invisibility-spec nil
         header-line-format (propertize " Team Dashboard" 'face 'bold)
         mode-line-format nil)
   (setq-local face-remapping-alist
@@ -279,8 +409,9 @@
     "g" #'my/team-sidebar-refresh
     "i" #'my/team-sidebar-prompt
     (kbd "C-<return>") #'my/team-sidebar-compose
-    (kbd "<up>") #'my/team-sidebar-prev-agent
-    (kbd "<down>") #'my/team-sidebar-next-agent))
+    (kbd "<up>") #'my/team-sidebar-prev-item
+    (kbd "<down>") #'my/team-sidebar-next-item
+    (kbd "<tab>") #'my/team-sidebar-toggle-section))
 
 ;; Open sidebar in normal state (not motion state from special-mode parent)
 (when (fboundp 'evil-set-initial-state)
@@ -302,6 +433,68 @@
                 (window-selection-change-functions nil))
             (display-buffer buf '(display-buffer-use-some-window
                                   (inhibit-same-window . t)))))))))
+
+(defun my/team-sidebar--task-at-point ()
+  "Return the task plist at point, or nil."
+  (get-text-property (line-beginning-position) 'my/sidebar-task))
+
+(defun my/team-sidebar--session-at-point ()
+  "Return the session-id at point, or nil."
+  (get-text-property (line-beginning-position) 'my/sidebar-session))
+
+(defun my/team-sidebar--item-at-point-p ()
+  "Return non-nil if current line has an agent, task, or session property."
+  (let ((pos (line-beginning-position)))
+    (or (get-text-property pos 'my/sidebar-agent)
+        (get-text-property pos 'my/sidebar-task)
+        (get-text-property pos 'my/sidebar-session))))
+
+(defun my/team-sidebar--preview-task ()
+  "Preview the report for the task at point."
+  (let ((task (my/team-sidebar--task-at-point)))
+    (when task
+      (when-let ((report (plist-get task :report-path)))
+        (when (file-readable-p report)
+          (let ((buf (find-file-noselect report)))
+            (with-current-buffer buf
+              (when (and (fboundp 'markdown-view-mode)
+                         (not (derived-mode-p 'markdown-view-mode)))
+                (markdown-view-mode)))
+            (let ((window-buffer-change-functions nil)
+                  (window-selection-change-functions nil))
+              (display-buffer buf '(display-buffer-use-some-window
+                                    (inhibit-same-window . t))))))))))
+
+(defun my/team-sidebar--preview-current ()
+  "Preview either agent buffer or task report at point."
+  (cond
+   ((my/team-sidebar--agent-at-point) (my/team-sidebar--preview-agent))
+   ((my/team-sidebar--task-at-point)  (my/team-sidebar--preview-task))))
+
+(defun my/team-sidebar-next-item ()
+  "Move to next navigable line (agent, task, or session header) and preview."
+  (interactive)
+  (let ((start (point)))
+    (forward-line 1)
+    (while (and (not (eobp))
+                (not (my/team-sidebar--item-at-point-p)))
+      (forward-line 1))
+    (if (eobp)
+        (goto-char start)
+      (my/team-sidebar--preview-current))))
+
+(defun my/team-sidebar-prev-item ()
+  "Move to previous navigable line (agent, task, or session header) and preview."
+  (interactive)
+  (let ((start (point)))
+    (forward-line -1)
+    (while (and (not (bobp))
+                (not (my/team-sidebar--item-at-point-p)))
+      (forward-line -1))
+    (if (and (bobp)
+             (not (my/team-sidebar--item-at-point-p)))
+        (goto-char start)
+      (my/team-sidebar--preview-current))))
 
 (defun my/team-sidebar-next-agent ()
   "Move to next agent line and preview its buffer."
@@ -329,18 +522,34 @@
       (my/team-sidebar--preview-agent))))
 
 (defun my/team-sidebar-switch-to-agent ()
-  "Switch to the agent buffer on the current line."
+  "Switch to agent buffer, open task report, or toggle session at point."
   (interactive)
-  (let ((agent (my/team-sidebar--agent-at-point)))
-    (if agent
-        (let ((buf (alist-get 'buffer agent)))
-          (if (buffer-live-p buf)
+  (cond
+   ;; Session header — toggle collapse
+   ((my/team-sidebar--session-at-point)
+    (my/team-sidebar-toggle-section))
+   ;; Task line — open report if available
+   ((my/team-sidebar--task-at-point)
+    (let ((task (my/team-sidebar--task-at-point)))
+      (if-let ((report (plist-get task :report-path)))
+          (if (file-readable-p report)
               (select-window
-               (or (get-buffer-window buf)
-                   (display-buffer buf '(display-buffer-use-some-window
-                                         (inhibit-same-window . t)))))
-            (message "Agent buffer is dead.")))
-      (message "No agent on this line."))))
+               (display-buffer (find-file-noselect report)
+                               '(display-buffer-use-some-window
+                                 (inhibit-same-window . t))))
+            (message "Report not readable: %s" report))
+        (message "No report for this task."))))
+   ;; Agent line
+   ((my/team-sidebar--agent-at-point)
+    (let* ((agent (my/team-sidebar--agent-at-point))
+           (buf (alist-get 'buffer agent)))
+      (if (buffer-live-p buf)
+          (select-window
+           (or (get-buffer-window buf)
+               (display-buffer buf '(display-buffer-use-some-window
+                                     (inhibit-same-window . t)))))
+        (message "Agent buffer is dead."))))
+   (t (message "Nothing on this line."))))
 
 (defun my/team-sidebar-kill-agent ()
   "Kill/dismiss the agent under cursor."
@@ -363,9 +572,32 @@
       (delete-window win))))
 
 (defun my/team-sidebar-refresh ()
-  "Manually refresh the sidebar content."
+  "Manually refresh the sidebar content (force-refreshes history cache)."
   (interactive)
+  (setq my/team-sidebar--history-cache nil
+        my/team-sidebar--history-cache-time 0)
   (my/team-sidebar--render))
+
+(defun my/team-sidebar-toggle-section ()
+  "Toggle collapse/expand of history session at point."
+  (interactive)
+  (let ((session-id (get-text-property (line-beginning-position) 'my/sidebar-session)))
+    (when session-id
+      (let* ((sym (intern (format "session-%s" session-id)))
+             (inhibit-read-only t)
+             (currently-hidden (member (cons sym t) buffer-invisibility-spec)))
+        (if currently-hidden
+            (progn
+              (remove-from-invisibility-spec (cons sym t))
+              (cl-pushnew session-id my/team-sidebar--expanded-sessions :test #'equal))
+          (add-to-invisibility-spec (cons sym t))
+          (setq my/team-sidebar--expanded-sessions
+                (delete session-id my/team-sidebar--expanded-sessions)))
+        ;; Update the toggle indicator
+        (save-excursion
+          (beginning-of-line)
+          (when (looking-at "[▸▾]")
+            (replace-match (if currently-hidden "▾" "▸"))))))))
 
 ;;; ---- Inline Prompt Mode -----------------------------------------------------
 
