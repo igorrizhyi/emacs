@@ -992,6 +992,13 @@ Route the status update directly to the lead agent's queue."
                   (message "[agent-shell-team] WARNING: taskUpdate has no session-id, dropping")))
          (lead-buf (when session-id
                      (agent-shell-team--get-lead session-id))))
+    (unless lead-buf
+      (when session-id
+        (agent-shell-team--log
+         (or session-id "<nil>")
+         (format "WARNING: taskUpdate could not find lead (session-registered=%s, agents=%s)"
+                 (if (and session-id (gethash session-id agent-shell-team--sessions)) "yes" "no")
+                 (length (gethash session-id agent-shell-team--sessions))))))
     (when lead-buf
       (let* ((agent-buf (gethash request-id agent-shell-team--request-to-buffer))
              (agent-wt (when agent-buf
@@ -1055,7 +1062,8 @@ Route the status update directly to the lead agent's queue."
         ;; Handle group completion tracking if status is "finished"
         (when (equal status "finished")
           (when-let ((group-id (gethash request-id agent-shell-team--request-to-group)))
-            (agent-shell-team--handle-task-completion request-id session-id nil)))))))
+            (agent-shell-team--handle-task-completion request-id session-id nil)))
+        t))))
 
 (defun agent-shell-team--find-idle-agent (session-id role)
   "Find an idle agent in SESSION-ID matching ROLE."

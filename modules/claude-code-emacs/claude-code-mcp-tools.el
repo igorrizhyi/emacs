@@ -1209,15 +1209,18 @@ PARAMS should include a `tasks' array, each with `role' and `message'."
     (unless status (error "status is required"))
     (unless content (error "content is required"))
     ;; Directly call team handler
-    (when (fboundp 'agent-shell-team--handle-task-update)
-      (let ((agent-shell-team--session-id
-             (or (cdr (assoc 'session_id params))
-                 (cdr (assoc "session_id" params))
-                 (and (boundp 'agent-shell-team--session-id)
-                      agent-shell-team--session-id))))
-        (agent-shell-team--handle-task-update params)))
-    `((success . t)
-      (message . ,(format "Task update received for %s" request-id)))))
+    (let ((delivered
+           (when (fboundp 'agent-shell-team--handle-task-update)
+             (let ((agent-shell-team--session-id
+                    (or (cdr (assoc 'session_id params))
+                        (cdr (assoc "session_id" params))
+                        (and (boundp 'agent-shell-team--session-id)
+                             agent-shell-team--session-id))))
+               (agent-shell-team--handle-task-update params)))))
+      `((success . ,(if delivered t :json-false))
+        (message . ,(if delivered
+                        (format "Task update delivered for %s" request-id)
+                      (format "Task update could not find lead for %s" request-id)))))))
 
 ;;; Dismiss agent handler
 
