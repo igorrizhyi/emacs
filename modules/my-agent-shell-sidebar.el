@@ -21,7 +21,6 @@
 (defvar agent-shell-team--sessions)
 (declare-function agent-shell-team--agent-status "agent-shell-team")
 (declare-function agent-shell-team--short-session-id "agent-shell-team")
-(declare-function my/agent-shell-compose-popup "my-agent-shell-compose")
 (defvar agent-shell-team--task-queue)
 (defvar agent-shell-team--message-queue)
 (defvar agent-shell-team--request-to-buffer)
@@ -385,7 +384,6 @@
     (define-key map "q" #'my/team-sidebar-quit)
     (define-key map "g" #'my/team-sidebar-refresh)
     (define-key map "+" #'my/team-sidebar-prompt)
-    (define-key map (kbd "C-<return>") #'my/team-sidebar-compose)
     (define-key map (kbd "<up>") #'my/team-sidebar-prev-item)
     (define-key map (kbd "<down>") #'my/team-sidebar-next-item)
     (define-key map (kbd "<tab>") #'my/team-sidebar-toggle-section)
@@ -416,7 +414,6 @@
     "q" #'my/team-sidebar-quit
     "g" #'my/team-sidebar-refresh
     "+" #'my/team-sidebar-prompt
-    (kbd "C-<return>") #'my/team-sidebar-compose
     (kbd "<up>") #'my/team-sidebar-prev-item
     (kbd "<down>") #'my/team-sidebar-next-item
     (kbd "<tab>") #'my/team-sidebar-toggle-section))
@@ -612,7 +609,6 @@
 (defvar my/team-sidebar-prompt-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "C-<return>") #'my/team-sidebar-prompt-submit)
-    (define-key map (kbd "M-<return>") #'my/team-sidebar-compose)
     (define-key map (kbd "<escape>") #'my/team-sidebar-prompt-cancel)
     (define-key map (kbd "C-c C-k") #'my/team-sidebar-prompt-cancel)
     map)
@@ -700,16 +696,6 @@
   (interactive)
   (my/team-sidebar-prompt-mode -1)
   (my/team-sidebar--erase-prompt-block))
-
-(defun my/team-sidebar-compose ()
-  "Open the compose posframe targeting the lead buffer for this session."
-  (interactive)
-  (let* ((sid my/team-sidebar--session-id)
-         (lead-buf (my/team-sidebar--find-lead-buffer sid)))
-    (unless (buffer-live-p lead-buf)
-      (user-error "Lead buffer not found for session %s" sid))
-    (with-current-buffer lead-buf
-      (my/agent-shell-compose-popup))))
 
 ;;; ---- Side Window Management -------------------------------------------------
 
