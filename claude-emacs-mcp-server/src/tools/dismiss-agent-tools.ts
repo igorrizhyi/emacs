@@ -26,7 +26,6 @@ export async function handleDismissAgent(bridge: EmacsBridge, args: DismissAgent
   try {
     const result = await bridge.request('dismissAgent', {
       target: args.target,
-      session_id: args.session_id,
       force: args.force,
     });
 

@@ -4,7 +4,6 @@ import { z } from 'zod';
 export const sendNotificationInputSchema = z.object({
   title: z.string().describe('Title of the notification'),
   message: z.string().describe('Message content of the notification'),
-  session_id: z.string().optional().describe('Team session ID for multi-session routing'),
 });
 
 // Output schema for sendNotification tool

@@ -9,7 +9,6 @@ export const tasksPutInputSchema = z.object({
     request_id: z.string().optional().describe('Custom request ID'),
     target: z.string().optional().describe('Buffer name or worktree name of a specific agent to assign this task to'),
   })).describe('Array of tasks to assign'),
-  session_id: z.string().optional().describe('Team session ID for multi-session routing'),
 });
 
 // Output schema for tasksPut tool

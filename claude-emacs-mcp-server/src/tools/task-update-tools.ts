@@ -30,7 +30,6 @@ export async function handleTaskUpdate(bridge: EmacsBridge, args: TaskUpdateArgs
       content: args.content,
       commit: args.commit,
       report_path: args.report_path,
-      session_id: args.session_id,
     });
 
     const success = (result as any).success === true;
