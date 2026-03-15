@@ -1187,11 +1187,7 @@ PARAMS should include a `tasks' array, each with `role' and `message'."
       (unless (cdr (assoc 'message task)) (error "Each task must have a message")))
     ;; Directly call the team handler to enqueue tasks
     (when (fboundp 'agent-shell-team--handle-tasks-put)
-      (let ((agent-shell-team--session-id
-             (or (cdr (assoc 'session_id params))
-                 (cdr (assoc "session_id" params))
-                 agent-shell-team--session-id)))
-        (agent-shell-team--handle-tasks-put params)))
+      (agent-shell-team--handle-tasks-put params))
     `((success . t)
       (message . ,(format "Queued %d task(s)" (length tasks))))))
 
@@ -1210,11 +1206,7 @@ PARAMS should include a `tasks' array, each with `role' and `message'."
     ;; Directly call team handler
     (let ((delivered
            (when (fboundp 'agent-shell-team--handle-task-update)
-             (let ((agent-shell-team--session-id
-                    (or (cdr (assoc 'session_id params))
-                        (cdr (assoc "session_id" params))
-                        agent-shell-team--session-id)))
-               (agent-shell-team--handle-task-update params)))))
+             (agent-shell-team--handle-task-update params))))
       `((success . ,(if delivered t :json-false))
         (message . ,(if delivered
                         (format "Task update delivered for %s" request-id)
@@ -1230,11 +1222,7 @@ PARAMS should include `target' (buffer name or worktree name)."
   (let ((target (cdr (assoc 'target params))))
     (unless target (error "target is required"))
     (if (fboundp 'agent-shell-team--handle-dismiss-agent)
-        (let ((agent-shell-team--session-id
-               (or (cdr (assoc 'session_id params))
-                   (cdr (assoc "session_id" params))
-                   agent-shell-team--session-id)))
-          (agent-shell-team--handle-dismiss-agent params))
+        (agent-shell-team--handle-dismiss-agent params)
       `((success . nil)
         (message . "agent-shell-team not loaded")))))
 

@@ -88,7 +88,8 @@ without prompting for confirmation."
 ;;; Buffer-local variables
 
 (defvar agent-shell-team--session-id nil
-  "Global team session ID. One session per Emacs instance.")
+  "Global team session ID. One session per Emacs instance.
+Generated eagerly at load time so MCP handlers always have a valid session.")
 
 (defvar-local agent-shell-team--role nil
   "Role: dev, lead, tester, or researcher.")
@@ -137,6 +138,10 @@ Keyed by session-id, values are lists of formatted message strings.")
 
 (defvar agent-shell-team--request-to-buffer (make-hash-table :test 'equal)
   "Map request-id to the agent buffer it was assigned to.")
+
+(defvar agent-shell-team--request-to-session (make-hash-table :test 'equal)
+  "Map request-id to session-id.  Populated at tasksPut time so that
+taskUpdate can resolve the correct session without relying on the global.")
 
 ;;; Session ID generation
 
@@ -778,15 +783,17 @@ Route sendNotification calls between team agents."
             ;; Track group completion if this is a task completion
             (when (member notif-title '("Task Complete" "Test Results" "Research Complete"))
               (when-let ((request-id (agent-shell-team--extract-request-id notif-message)))
-                ;; Persist legacy completion
-                (when agent-shell-team--session-id
-                  (agent-shell-team--persist-task
-                   agent-shell-team--session-id
-                   (list :request-id request-id
-                         :status "finished"
-                         :completed-at (float-time))))
-                (agent-shell-team--handle-task-completion
-                 request-id agent-shell-team--session-id (current-buffer))))
+                (let ((sid (or (gethash request-id agent-shell-team--request-to-session)
+                               agent-shell-team--session-id)))
+                  ;; Persist legacy completion
+                  (when sid
+                    (agent-shell-team--persist-task
+                     sid
+                     (list :request-id request-id
+                           :status "finished"
+                           :completed-at (float-time))))
+                  (agent-shell-team--handle-task-completion
+                   request-id sid (current-buffer)))))
             (agent-shell-team--route-from-acp
              agent-shell-team--session-id
              agent-shell-team--role
@@ -955,12 +962,13 @@ Only the lead role may call this.  Returns an alist with success/message."
    (format "[cleanup] Killing agent buffer %s%s"
            (if (buffer-live-p buffer) (buffer-name buffer) "(already dead)")
            (if worktree-path (format ", removing worktree %s" worktree-path) "")))
-  ;; Clean up request-to-buffer mappings and associated group tracking for this agent
+  ;; Clean up request-to-buffer and request-to-session mappings for this agent
   (let ((removed-request-ids nil))
     (maphash (lambda (k v)
                (when (eq v buffer)
                  (push k removed-request-ids)
-                 (remhash k agent-shell-team--request-to-buffer)))
+                 (remhash k agent-shell-team--request-to-buffer)
+                 (remhash k agent-shell-team--request-to-session)))
              (copy-hash-table agent-shell-team--request-to-buffer))
     ;; Clean up group tracking for removed request-ids
     (dolist (rid removed-request-ids)
@@ -1002,9 +1010,7 @@ Extract tasks, generate IDs, register groups, and enqueue for assignment."
                (target (or (map-elt task 'target) (map-elt task "target")))
                (request-id (or (map-elt task 'request_id) (map-elt task "request_id")
                                (agent-shell-team--generate-request-id)))
-               (session-id (or (map-elt task 'session_id)
-                               (map-elt task "session_id")
-                               agent-shell-team--session-id)))
+               (session-id agent-shell-team--session-id))
           (when session-id
             (let* ((reports-dir (agent-shell-team--reports-dir session-id))
                    (report-path (expand-file-name (concat request-id ".md") reports-dir))
@@ -1034,6 +1040,8 @@ Extract tasks, generate IDs, register groups, and enqueue for assignment."
                   (plist-put group :pending (cons request-id (plist-get group :pending)))
                   (puthash group-id group agent-shell-team--task-groups))
                 (puthash request-id group-id agent-shell-team--request-to-group))
+              ;; Track request → session for taskUpdate resolution
+              (puthash request-id session-id agent-shell-team--request-to-session)
               ;; Append to FIFO queue
               (setq agent-shell-team--task-queue
                     (append agent-shell-team--task-queue (list entry)))
@@ -1061,7 +1069,8 @@ Route the status update directly to the lead agent's queue."
                      (map-elt raw-input "commit")))
          (report-path (or (map-elt raw-input 'report_path)
                           (map-elt raw-input "report_path")))
-         (session-id (or (map-elt raw-input 'session_id)
+         (session-id (or (gethash request-id agent-shell-team--request-to-session)
+                        (map-elt raw-input 'session_id)
                         (map-elt raw-input "session_id")
                         agent-shell-team--session-id))
          (lead-buf (when session-id
@@ -1270,7 +1279,8 @@ reached its max agent count, auto-spawn a new agent."
     ;; Remove stale request-id mappings for this buffer before adding the new one
     (maphash (lambda (k v)
                (when (eq v buf)
-                 (remhash k agent-shell-team--request-to-buffer)))
+                 (remhash k agent-shell-team--request-to-buffer)
+                 (remhash k agent-shell-team--request-to-session)))
              (copy-hash-table agent-shell-team--request-to-buffer))
     (puthash request-id buf agent-shell-team--request-to-buffer)
     ;; Persist assignment
@@ -1779,6 +1789,12 @@ When called from an existing team buffer:
         (switch-to-buffer-other-window
          (agent-shell-team--log-buffer-name session))))
      (t (user-error "No active team sessions")))))
+
+;;; Eager session-id initialization
+;; One session per Emacs instance — generate at load time so MCP handlers
+;; never encounter a nil session-id.
+(unless agent-shell-team--session-id
+  (setq agent-shell-team--session-id (agent-shell-team--generate-session-id)))
 
 (provide 'agent-shell-team)
 ;;; agent-shell-team.el ends here

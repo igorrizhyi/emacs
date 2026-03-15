@@ -329,8 +329,10 @@ If already in the lead buffer, toggle back to the previous buffer."
      (t
       (require 'agent-shell-team)
       (let* ((context-buffer (current-buffer))
-             (session-id (agent-shell-team--generate-session-id))
+             (session-id agent-shell-team--session-id)
              (buf (agent-shell-team--start-agent session-id "lead" "neighbor" default-directory nil nil)))
+        (message "agent-shell-team: start called, session=%s role=lead mode=neighbor"
+                 (agent-shell-team--short-session-id session-id))
         (switch-to-buffer buf)
         (agent-shell-team--start-drain-timer)
         (unless (with-current-buffer context-buffer (derived-mode-p 'agent-shell-mode))
