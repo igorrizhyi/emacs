@@ -239,7 +239,17 @@ Reads JSON-RPC requests from stdin, processes them, and writes responses to stdo
                                                (description . "Buffer name, worktree name, or request ID of the agent to dismiss")))
                                     (session_id . ((type . "string")
                                                    (description . "Optional session ID for multi-session routing")))))
-                     (required . ["target"]))))))
+                     (required . ["target"]))))
+
+   `((name . "requestHuman")
+     (description . "Request human interaction. Shows a popup with the message and optional capture actions (adb-logcat, adb-screenshot). Blocks until human completes interaction. Returns path to collected artifacts.")
+     (inputSchema . ((type . "object")
+                     (properties . ((message . ((type . "string")
+                                                (description . "What the agent needs the human to do")))
+                                    (actions . ((type . "array")
+                                                (items . ((type . "string")))
+                                                (description . "Capture actions to offer: adb-logcat, adb-screenshot")))))
+                     (required . ["message"]))))))
 
 (defun claude-code-mcp-stdio--call-tool (tool-name args)
   "Call MCP tool TOOL-NAME with ARGS and return result."

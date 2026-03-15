@@ -30,6 +30,7 @@
 ;; (require 'my-jumps)
 (require 'my-super-jumps)
 (require 'my-search)
+(require 'my-request-human)
 (require 'my-eshell-funcs)
 (after! eshell
   (require 'em-tramp)
