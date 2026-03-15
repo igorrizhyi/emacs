@@ -235,28 +235,41 @@
   "Return the agent alist at point, or nil."
   (get-text-property (line-beginning-position) 'my/sidebar-agent))
 
+(defun my/team-sidebar--preview-agent ()
+  "Display the agent buffer at point in a non-sidebar window without selecting it."
+  (let ((agent (my/team-sidebar--agent-at-point)))
+    (when agent
+      (let ((buf (alist-get 'buffer agent)))
+        (when (buffer-live-p buf)
+          (let ((window-buffer-change-functions nil)
+                (window-selection-change-functions nil))
+            (display-buffer buf '(display-buffer-use-some-window
+                                  (inhibit-same-window . t)))))))))
+
 (defun my/team-sidebar-next-agent ()
-  "Move to next agent line."
+  "Move to next agent line and preview its buffer."
   (interactive)
   (let ((start (point)))
     (forward-line 1)
     (while (and (not (eobp))
                 (not (get-text-property (line-beginning-position) 'my/sidebar-agent)))
       (forward-line 1))
-    (when (eobp)
-      (goto-char start))))
+    (if (eobp)
+        (goto-char start)
+      (my/team-sidebar--preview-agent))))
 
 (defun my/team-sidebar-prev-agent ()
-  "Move to previous agent line."
+  "Move to previous agent line and preview its buffer."
   (interactive)
   (let ((start (point)))
     (forward-line -1)
     (while (and (not (bobp))
                 (not (get-text-property (line-beginning-position) 'my/sidebar-agent)))
       (forward-line -1))
-    (when (and (bobp)
-               (not (get-text-property (line-beginning-position) 'my/sidebar-agent)))
-      (goto-char start))))
+    (if (and (bobp)
+             (not (get-text-property (line-beginning-position) 'my/sidebar-agent)))
+        (goto-char start)
+      (my/team-sidebar--preview-agent))))
 
 (defun my/team-sidebar-switch-to-agent ()
   "Switch to the agent buffer on the current line."
