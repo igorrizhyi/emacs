@@ -39,7 +39,8 @@ export class EmacsBridge extends EventEmitter {
   }
 
   async start(port: number = 0, sessionId?: string, targetInstanceId?: number): Promise<number> {
-    this.sessionId = sessionId;
+    // Store sessionId in the same format clients use (PID:projectRoot) so exact match works
+    this.sessionId = targetInstanceId ? `${targetInstanceId}:${sessionId}` : sessionId;
     this.targetInstanceId = targetInstanceId;
     this.log(`EmacsBridge starting with target instance ID: ${targetInstanceId}`);
     return new Promise((resolve, reject) => {
@@ -240,14 +241,10 @@ export class EmacsBridge extends EventEmitter {
       }
     }
 
-    // Last resort: arbitrary first client
     if (!client) {
-      client = Array.from(this.clients.values())[0];
-    }
-
-    if (!client) {
-      this.log(`Request failed: No Emacs client connected for session ${this.sessionId}, instanceId ${instanceId}`);
-      throw new Error(`No Emacs client connected for instance ${instanceId}`);
+      const connectedClients = Array.from(this.clients.keys()).join(', ');
+      this.log(`Request failed: No matching Emacs client found for instanceId=${this.targetInstanceId}, session=${this.sessionId}. Connected clients: ${connectedClients}`);
+      throw new Error(`No matching Emacs client found for instanceId=${this.targetInstanceId}, session=${this.sessionId}. Connected clients: ${connectedClients}`);
     }
     
     // Generate instance-specific request ID if instance ID is provided
