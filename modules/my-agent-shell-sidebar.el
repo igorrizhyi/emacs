@@ -376,7 +376,7 @@
     (define-key map "k" #'my/team-sidebar-kill-agent)
     (define-key map "q" #'my/team-sidebar-quit)
     (define-key map "g" #'my/team-sidebar-refresh)
-    (define-key map "i" #'my/team-sidebar-prompt)
+    (define-key map "+" #'my/team-sidebar-prompt)
     (define-key map (kbd "C-<return>") #'my/team-sidebar-compose)
     (define-key map (kbd "<up>") #'my/team-sidebar-prev-item)
     (define-key map (kbd "<down>") #'my/team-sidebar-next-item)
@@ -407,7 +407,7 @@
     "k" #'my/team-sidebar-kill-agent
     "q" #'my/team-sidebar-quit
     "g" #'my/team-sidebar-refresh
-    "i" #'my/team-sidebar-prompt
+    "+" #'my/team-sidebar-prompt
     (kbd "C-<return>") #'my/team-sidebar-compose
     (kbd "<up>") #'my/team-sidebar-prev-item
     (kbd "<down>") #'my/team-sidebar-next-item
