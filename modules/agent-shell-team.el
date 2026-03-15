@@ -139,6 +139,11 @@ Keyed by session-id, values are lists of formatted message strings.")
 (defvar agent-shell-team--request-to-buffer (make-hash-table :test 'equal)
   "Map request-id to the agent buffer it was assigned to.")
 
+(defvar agent-shell-team--active-tasks (make-hash-table :test 'equal)
+  "Map request-id -> task plist for currently assigned (in-flight) tasks.
+Used for content-based dedup: detect retry duplicates by checking role+message
+against both queued and in-flight tasks.")
+
 (defvar agent-shell-team--request-to-session (make-hash-table :test 'equal)
   "Map request-id to session-id.  Populated at tasksPut time so that
 taskUpdate can resolve the correct session without relying on the global.")
@@ -988,7 +993,8 @@ Only the lead role may call this.  Returns an alist with success/message."
                (when (eq v buffer)
                  (push k removed-request-ids)
                  (remhash k agent-shell-team--request-to-buffer)
-                 (remhash k agent-shell-team--request-to-session)))
+                 (remhash k agent-shell-team--request-to-session)
+                 (remhash k agent-shell-team--active-tasks)))
              (copy-hash-table agent-shell-team--request-to-buffer))
     ;; Clean up group tracking for removed request-ids
     (dolist (rid removed-request-ids)
@@ -1027,7 +1033,8 @@ Return the number of tasks actually enqueued, or signal an error if
       (error "Team session not initialized (session-id is nil)"))
     (let ((tasks (or (map-elt raw-input 'tasks)
                      (map-elt raw-input "tasks")))
-          (enqueued 0))
+          (enqueued 0)
+          (skipped 0))
       (when tasks
         (dolist (task (append tasks nil))  ;; convert vector to list
           (let* ((role (or (map-elt task 'role) (map-elt task "role")))
@@ -1036,17 +1043,40 @@ Return the number of tasks actually enqueued, or signal an error if
                  (target (or (map-elt task 'target) (map-elt task "target")))
                  (caller-request-id (or (map-elt task 'request_id) (map-elt task "request_id")))
                  (request-id (or caller-request-id
-                                 (agent-shell-team--generate-request-id))))
-            ;; Dedup: skip if caller provided a request-id that is already
-            ;; queued or already assigned to a buffer.
-            (if (and caller-request-id
-                     (or (gethash caller-request-id agent-shell-team--request-to-buffer)
-                         (cl-find caller-request-id agent-shell-team--task-queue
-                                  :key (lambda (e) (plist-get e :request-id))
-                                  :test #'string=)))
-                (agent-shell-team--log session-id
-                                       (format "[tasksPut] Skipping duplicate request-id: %s"
-                                               caller-request-id))
+                                 (agent-shell-team--generate-request-id)))
+                 ;; Content-based dedup: check queued and in-flight tasks
+                 (content-dup-queued
+                  (cl-find-if (lambda (e)
+                                (and (equal (plist-get e :role) role)
+                                     (equal (plist-get e :message) message)))
+                              agent-shell-team--task-queue))
+                 (content-dup-active
+                  (let ((found nil))
+                    (maphash (lambda (_k v)
+                               (when (and (equal (plist-get v :role) role)
+                                          (equal (plist-get v :message) message))
+                                 (setq found v)))
+                             agent-shell-team--active-tasks)
+                    found)))
+            (cond
+             ;; 1. Request-id dedup (existing)
+             ((and caller-request-id
+                   (or (gethash caller-request-id agent-shell-team--request-to-buffer)
+                       (cl-find caller-request-id agent-shell-team--task-queue
+                                :key (lambda (e) (plist-get e :request-id))
+                                :test #'string=)))
+              (agent-shell-team--log session-id
+                                     (format "[tasksPut] Skipping duplicate request-id: %s"
+                                             caller-request-id))
+              (cl-incf skipped))
+             ;; 2. Content-based dedup (new)
+             ((or content-dup-queued content-dup-active)
+              (agent-shell-team--log session-id
+                                     (format "[tasksPut] Skipping content-duplicate: role=%s msg-prefix=%.60s"
+                                             role (or message "")))
+              (cl-incf skipped))
+             ;; 3. Normal enqueue
+             (t
               (let* ((reports-dir (agent-shell-team--reports-dir session-id))
                      (report-path (expand-file-name (concat request-id ".md") reports-dir))
                      (entry (list :role role
@@ -1086,7 +1116,7 @@ Return the number of tasks actually enqueued, or signal an error if
                                                role
                                                (truncate-string-to-width message 60 nil nil "...")
                                                request-id
-                                               (if group-id (format ", group: %s" group-id) ""))))))))
+                                               (if group-id (format ", group: %s" group-id) "")))))))))
       ;; Try to assign immediately
       (agent-shell-team--try-assign-tasks)
       ;; Ensure drain timer is running for retries
@@ -1331,9 +1361,11 @@ reached its max agent count, auto-spawn a new agent."
     (maphash (lambda (k v)
                (when (eq v buf)
                  (remhash k agent-shell-team--request-to-buffer)
-                 (remhash k agent-shell-team--request-to-session)))
+                 (remhash k agent-shell-team--request-to-session)
+                 (remhash k agent-shell-team--active-tasks)))
              (copy-hash-table agent-shell-team--request-to-buffer))
     (puthash request-id buf agent-shell-team--request-to-buffer)
+    (puthash request-id task agent-shell-team--active-tasks)
     ;; Persist assignment
     (let ((wt-name (alist-get 'worktree-name agent)))
       (agent-shell-team--persist-task
