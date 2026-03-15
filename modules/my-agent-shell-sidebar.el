@@ -122,8 +122,9 @@
   "Return the first visible team buffer in the selected frame, or nil."
   (cl-loop for win in (window-list nil 'no-minibuf)
            for buf = (window-buffer win)
-           when (and (buffer-live-p buf)
-                     (string-match-p "\\*team:[a-z0-9]\\{4\\}:" (buffer-name buf)))
+           when (or (and (buffer-live-p buf)
+                        (string-match-p "\\*team:[a-z0-9]\\{4\\}:" (buffer-name buf)))
+                   (equal buf (get-buffer my/team-sidebar-buffer-name)))
            return buf))
 
 (defun my/team-sidebar--session-id-from-lead (buf)
@@ -213,6 +214,16 @@
             ;; Task lines (with invisible property for collapsing)
             (let ((tasks-start (point)))
               (dolist (task tasks)
+                ;; Reconstruct :report-path for history tasks
+                (let* ((root (or (and (fboundp 'projectile-project-root) (projectile-project-root))
+                                 default-directory))
+                       (report-path (expand-file-name
+                                     (concat (plist-get task :request-id) ".md")
+                                     (expand-file-name
+                                      (format ".agent-shell/reports/%s/" sid)
+                                      root))))
+                  (when (file-exists-p report-path)
+                    (setq task (plist-put (copy-sequence task) :report-path report-path))))
                 (let ((indicator (my/team-sidebar--task-status-indicator task))
                       (label (my/team-sidebar--task-label task))
                       (role (or (plist-get task :role) "?"))
@@ -454,21 +465,70 @@
         (get-text-property pos 'my/sidebar-task)
         (get-text-property pos 'my/sidebar-session))))
 
+(defun my/team-sidebar--render-task-preview (task)
+  "Render TASK plist into a formatted preview buffer."
+  (let ((buf (get-buffer-create " *task-preview*"))
+        (rid (or (plist-get task :request-id) "unknown"))
+        (role (or (plist-get task :role) "?"))
+        (status (or (plist-get task :status) "?"))
+        (msg (or (plist-get task :message) ""))
+        (created (plist-get task :created-at))
+        (assigned (plist-get task :assigned-at))
+        (completed (plist-get task :completed-at))
+        (commit (plist-get task :commit))
+        (worktree (plist-get task :agent-worktree))
+        (group (plist-get task :group-id)))
+    (with-current-buffer buf
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (insert (propertize (format " Task: %s\n" rid)
+                            'face '(:weight bold :height 1.2))
+                "\n"
+                (format "  Status:     %s\n" status)
+                (format "  Role:       %s\n" role))
+        (when worktree
+          (insert (format "  Worktree:   %s\n" worktree)))
+        (when group
+          (insert (format "  Group:      %s\n" group)))
+        (insert "\n")
+        (when created
+          (insert (format "  Created:    %s\n"
+                          (format-time-string "%Y-%m-%d %H:%M:%S" created))))
+        (when assigned
+          (insert (format "  Assigned:   %s\n"
+                          (format-time-string "%Y-%m-%d %H:%M:%S" assigned))))
+        (when completed
+          (insert (format "  Completed:  %s\n"
+                          (format-time-string "%Y-%m-%d %H:%M:%S" completed))))
+        (when commit
+          (insert (format "  Commit:     %s\n" commit)))
+        (insert "\n"
+                (propertize " Description\n" 'face '(:weight bold))
+                "\n"
+                (format "  %s\n" (string-replace "\n" "\n  " msg))))
+      (goto-char (point-min))
+      (special-mode))
+    buf))
+
 (defun my/team-sidebar--preview-task ()
-  "Preview the report for the task at point."
+  "Preview the report for the task at point, falling back to synthetic preview."
   (let ((task (my/team-sidebar--task-at-point)))
     (when task
-      (when-let ((report (plist-get task :report-path)))
-        (when (file-readable-p report)
-          (let ((buf (find-file-noselect report)))
-            (with-current-buffer buf
-              (when (and (fboundp 'markdown-view-mode)
-                         (not (derived-mode-p 'markdown-view-mode)))
-                (markdown-view-mode)))
-            (let ((window-buffer-change-functions nil)
-                  (window-selection-change-functions nil))
-              (display-buffer buf '(display-buffer-use-some-window
-                                    (inhibit-same-window . t))))))))))
+      (let* ((report (plist-get task :report-path))
+             (buf (cond
+                   ((and report (file-readable-p report))
+                    (let ((b (find-file-noselect report)))
+                      (with-current-buffer b
+                        (when (and (fboundp 'markdown-view-mode)
+                                   (not (derived-mode-p 'markdown-view-mode)))
+                          (markdown-view-mode)))
+                      b))
+                   (t (my/team-sidebar--render-task-preview task)))))
+        (when buf
+          (let ((window-buffer-change-functions nil)
+                (window-selection-change-functions nil))
+            (display-buffer buf '(display-buffer-use-some-window
+                                  (inhibit-same-window . t)))))))))
 
 (defun my/team-sidebar--preview-current ()
   "Preview either agent buffer or task report at point."
