@@ -118,6 +118,10 @@ Each entry is: ((buffer . #<buffer>) (role . \"dev\") (mode . \"isolated\")
 (defvar agent-shell-team--message-queue (make-hash-table :test 'equal)
   "Buffer -> list of pending messages waiting for agent to become idle.")
 
+(defvar agent-shell-team--pending-for-lead (make-hash-table :test 'equal)
+  "Messages pending delivery to a lead that hasn't registered yet.
+Keyed by session-id, values are lists of formatted message strings.")
+
 (defvar agent-shell-team--assigning-p nil
   "Non-nil while `agent-shell-team--try-assign-tasks' is running, preventing re-entrant calls.")
 
@@ -992,78 +996,79 @@ Route the status update directly to the lead agent's queue."
                   (message "[agent-shell-team] WARNING: taskUpdate has no session-id, dropping")))
          (lead-buf (when session-id
                      (agent-shell-team--get-lead session-id))))
-    (unless lead-buf
-      (when session-id
-        (agent-shell-team--log
-         (or session-id "<nil>")
-         (format "WARNING: taskUpdate could not find lead (session-registered=%s, agents=%s)"
-                 (if (and session-id (gethash session-id agent-shell-team--sessions)) "yes" "no")
-                 (length (gethash session-id agent-shell-team--sessions))))))
-    (when lead-buf
-      (let* ((agent-buf (gethash request-id agent-shell-team--request-to-buffer))
-             (agent-wt (when agent-buf
-                         (cl-loop for agent in (agent-shell-team--get-session-agents session-id)
-                                  when (eq (alist-get 'buffer agent) agent-buf)
-                                  return (alist-get 'worktree-name agent))))
-             (message (format "Task Update [%s] — %s\nRequest ID: %s%s%s%s\n\n%s"
-                              status
-                              request-id
-                              request-id
-                              (if commit (format "\nCommit: %s" commit) "")
-                              (if report-path (format "\nReport: %s" report-path) "")
-                              (if agent-wt (format "\nAgent: %s" agent-wt) "")
-                              content))
-             ;; Check report for Knowledge Discoveries on finished tasks
-             (message
-              (if (and (equal status "finished")
-                       report-path
-                       (file-readable-p report-path))
-                  (let ((has-discoveries
-                         (with-temp-buffer
-                           (insert-file-contents report-path)
-                           (goto-char (point-min))
-                           (when (re-search-forward "^## Knowledge Discoveries" nil t)
-                             (let ((section-start (match-end 0)))
-                               (goto-char section-start)
-                               (let ((section-end (if (re-search-forward "^## " nil t)
-                                                      (match-beginning 0)
-                                                    (point-max))))
-                                 (let ((text (string-trim (buffer-substring-no-properties
-                                                           section-start section-end))))
-                                   (and (not (string-empty-p text))
-                                        (not (string-match-p "\\`\\(?:none\\|n/a\\)\\'" (downcase text)))))))))))
-                    (if has-discoveries
-                        (let* ((role (when (and agent-buf (buffer-live-p agent-buf))
-                                       (buffer-local-value 'agent-shell-team--role agent-buf)))
-                               (knowledge-path (when role
-                                                 (agent-shell-team--knowledge-file role))))
-                          (concat (format "⚠️ This report contains Knowledge Discoveries. Update the knowledge file at %s before proceeding.\n\n"
-                                          (or knowledge-path "the relevant role knowledge file"))
-                                  message))
-                      message))
-                message))
-             (lead-status (agent-shell-team--agent-status lead-buf)))
-        ;; Log it
-        (agent-shell-team--log session-id
-                               (format "[taskUpdate] %s from request %s"
-                                       status request-id))
-        ;; Desktop notification for task lifecycle events
-        (when (member status '("finished" "blocked"))
-          (agent-shell-team--notify
-           (format "Task %s" (capitalize status))
-           (format "%s" request-id)))
-        ;; Deliver or queue to lead
-        (pcase lead-status
-          ('idle (agent-shell-team--prompt-agent lead-buf message))
-          ((or 'busy 'initializing)
-           (agent-shell-team--queue-message session-id lead-buf
-                                            (list :from "agent" :title "Task Update" :message message)))
-          ('dead (agent-shell-team--log session-id "WARNING: lead buffer is dead")))
-        ;; Handle group completion tracking if status is "finished"
-        (when (equal status "finished")
-          (when-let ((group-id (gethash request-id agent-shell-team--request-to-group)))
-            (agent-shell-team--handle-task-completion request-id session-id nil)))
-        t))))
+    ;; Build the message text regardless of whether lead-buf exists
+    (let* ((agent-buf (gethash request-id agent-shell-team--request-to-buffer))
+           (agent-wt (when agent-buf
+                       (cl-loop for agent in (agent-shell-team--get-session-agents session-id)
+                                when (eq (alist-get 'buffer agent) agent-buf)
+                                return (alist-get 'worktree-name agent))))
+           (message-text (format "Task Update [%s] — %s\nRequest ID: %s%s%s%s\n\n%s"
+                                 status
+                                 request-id
+                                 request-id
+                                 (if commit (format "\nCommit: %s" commit) "")
+                                 (if report-path (format "\nReport: %s" report-path) "")
+                                 (if agent-wt (format "\nAgent: %s" agent-wt) "")
+                                 content))
+           ;; Check report for Knowledge Discoveries on finished tasks
+           (message-text
+            (if (and (equal status "finished")
+                     report-path
+                     (file-readable-p report-path))
+                (let ((has-discoveries
+                       (with-temp-buffer
+                         (insert-file-contents report-path)
+                         (goto-char (point-min))
+                         (when (re-search-forward "^## Knowledge Discoveries" nil t)
+                           (let ((section-start (match-end 0)))
+                             (goto-char section-start)
+                             (let ((section-end (if (re-search-forward "^## " nil t)
+                                                    (match-beginning 0)
+                                                  (point-max))))
+                               (let ((text (string-trim (buffer-substring-no-properties
+                                                         section-start section-end))))
+                                 (and (not (string-empty-p text))
+                                      (not (string-match-p "\\`\\(?:none\\|n/a\\)\\'" (downcase text)))))))))))
+                  (if has-discoveries
+                      (let* ((role (when (and agent-buf (buffer-live-p agent-buf))
+                                     (buffer-local-value 'agent-shell-team--role agent-buf)))
+                             (knowledge-path (when role
+                                               (agent-shell-team--knowledge-file role))))
+                        (concat (format "⚠️ This report contains Knowledge Discoveries. Update the knowledge file at %s before proceeding.\n\n"
+                                        (or knowledge-path "the relevant role knowledge file"))
+                                message-text))
+                    message-text))
+              message-text)))
+      ;; Log it
+      (agent-shell-team--log (or session-id "<nil>")
+                             (format "[taskUpdate] %s from request %s"
+                                     status request-id))
+      ;; Desktop notification for task lifecycle events
+      (when (member status '("finished" "blocked"))
+        (agent-shell-team--notify
+         (format "Task %s" (capitalize status))
+         (format "%s" request-id)))
+      (if lead-buf
+          ;; Deliver or queue to lead
+          (let ((lead-status (agent-shell-team--agent-status lead-buf)))
+            (pcase lead-status
+              ('idle (agent-shell-team--prompt-agent lead-buf message-text))
+              ((or 'busy 'initializing)
+               (agent-shell-team--queue-message session-id lead-buf
+                                                (list :from "agent" :title "Task Update" :message message-text)))
+              ('dead (agent-shell-team--log session-id "WARNING: lead buffer is dead"))))
+        ;; No lead yet — queue for later delivery
+        (when session-id
+          (agent-shell-team--log session-id "taskUpdate queued pending lead registration")
+          (let ((existing (gethash session-id agent-shell-team--pending-for-lead)))
+            (puthash session-id (append existing (list message-text))
+                     agent-shell-team--pending-for-lead))
+          (agent-shell-team--start-drain-timer)))
+      ;; Handle group completion tracking if status is "finished"
+      (when (equal status "finished")
+        (when-let ((group-id (gethash request-id agent-shell-team--request-to-group)))
+          (agent-shell-team--handle-task-completion request-id session-id nil)))
+      t)))
 
 (defun agent-shell-team--find-idle-agent (session-id role)
   "Find an idle agent in SESSION-ID matching ROLE."
@@ -1378,6 +1383,21 @@ Also detects agents stuck in busy state longer than
                ;; Agent is not busy — clear any tracked timestamp
                (remhash buf agent-shell-team--busy-since)))))))
    agent-shell-team--sessions)
+  ;; --- Drain pending-for-lead queue (messages queued before lead registered) ---
+  (let ((delivered-sessions nil))
+    (maphash (lambda (sid messages)
+               (when-let ((lead-buf (agent-shell-team--get-lead sid)))
+                 (push sid delivered-sessions)
+                 (let ((combined (mapconcat #'identity messages "\n\n")))
+                   (pcase (agent-shell-team--agent-status lead-buf)
+                     ('idle (agent-shell-team--prompt-agent lead-buf combined))
+                     ((or 'busy 'initializing)
+                      (agent-shell-team--queue-message sid lead-buf
+                        (list :from "agent" :title "Task Update (delayed)" :message combined)))
+                     ('dead (agent-shell-team--log sid "WARNING: lead is dead, dropping pending messages"))))))
+             agent-shell-team--pending-for-lead)
+    (dolist (sid delivered-sessions)
+      (remhash sid agent-shell-team--pending-for-lead)))
   ;; --- Drain message queues for idle agents (skip busy and initializing) ---
   (maphash (lambda (buffer _messages)
              (when (eq (agent-shell-team--agent-status buffer) 'idle)
@@ -1385,8 +1405,9 @@ Also detects agents stuck in busy state longer than
            agent-shell-team--message-queue)
   ;; Try to assign pending tasks
   (agent-shell-team--try-assign-tasks)
-  ;; Stop timer if no more queued messages AND no pending tasks
+  ;; Stop timer if no more queued messages, pending-for-lead, AND no pending tasks
   (when (and (zerop (hash-table-count agent-shell-team--message-queue))
+             (zerop (hash-table-count agent-shell-team--pending-for-lead))
              (null agent-shell-team--task-queue))
     (agent-shell-team--stop-drain-timer)))
 
