@@ -176,7 +176,7 @@ Uses `org-id-uuid' if available, falls back to uuidgen."
               (or (projectile-project-root) default-directory))))
     (unless (file-directory-p dir)
       (make-directory dir t))
-    (dolist (role '("dev" "tester" "researcher"))
+    (dolist (role '("dev" "tester" "researcher" "lead"))
       (let ((file (expand-file-name (format "%s.md" role) dir)))
         (unless (file-exists-p file)
           (with-temp-file file
@@ -315,7 +315,8 @@ Format: *team:{session-short}:{role}:{worktree-name-or-main}*"
 
 (defun agent-shell-team--lead-prompt (session-id)
   "Generate lead system prompt for SESSION-ID."
-  (format "You are the LEAD agent in a team session %s.
+  (let ((lead-base
+         (format "You are the LEAD agent in a team session %s.
 
 ## CRITICAL RULE: You are a MANAGER, not an implementer.
 NEVER write code, edit files, or implement tasks yourself.
@@ -462,7 +463,15 @@ Your responsibilities:
 - Knowledge from the user (preferences, constraints) should also be captured.
 - Keep knowledge files concise and organized by topic — not a raw log."
           (agent-shell-team--knowledge-dir)
-          session-id session-id))
+          session-id session-id)))
+    (let ((knowledge-content (let ((f (agent-shell-team--knowledge-file "lead")))
+                               (when (file-exists-p f)
+                                 (with-temp-buffer
+                                   (insert-file-contents f)
+                                   (buffer-string))))))
+      (concat lead-base
+              (when (and knowledge-content (not (string-empty-p knowledge-content)))
+                (format "\n\n## Lead Knowledge Base\nThe following is your accumulated project knowledge. Use it to inform your decisions:\n\n%s" knowledge-content))))))
 
 (defun agent-shell-team--dev-prompt (session-id worktree-path worktree-name)
   "Generate dev system prompt for SESSION-ID.
