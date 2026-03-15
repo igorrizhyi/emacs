@@ -192,6 +192,69 @@ Uses `org-id-uuid' if available, falls back to uuidgen."
   (expand-file-name (format "%s.md" role)
                     (agent-shell-team--knowledge-dir)))
 
+(defun agent-shell-team--tasks-dir ()
+  "Ensure .agent-shell/tasks/ exists and return its path."
+  (let ((dir (expand-file-name
+              ".agent-shell/tasks/"
+              (or (projectile-project-root) default-directory))))
+    (unless (file-directory-p dir)
+      (make-directory dir t))
+    dir))
+
+(defun agent-shell-team--tasks-file (session-id)
+  "Return the tasks file path for SESSION-ID."
+  (expand-file-name (format "%s.el" session-id) (agent-shell-team--tasks-dir)))
+
+(defun agent-shell-team--load-tasks (session-id)
+  "Read all tasks for SESSION-ID from disk.  Returns a list of plists."
+  (let ((file (agent-shell-team--tasks-file session-id)))
+    (when (file-readable-p file)
+      (with-temp-buffer
+        (insert-file-contents file)
+        (condition-case nil
+            (read (current-buffer))
+          (error nil))))))
+
+(defun agent-shell-team--persist-task (session-id task-plist)
+  "Create or update TASK-PLIST in the tasks file for SESSION-ID.
+If a task with the same :request-id exists, merge the new plist into it.
+Otherwise append as a new entry."
+  (when session-id
+    (let* ((file (agent-shell-team--tasks-file session-id))
+           (existing (agent-shell-team--load-tasks session-id))
+           (request-id (plist-get task-plist :request-id))
+           (found nil)
+           (updated (mapcar (lambda (task)
+                              (if (equal (plist-get task :request-id) request-id)
+                                  (progn (setq found t)
+                                         (let ((merged (copy-sequence task)))
+                                           (cl-loop for (key val) on task-plist by #'cddr
+                                                    do (plist-put merged key val))
+                                           merged))
+                                task))
+                            existing)))
+      (unless found
+        (setq updated (append updated (list task-plist))))
+      (with-temp-file file
+        (insert ";; Task history for session " session-id "\n")
+        (insert ";; Auto-generated — do not edit\n")
+        (pp updated (current-buffer))))))
+
+(defun agent-shell-team--load-all-sessions ()
+  "Scan tasks dir, return ((session-id . tasks-list) ...) sorted by most recent."
+  (let ((dir (agent-shell-team--tasks-dir))
+        (sessions nil))
+    (dolist (file (directory-files dir nil "\\.el$"))
+      (let* ((sid (file-name-sans-extension file))
+             (tasks (agent-shell-team--load-tasks sid))
+             (latest (cl-reduce #'max
+                                (mapcar (lambda (tk) (or (plist-get tk :created-at) 0)) tasks)
+                                :initial-value 0)))
+        (when tasks
+          (push (cons sid (cons latest tasks)) sessions))))
+    (mapcar (lambda (entry) (cons (car entry) (cddr entry)))
+            (sort sessions (lambda (a b) (> (cadr a) (cadr b)))))))
+
 (defun agent-shell-team--notify (title message)
   "Send a desktop notification for team events."
   (if (fboundp 'alert)
@@ -721,6 +784,13 @@ Route sendNotification calls between team agents."
             ;; Track group completion if this is a task completion
             (when (member notif-title '("Task Complete" "Test Results" "Research Complete"))
               (when-let ((request-id (agent-shell-team--extract-request-id notif-message)))
+                ;; Persist legacy completion
+                (when agent-shell-team--session-id
+                  (agent-shell-team--persist-task
+                   agent-shell-team--session-id
+                   (list :request-id request-id
+                         :status "finished"
+                         :completed-at (float-time))))
                 (agent-shell-team--handle-task-completion
                  request-id agent-shell-team--session-id (current-buffer))))
             (agent-shell-team--route-from-acp
@@ -955,6 +1025,18 @@ Extract tasks, generate IDs, register groups, and enqueue for assignment."
                                 :target target
                                 :session-id session-id
                                 :report-path report-path)))
+              ;; Persist to disk
+              (plist-put entry :created-at (float-time))
+              (agent-shell-team--persist-task
+               session-id
+               (list :request-id request-id
+                     :role role
+                     :message (truncate-string-to-width (or message "") 200 nil nil "...")
+                     :group-id group-id
+                     :target target
+                     :session-id session-id
+                     :status "queued"
+                     :created-at (plist-get entry :created-at)))
               ;; Register in group tracker if group_id is present
               (when group-id
                 (let ((group (or (gethash group-id agent-shell-team--task-groups)
@@ -1064,6 +1146,14 @@ Route the status update directly to the lead agent's queue."
             (puthash session-id (append existing (list message-text))
                      agent-shell-team--pending-for-lead))
           (agent-shell-team--start-drain-timer)))
+      ;; Persist task status update
+      (when session-id
+        (agent-shell-team--persist-task
+         session-id
+         (list :request-id request-id
+               :status status
+               :commit commit
+               :completed-at (float-time))))
       ;; Handle group completion tracking if status is "finished"
       (when (equal status "finished")
         (when-let ((group-id (gethash request-id agent-shell-team--request-to-group)))
@@ -1195,6 +1285,14 @@ reached its max agent count, auto-spawn a new agent."
                  (remhash k agent-shell-team--request-to-buffer)))
              (copy-hash-table agent-shell-team--request-to-buffer))
     (puthash request-id buf agent-shell-team--request-to-buffer)
+    ;; Persist assignment
+    (let ((wt-name (alist-get 'worktree-name agent)))
+      (agent-shell-team--persist-task
+       session-id
+       (list :request-id request-id
+             :status "assigned"
+             :agent-worktree wt-name
+             :assigned-at (float-time))))
     (agent-shell-team--prompt-agent
      buf (format "Task Assignment -- %s" enriched))))
 
