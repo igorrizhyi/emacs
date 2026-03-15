@@ -1019,62 +1019,79 @@ Only the lead role may call this.  Returns an alist with success/message."
 
 (defun agent-shell-team--handle-tasks-put (raw-input)
   "Process a tasksPut tool call with RAW-INPUT.
-Extract tasks, generate IDs, register groups, and enqueue for assignment."
-  (let ((tasks (or (map-elt raw-input 'tasks)
-                   (map-elt raw-input "tasks"))))
-    (when tasks
-      (dolist (task (append tasks nil))  ;; convert vector to list
-        (let* ((role (or (map-elt task 'role) (map-elt task "role")))
-               (message (or (map-elt task 'message) (map-elt task "message")))
-               (group-id (or (map-elt task 'group_id) (map-elt task "group_id")))
-               (target (or (map-elt task 'target) (map-elt task "target")))
-               (request-id (or (map-elt task 'request_id) (map-elt task "request_id")
-                               (agent-shell-team--generate-request-id)))
-               (session-id agent-shell-team--session-id))
-          (when session-id
-            (let* ((reports-dir (agent-shell-team--reports-dir session-id))
-                   (report-path (expand-file-name (concat request-id ".md") reports-dir))
-                   (entry (list :role role
-                                :message message
-                                :request-id request-id
-                                :group-id group-id
-                                :target target
-                                :session-id session-id
-                                :report-path report-path)))
-              ;; Persist to disk
-              (plist-put entry :created-at (float-time))
-              (agent-shell-team--persist-task
-               session-id
-               (list :request-id request-id
-                     :role role
-                     :message (truncate-string-to-width (or message "") 200 nil nil "...")
-                     :group-id group-id
-                     :target target
-                     :session-id session-id
-                     :status "queued"
-                     :created-at (plist-get entry :created-at)))
-              ;; Register in group tracker if group_id is present
-              (when group-id
-                (let ((group (or (gethash group-id agent-shell-team--task-groups)
-                                 (list :pending nil :completed nil :session-id session-id))))
-                  (plist-put group :pending (cons request-id (plist-get group :pending)))
-                  (puthash group-id group agent-shell-team--task-groups))
-                (puthash request-id group-id agent-shell-team--request-to-group))
-              ;; Track request → session for taskUpdate resolution
-              (puthash request-id session-id agent-shell-team--request-to-session)
-              ;; Append to FIFO queue
-              (setq agent-shell-team--task-queue
-                    (append agent-shell-team--task-queue (list entry)))
-              (agent-shell-team--log session-id
-                                     (format "[tasksPut] Queued %s task: %s (request: %s%s)"
-                                             role
-                                             (truncate-string-to-width message 60 nil nil "...")
-                                             request-id
-                                             (if group-id (format ", group: %s" group-id) "")))))))
+Extract tasks, generate IDs, register groups, and enqueue for assignment.
+Return the number of tasks actually enqueued, or signal an error if
+`agent-shell-team--session-id' is nil."
+  (let ((session-id agent-shell-team--session-id))
+    (unless session-id
+      (error "Team session not initialized (session-id is nil)"))
+    (let ((tasks (or (map-elt raw-input 'tasks)
+                     (map-elt raw-input "tasks")))
+          (enqueued 0))
+      (when tasks
+        (dolist (task (append tasks nil))  ;; convert vector to list
+          (let* ((role (or (map-elt task 'role) (map-elt task "role")))
+                 (message (or (map-elt task 'message) (map-elt task "message")))
+                 (group-id (or (map-elt task 'group_id) (map-elt task "group_id")))
+                 (target (or (map-elt task 'target) (map-elt task "target")))
+                 (caller-request-id (or (map-elt task 'request_id) (map-elt task "request_id")))
+                 (request-id (or caller-request-id
+                                 (agent-shell-team--generate-request-id))))
+            ;; Dedup: skip if caller provided a request-id that is already
+            ;; queued or already assigned to a buffer.
+            (if (and caller-request-id
+                     (or (gethash caller-request-id agent-shell-team--request-to-buffer)
+                         (cl-find caller-request-id agent-shell-team--task-queue
+                                  :key (lambda (e) (plist-get e :request-id))
+                                  :test #'string=)))
+                (agent-shell-team--log session-id
+                                       (format "[tasksPut] Skipping duplicate request-id: %s"
+                                               caller-request-id))
+              (let* ((reports-dir (agent-shell-team--reports-dir session-id))
+                     (report-path (expand-file-name (concat request-id ".md") reports-dir))
+                     (entry (list :role role
+                                  :message message
+                                  :request-id request-id
+                                  :group-id group-id
+                                  :target target
+                                  :session-id session-id
+                                  :report-path report-path)))
+                ;; Persist to disk
+                (plist-put entry :created-at (float-time))
+                (agent-shell-team--persist-task
+                 session-id
+                 (list :request-id request-id
+                       :role role
+                       :message (truncate-string-to-width (or message "") 200 nil nil "...")
+                       :group-id group-id
+                       :target target
+                       :session-id session-id
+                       :status "queued"
+                       :created-at (plist-get entry :created-at)))
+                ;; Register in group tracker if group_id is present
+                (when group-id
+                  (let ((group (or (gethash group-id agent-shell-team--task-groups)
+                                   (list :pending nil :completed nil :session-id session-id))))
+                    (plist-put group :pending (cons request-id (plist-get group :pending)))
+                    (puthash group-id group agent-shell-team--task-groups))
+                  (puthash request-id group-id agent-shell-team--request-to-group))
+                ;; Track request → session for taskUpdate resolution
+                (puthash request-id session-id agent-shell-team--request-to-session)
+                ;; Append to FIFO queue
+                (setq agent-shell-team--task-queue
+                      (append agent-shell-team--task-queue (list entry)))
+                (cl-incf enqueued)
+                (agent-shell-team--log session-id
+                                       (format "[tasksPut] Queued %s task: %s (request: %s%s)"
+                                               role
+                                               (truncate-string-to-width message 60 nil nil "...")
+                                               request-id
+                                               (if group-id (format ", group: %s" group-id) ""))))))))
       ;; Try to assign immediately
       (agent-shell-team--try-assign-tasks)
       ;; Ensure drain timer is running for retries
-      (agent-shell-team--start-drain-timer))))
+      (agent-shell-team--start-drain-timer)
+      enqueued)))
 
 (defun agent-shell-team--handle-task-update (raw-input)
   "Process a taskUpdate tool call with RAW-INPUT.

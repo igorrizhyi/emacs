@@ -1186,10 +1186,16 @@ PARAMS should include a `tasks' array, each with `role' and `message'."
       (unless (cdr (assoc 'role task)) (error "Each task must have a role"))
       (unless (cdr (assoc 'message task)) (error "Each task must have a message")))
     ;; Directly call the team handler to enqueue tasks
-    (when (fboundp 'agent-shell-team--handle-tasks-put)
-      (agent-shell-team--handle-tasks-put params))
-    `((success . t)
-      (message . ,(format "Queued %d task(s)" (length tasks))))))
+    (if (not (fboundp 'agent-shell-team--handle-tasks-put))
+        `((success . nil)
+          (message . "Team module not loaded"))
+      (condition-case err
+          (let ((enqueued (agent-shell-team--handle-tasks-put params)))
+            `((success . t)
+              (message . ,(format "Queued %d task(s)" (or enqueued 0)))))
+        (error
+         `((success . nil)
+           (message . ,(error-message-string err))))))))
 
 ;;; Task update handler
 
