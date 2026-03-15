@@ -797,14 +797,28 @@
 (defvar my/team-sidebar--toggling nil
   "Guard to prevent recursive toggling.")
 
+(defun my/team-sidebar--team-related-buffer-p (buf)
+  "Return non-nil if BUF is a team-related buffer.
+A buffer is team-related if any of:
+- Its name matches *team:XXXX:* pattern (team buffers)
+- It IS the sidebar buffer itself
+- It is visiting a file under .agent-shell/reports/"
+  (and (buffer-live-p buf)
+       (let ((name (buffer-name buf)))
+         (or (string-match-p "\\*team:[a-z0-9]\\{4\\}:" name)
+             (equal name my/team-sidebar-buffer-name)
+             (when-let ((file (buffer-file-name buf)))
+               (string-match-p "/\\.agent-shell/reports/" file))))))
+
 (defun my/team-sidebar--auto-toggle (&rest _)
-  "Show sidebar when lead buffer is visible, hide otherwise.
+  "Show sidebar when selected window's buffer is team-related, hide otherwise.
 Registered on `window-buffer-change-functions' and
 `window-selection-change-functions'."
   (when (and (not my/team-sidebar--toggling)
              (not (active-minibuffer-window)))
-    (let ((my/team-sidebar--toggling t))
-      (if (my/team-sidebar--any-team-buffer-visible-p)
+    (let ((my/team-sidebar--toggling t)
+          (sel-buf (window-buffer (selected-window))))
+      (if (my/team-sidebar--team-related-buffer-p sel-buf)
           (my/team-sidebar--show)
         (my/team-sidebar--hide)))))
 
