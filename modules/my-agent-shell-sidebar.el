@@ -21,6 +21,7 @@
 (defvar agent-shell-team--sessions)
 (declare-function agent-shell-team--agent-status "agent-shell-team")
 (declare-function agent-shell-team--short-session-id "agent-shell-team")
+(declare-function my/agent-shell-compose-popup "my-agent-shell-compose")
 (defvar agent-shell-team--task-queue)
 
 ;;; ---- Constants & Buffer Name ------------------------------------------------
@@ -195,6 +196,7 @@
     (define-key map "q" #'my/team-sidebar-quit)
     (define-key map "g" #'my/team-sidebar-refresh)
     (define-key map "i" #'my/team-sidebar-prompt)
+    (define-key map (kbd "C-<return>") #'my/team-sidebar-compose)
     map)
   "Keymap for `my/team-sidebar-mode'.")
 
@@ -220,7 +222,8 @@
     "k" #'my/team-sidebar-kill-agent
     "q" #'my/team-sidebar-quit
     "g" #'my/team-sidebar-refresh
-    "i" #'my/team-sidebar-prompt))
+    "i" #'my/team-sidebar-prompt
+    (kbd "C-<return>") #'my/team-sidebar-compose))
 
 ;; Open sidebar in normal state (not motion state from special-mode parent)
 (when (fboundp 'evil-set-initial-state)
@@ -299,6 +302,7 @@
 (defvar my/team-sidebar-prompt-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "C-<return>") #'my/team-sidebar-prompt-submit)
+    (define-key map (kbd "M-<return>") #'my/team-sidebar-compose)
     (define-key map (kbd "<escape>") #'my/team-sidebar-prompt-cancel)
     (define-key map (kbd "C-c C-k") #'my/team-sidebar-prompt-cancel)
     map)
@@ -309,10 +313,7 @@
   :lighter " Prompt"
   :keymap my/team-sidebar-prompt-mode-map
   (if my/team-sidebar-prompt-mode
-      (progn
-        (setq buffer-read-only nil)
-        (when (fboundp 'evil-emacs-state)
-          (evil-emacs-state)))
+      (setq buffer-read-only nil)
     (setq buffer-read-only t)
     (when (fboundp 'evil-normal-state)
       (evil-normal-state))))
@@ -333,7 +334,16 @@
     ;; Position cursor inside the block
     (goto-char (point-min))
     (forward-line 1)
-    (my/team-sidebar-prompt-mode 1)))
+    (my/team-sidebar-prompt-mode 1)
+    ;; Switch to emacs state AFTER minor mode is fully set up,
+    ;; via run-at-time to ensure evil doesn't override it.
+    (when (fboundp 'evil-emacs-state)
+      (run-at-time 0 nil
+                   (lambda (buf)
+                     (when (buffer-live-p buf)
+                       (with-current-buffer buf
+                         (evil-emacs-state))))
+                   (current-buffer)))))
 
 (defun my/team-sidebar--extract-prompt-text ()
   "Extract text from between the ``` markers at top of buffer."
@@ -378,6 +388,16 @@
   (interactive)
   (my/team-sidebar-prompt-mode -1)
   (my/team-sidebar--erase-prompt-block))
+
+(defun my/team-sidebar-compose ()
+  "Open the compose posframe targeting the lead buffer for this session."
+  (interactive)
+  (let* ((sid my/team-sidebar--session-id)
+         (lead-buf (my/team-sidebar--find-lead-buffer sid)))
+    (unless (buffer-live-p lead-buf)
+      (user-error "Lead buffer not found for session %s" sid))
+    (with-current-buffer lead-buf
+      (my/agent-shell-compose-popup))))
 
 ;;; ---- Side Window Management -------------------------------------------------
 
