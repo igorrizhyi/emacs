@@ -1121,10 +1121,17 @@ Return the number of tasks actually enqueued, or signal an error if
                                                (truncate-string-to-width message 60 nil nil "...")
                                                request-id
                                                (if group-id (format ", group: %s" group-id) "")))))))))
-      ;; Try to assign immediately
-      (agent-shell-team--try-assign-tasks)
+      ;; Try to assign immediately (best-effort, don't fail the response)
+      (condition-case err
+          (agent-shell-team--try-assign-tasks)
+        (error
+         (agent-shell-team--log session-id
+          (format "[tasksPut] Error in try-assign-tasks (tasks are queued, will retry): %s"
+                  (error-message-string err)))))
       ;; Ensure drain timer is running for retries
-      (agent-shell-team--start-drain-timer)
+      (condition-case nil
+          (agent-shell-team--start-drain-timer)
+        (error nil))
       enqueued)))
 
 (defun agent-shell-team--handle-task-update (raw-input)
