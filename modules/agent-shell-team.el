@@ -260,7 +260,10 @@ Otherwise append as a new entry."
         (when (string-match-p
                "^[0-9a-f]\\{8\\}-[0-9a-f]\\{4\\}-[0-9a-f]\\{4\\}-[0-9a-f]\\{4\\}-[0-9a-f]\\{12\\}$"
                sid)
-          (let* ((tasks (agent-shell-team--load-tasks sid))
+          (let* ((tasks (sort (copy-sequence (agent-shell-team--load-tasks sid))
+                              (lambda (a b)
+                                (> (or (plist-get a :created-at) 0)
+                                   (or (plist-get b :created-at) 0)))))
                  (latest (cl-reduce #'max
                                     (mapcar (lambda (tk) (or (plist-get tk :created-at) 0)) tasks)
                                     :initial-value 0)))
