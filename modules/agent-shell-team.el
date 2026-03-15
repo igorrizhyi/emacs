@@ -1239,7 +1239,8 @@ reached its max agent count, auto-spawn a new agent."
     (unwind-protect
         (progn
           (setq agent-shell-team--assigning-p t)
-          (let ((remaining nil))
+          (let ((remaining nil)
+                (just-assigned (make-hash-table :test 'eq)))
             (dolist (task agent-shell-team--task-queue)
               (let* ((role (plist-get task :role))
                      (session-id (plist-get task :session-id))
@@ -1257,12 +1258,15 @@ reached its max agent count, auto-spawn a new agent."
                 (cond
                  ;; Targeted assignment: agent found and idle — assign directly
                  ((and targeted-agent
-                       (eq (agent-shell-team--agent-status (alist-get 'buffer targeted-agent)) 'idle))
-                  (agent-shell-team--assign-task-to-agent targeted-agent task))
-                 ;; Targeted assignment: agent found but busy — wait for it
+                       (eq (agent-shell-team--agent-status (alist-get 'buffer targeted-agent)) 'idle)
+                       (not (gethash (alist-get 'buffer targeted-agent) just-assigned)))
+                  (agent-shell-team--assign-task-to-agent targeted-agent task)
+                  (puthash (alist-get 'buffer targeted-agent) t just-assigned))
+                 ;; Targeted assignment: agent found but busy (or just-assigned) — wait for it
                  ((and targeted-agent
-                       (memq (agent-shell-team--agent-status (alist-get 'buffer targeted-agent))
-                             '(busy initializing)))
+                       (or (memq (agent-shell-team--agent-status (alist-get 'buffer targeted-agent))
+                                 '(busy initializing))
+                           (gethash (alist-get 'buffer targeted-agent) just-assigned)))
                   (push task remaining))
                  ;; Targeted assignment: agent NOT found — re-queue to wait
                  (target
@@ -1271,9 +1275,18 @@ reached its max agent count, auto-spawn a new agent."
                   (push task remaining))
                  ;; Normal assignment: find any idle agent for this role
                  (t
-                  (let ((idle-agent (agent-shell-team--find-idle-agent session-id role)))
+                  (let ((idle-agent
+                         (cl-find-if
+                          (lambda (a)
+                            (let ((buf (alist-get 'buffer a)))
+                              (and (equal (alist-get 'role a) role)
+                                   (eq (agent-shell-team--agent-status buf) 'idle)
+                                   (not (gethash buf just-assigned)))))
+                          (agent-shell-team--get-session-agents session-id))))
                     (if idle-agent
-                        (agent-shell-team--assign-task-to-agent idle-agent task)
+                        (progn
+                          (agent-shell-team--assign-task-to-agent idle-agent task)
+                          (puthash (alist-get 'buffer idle-agent) t just-assigned))
                       ;; No idle agent — try auto-spawning if allowed
                       (let ((role-agents (agent-shell-team--get-agents-by-role session-id role)))
                         (if (and (not (equal role "lead"))
