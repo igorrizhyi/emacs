@@ -23,6 +23,10 @@
 (declare-function agent-shell-team--short-session-id "agent-shell-team")
 (declare-function my/agent-shell-compose-popup "my-agent-shell-compose")
 (defvar agent-shell-team--task-queue)
+(defvar agent-shell-team--message-queue)
+(defvar agent-shell-team--request-to-buffer)
+(defvar agent-shell-team--task-groups)
+(defvar agent-shell-team--request-to-group)
 
 ;;; ---- Constants & Buffer Name ------------------------------------------------
 
@@ -166,7 +170,16 @@
                ;; Store agent data as text property for navigation
                (put-text-property (line-beginning-position 0)
                                   (line-end-position 0)
-                                  'my/sidebar-agent agent)))
+                                  'my/sidebar-agent agent)
+               ;; Show current task for busy agents
+               (when (and (eq status 'busy)
+                          (boundp 'agent-shell-team--request-to-buffer))
+                 (let ((req-id (cl-loop for k being the hash-keys of agent-shell-team--request-to-buffer
+                                        using (hash-values v)
+                                        when (eq v buffer) return k)))
+                   (when req-id
+                     (insert (format "    └ %s\n"
+                                     (propertize req-id 'face 'font-lock-comment-face))))))))
            (insert "\n")
            (setq has-content t)))
        agent-shell-team--sessions))
@@ -182,6 +195,46 @@
                          (or (plist-get task :message) "") 30 nil nil "…"))))
       (insert "\n")
       (setq has-content t))
+    ;; Message queue for lead
+    (when (and (boundp 'agent-shell-team--message-queue)
+               (hash-table-p agent-shell-team--message-queue))
+      (let ((lead-buf (my/team-sidebar--find-lead-buffer my/team-sidebar--session-id)))
+        (when lead-buf
+          (let ((msgs (gethash lead-buf agent-shell-team--message-queue)))
+            (when msgs
+              (insert (propertize (format " Queued Messages (%d)" (length msgs))
+                                  'face 'my/team-sidebar-session-face) "\n")
+              (dolist (msg msgs)
+                (let* ((title (or (plist-get msg :title) "?"))
+                       (body (or (plist-get msg :message) ""))
+                       (first-line (car (split-string body "\n" t))))
+                  (insert (format "  %s %s\n"
+                                  (propertize title 'face 'my/team-sidebar-role-face)
+                                  (truncate-string-to-width
+                                   (or first-line "") 25 nil nil "…")))))
+              (insert "\n")
+              (setq has-content t))))))
+    ;; Group progress
+    (when (and (boundp 'agent-shell-team--task-groups)
+               (hash-table-p agent-shell-team--task-groups)
+               (> (hash-table-count agent-shell-team--task-groups) 0))
+      (let ((group-content nil))
+        (maphash (lambda (gid group)
+                   (when (equal (plist-get group :session-id) my/team-sidebar--session-id)
+                     (let ((pending (length (plist-get group :pending)))
+                           (completed (length (plist-get group :completed))))
+                       (push (format "  %s %d/%d\n"
+                                     (propertize (truncate-string-to-width gid 20 nil nil "…")
+                                                 'face 'font-lock-comment-face)
+                                     completed (+ pending completed))
+                             group-content))))
+                 agent-shell-team--task-groups)
+        (when group-content
+          (insert (propertize " Groups" 'face 'my/team-sidebar-session-face) "\n")
+          (dolist (line (nreverse group-content))
+            (insert line))
+          (insert "\n")
+          (setq has-content t))))
     (unless has-content
       (insert "\n  No active sessions.\n"))))
 
