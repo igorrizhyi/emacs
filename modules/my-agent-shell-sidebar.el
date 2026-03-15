@@ -49,43 +49,43 @@
   "Face for agent role labels.")
 
 (defface my/team-sidebar-status-idle
-  '((t :foreground "#6ae46a"))
+  '((t :foreground "#33ff33"))
   "Face for idle status.")
 
 (defface my/team-sidebar-status-busy
-  '((t :foreground "#e4c96a"))
+  '((t :foreground "#ffb000"))
   "Face for busy status.")
 
 (defface my/team-sidebar-status-init
-  '((t :foreground "#6ab0e4"))
+  '((t :foreground "#cc8800"))
   "Face for initializing status.")
 
 (defface my/team-sidebar-status-dead
-  '((t :foreground "#e46a6a"))
+  '((t :foreground "#ff3333"))
   "Face for dead status.")
 
 (defface my/team-sidebar-history-header
-  '((t :weight bold :foreground "#8090a0"))
+  '((t :weight bold :foreground "#806000"))
   "Face for history section header.")
 
 (defface my/team-sidebar-history-session
-  '((t :foreground "#7a8a9a"))
+  '((t :foreground "#705500"))
   "Face for history session headers.")
 
 (defface my/team-sidebar-history-finished
-  '((t :foreground "#6ae46a"))
+  '((t :foreground "#33ff33"))
   "Face for finished task indicator.")
 
 (defface my/team-sidebar-history-blocked
-  '((t :foreground "#e46a6a"))
+  '((t :foreground "#ff3333"))
   "Face for blocked task indicator.")
 
 (defface my/team-sidebar-history-assigned
-  '((t :foreground "#e4c96a"))
+  '((t :foreground "#ffb000"))
   "Face for assigned/in-progress task indicator.")
 
 (defface my/team-sidebar-history-pending
-  '((t :foreground "#6ab0e4"))
+  '((t :foreground "#cc8800"))
   "Face for pending task indicator.")
 
 ;;; ---- Sidebar Buffer Local State ---------------------------------------------
@@ -377,10 +377,13 @@
     (define-key map "n" #'my/team-sidebar-next-agent)
     (define-key map "p" #'my/team-sidebar-prev-agent)
     (define-key map (kbd "RET") #'my/team-sidebar-switch-to-agent)
-    (define-key map "k" #'my/team-sidebar-kill-agent)
+    (define-key map "x" #'my/team-sidebar-kill-agent)
     (define-key map "q" #'my/team-sidebar-quit)
     (define-key map "g" #'my/team-sidebar-refresh)
     (define-key map "+" #'my/team-sidebar-prompt)
+    (define-key map "i" #'my/team-sidebar-prompt)
+    (define-key map "j" #'my/team-sidebar-next-item)
+    (define-key map "k" #'my/team-sidebar-prev-item)
     (define-key map (kbd "<up>") #'my/team-sidebar-prev-item)
     (define-key map (kbd "<down>") #'my/team-sidebar-next-item)
     (define-key map (kbd "<tab>") #'my/team-sidebar-toggle-section)
@@ -397,8 +400,8 @@
         header-line-format (propertize " Team Dashboard" 'face 'bold)
         mode-line-format nil)
   (setq-local face-remapping-alist
-              '((default (:background "#1a2232" :foreground "#a0b0c0"))
-                (header-line (:background "#1a2232" :foreground "#c0d0e0"
+              '((default (:background "#1a1400" :foreground "#ffb000"))
+                (header-line (:background "#1a1400" :foreground "#ffc830"
                                :weight bold :box nil)))))
 
 ;; Evil-mode integration: bind keys in normal state so they take priority
@@ -407,10 +410,13 @@
     "n" #'my/team-sidebar-next-agent
     "p" #'my/team-sidebar-prev-agent
     (kbd "RET") #'my/team-sidebar-switch-to-agent
-    "k" #'my/team-sidebar-kill-agent
+    "x" #'my/team-sidebar-kill-agent
     "q" #'my/team-sidebar-quit
     "g" #'my/team-sidebar-refresh
     "+" #'my/team-sidebar-prompt
+    "i" #'my/team-sidebar-prompt
+    "j" #'my/team-sidebar-next-item
+    "k" #'my/team-sidebar-prev-item
     (kbd "<up>") #'my/team-sidebar-prev-item
     (kbd "<down>") #'my/team-sidebar-next-item
     (kbd "<tab>") #'my/team-sidebar-toggle-section))
