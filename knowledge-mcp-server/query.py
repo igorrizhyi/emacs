@@ -1,55 +1,44 @@
-"""Interactive query script for the knowledge graph."""
+"""Interactive query script for the hybrid knowledge graph.
 
-import json
+Usage:
+    python query.py "what is posframe?"
+    python query.py                      # interactive mode
+"""
+
 import sys
 
-from common import (
-    GRAPH_NAME,
-    MODEL_NAME,
-    FALKORDB_HOST,
-    FALKORDB_PORT,
-    load_ontology,
-    create_kg,
-)
+from common import get_graph, init_schema, query_knowledge
+
+
+def _print_result(result: dict):
+    print(f"\nAnswer: {result['response']}")
+    if result.get("sources"):
+        print(f"Sources: {', '.join(result['sources'])}")
+    print(f"({len(result.get('chunks', []))} chunks, {result.get('expanded_count', 0)} via graph)")
+    print()
 
 
 def main():
-    ontology = load_ontology()
-    kg = create_kg(ontology=ontology)
+    graph = get_graph()
+    init_schema(graph)
 
-    # Single query from args, or interactive mode
     if len(sys.argv) > 1:
-        query = " ".join(sys.argv[1:])
-        chat = kg.chat_session()
-        result = chat.send_message(query)
-        print(f"\nAnswer: {result.get('response', 'No results')}")
-        if result.get("context"):
-            print(f"\nContext: {json.dumps(result['context'], indent=2)}")
-        if result.get("cypher"):
-            print(f"\nCypher: {result['cypher']}")
+        question = " ".join(sys.argv[1:])
+        result = query_knowledge(graph, question)
+        _print_result(result)
     else:
-        print(f"Knowledge Graph: {GRAPH_NAME} @ {FALKORDB_HOST}:{FALKORDB_PORT}")
-        print(f"Model: {MODEL_NAME}")
-        print("Type a query (or 'quit' to exit):\n")
-        chat = kg.chat_session()
+        print("Knowledge query (Ctrl+C to exit)\n")
         while True:
             try:
-                query = input("> ")
+                question = input("> ")
             except (EOFError, KeyboardInterrupt):
                 print()
                 break
-            if query.strip().lower() in ("quit", "exit", "q"):
-                break
-            if not query.strip():
+            if not question.strip():
                 continue
             try:
-                result = chat.send_message(query)
-                print(f"\nAnswer: {result.get('response', 'No results')}")
-                if result.get("context"):
-                    print(f"Context: {json.dumps(result['context'], indent=2)}")
-                if result.get("cypher"):
-                    print(f"Cypher: {result['cypher']}")
-                print()
+                result = query_knowledge(graph, question)
+                _print_result(result)
             except Exception as e:
                 print(f"Error: {e}\n")
 

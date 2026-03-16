@@ -1,251 +1,144 @@
-"""MCP server for FalkorDB GraphRAG knowledge system."""
+"""MCP server for hybrid vector+graph knowledge system."""
 
 import os
 import json
-import tempfile
-from datetime import datetime, timezone
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
-from mcp.types import TextContent
+import mcp.types as types
 
-from graphrag_sdk import KnowledgeGraph, KnowledgeGraphModelConfig, Ontology, Source
-from graphrag_sdk.source import Source_FromRawText
-from graphrag_sdk.models.litellm import LiteModel
-from graphrag_sdk.fixtures.prompts import CYPHER_GEN_SYSTEM
+from common import get_graph, init_schema, ingest_chunks, query_knowledge, chunk_id
 
-GRAPH_NAME = "team_knowledge"
-ONTOLOGY_PATH = os.path.join(os.path.dirname(__file__), "ontology.json")
-MODEL_NAME = os.environ.get("GRAPHRAG_MODEL", "gpt-4o")
+server = Server("knowledge")
 
-FALKORDB_HOST = os.environ.get("FALKORDB_HOST", "127.0.0.1")
-FALKORDB_PORT = int(os.environ.get("FALKORDB_PORT", "6380"))
-
-CYPHER_INSTRUCTION = CYPHER_GEN_SYSTEM + (
-    "\n\nCRITICAL RULES — violations will cause query failure:\n"
-    "- Generate exactly ONE Cypher statement.\n"
-    "- NEVER use semicolons.\n"
-    "- NEVER output multiple queries or UNION clauses.\n"
-    "- Return a single MATCH...RETURN block.\n"
-    "- Wrap the statement in a single ```cypher``` code fence."
-)
-
-server = Server("knowledge-mcp-server")
-
-# Lazy-initialized globals
-_kg = None
+# Lazy-initialized graph
+_graph = None
 
 
-def _check_team_session():
-    """Gate: only available in team sessions."""
+def _ensure_graph():
+    """Lazy init: get graph + ensure schema on first call."""
+    global _graph
+    if _graph is None:
+        _graph = get_graph()
+        init_schema(_graph)
+    return _graph
+
+
+TOOLS = [
+    types.Tool(
+        name="query_knowledge",
+        description="Query the team knowledge graph using semantic search. Returns relevant knowledge chunks with sources.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Natural language question"},
+                "role": {"type": "string", "description": "Filter by role: dev, tester, researcher, lead"},
+            },
+            "required": ["query"],
+        },
+    ),
+    types.Tool(
+        name="store_knowledge",
+        description="Store new knowledge in the graph. Content is chunked, embedded, and linked.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "content": {"type": "string", "description": "Knowledge text (bullet points or paragraphs)"},
+                "roles": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Target roles: dev, tester, researcher, lead",
+                },
+                "source": {"type": "string", "description": "Source identifier (e.g. 'dev.md', 'session-notes')"},
+            },
+            "required": ["content", "roles"],
+        },
+    ),
+]
+
+
+@server.list_tools()
+async def list_tools() -> list[types.Tool]:
     if not os.environ.get("AGENT_SHELL_TEAM"):
-        raise ValueError("Knowledge system only available in team sessions")
+        return []
+    return TOOLS
 
 
-def _get_model():
-    return LiteModel(model_name=MODEL_NAME)
+@server.call_tool()
+async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
+    if not os.environ.get("AGENT_SHELL_TEAM"):
+        return [types.TextContent(type="text", text="Knowledge system only available in team sessions")]
 
-
-def _load_ontology():
-    """Load ontology from saved JSON if it exists."""
-    if os.path.exists(ONTOLOGY_PATH):
-        with open(ONTOLOGY_PATH) as f:
-            return Ontology.from_json(json.load(f))
-    return None
-
-
-def _save_ontology(ontology):
-    """Save ontology to JSON for reuse."""
-    with open(ONTOLOGY_PATH, "w") as f:
-        json.dump(ontology.to_json(), f, indent=2)
-
-
-def _bootstrap_ontology(model):
-    """Generate a seed ontology when none exists (first-time use)."""
-    seed = (
-        "Knowledge entries about software engineering: bug fixes, code patterns, "
-        "architecture decisions, environment setup, testing conventions. "
-        "Each entry has roles (dev, tester, researcher, lead), topics, "
-        "and source attribution."
-    )
-    sources = [Source_FromRawText(seed)]
-    return Ontology.from_sources(
-        sources,
-        model,
-        boundaries="Team knowledge management system for software engineering",
-    )
-
-
-def _get_kg(bootstrap_if_missing=False):
-    """Get or create the KnowledgeGraph instance.
-
-    Args:
-        bootstrap_if_missing: If True and no ontology exists, generate a seed
-            ontology. If False and no ontology exists, return None.
-    """
-    global _kg
-    if _kg is not None:
-        return _kg
-
-    model = _get_model()
-    model_config = KnowledgeGraphModelConfig.with_model(model)
-    ontology = _load_ontology()
-
-    if ontology is None:
-        # Try without ontology — works if FalkorDB already has a schema graph
-        try:
-            _kg = KnowledgeGraph(
-                name=GRAPH_NAME,
-                model_config=model_config,
-                host=FALKORDB_HOST,
-                port=FALKORDB_PORT,
-                cypher_system_instruction=CYPHER_INSTRUCTION,
-            )
-            return _kg
-        except Exception:
-            # "The ontology is empty" — need to bootstrap
-            if not bootstrap_if_missing:
-                return None
-            ontology = _bootstrap_ontology(model)
-            _save_ontology(ontology)
-
-    _kg = KnowledgeGraph(
-        name=GRAPH_NAME,
-        model_config=model_config,
-        ontology=ontology,
-        host=FALKORDB_HOST,
-        port=FALKORDB_PORT,
-        cypher_system_instruction=CYPHER_INSTRUCTION,
-    )
-    return _kg
-
-
-def _write_temp_txt(content: str) -> str:
-    """Write content to a temporary .txt file for Source() ingestion."""
-    fd, path = tempfile.mkstemp(suffix=".txt")
-    with os.fdopen(fd, "w") as f:
-        f.write(content)
-    return path
-
-
-@server.tool()
-async def query_knowledge(query: str, role: str | None = None) -> list[TextContent]:
-    """Query the team knowledge graph for relevant information.
-
-    Args:
-        query: The question or search query.
-        role: Optional role filter ('dev', 'tester', 'researcher', 'lead').
-    """
     try:
-        _check_team_session()
-        kg = _get_kg()
-        if kg is None:
-            return [TextContent(
-                type="text",
-                text="Knowledge base not initialized yet. Store some knowledge first.",
-            )]
-
-        # Build the query, incorporating role filter if provided
-        full_query = query
-        if role:
-            full_query = f"[Filter: entries relevant to role '{role}'] {query}"
-
-        chat = kg.chat_session()
-        result = chat.send_message(full_query)
-
-        response = result.get("response", "No results found.")
-        context = result.get("context", [])
-
-        parts = [f"**Answer:** {response}"]
-        if context:
-            parts.append(f"\n**Context:** {json.dumps(context, indent=2)}")
-
-        return [TextContent(type="text", text="\n".join(parts))]
-
-    except ValueError as e:
-        return [TextContent(type="text", text=str(e))]
+        if name == "query_knowledge":
+            return await _handle_query(arguments)
+        elif name == "store_knowledge":
+            return await _handle_store(arguments)
+        else:
+            return [types.TextContent(type="text", text=f"Unknown tool: {name}")]
     except Exception as e:
-        return [TextContent(type="text", text=f"Error querying knowledge graph: {e}")]
+        return [types.TextContent(type="text", text=f"Error: {e}")]
 
 
-@server.tool()
-async def store_knowledge(
-    content: str, roles: list[str], source: str | None = None
-) -> list[TextContent]:
-    """Store knowledge in the team knowledge graph.
+async def _handle_query(arguments: dict) -> list[types.TextContent]:
+    graph = _ensure_graph()
+    query = arguments["query"]
+    role = arguments.get("role")
 
-    Args:
-        content: The knowledge text to store.
-        roles: Which roles this applies to (e.g. ['dev', 'tester']).
-        source: Optional attribution (e.g. 'report:request-id', 'user').
-    """
-    try:
-        _check_team_session()
-        kg = _get_kg(bootstrap_if_missing=True)
+    result = query_knowledge(graph, query, role=role, top_k=8)
 
-        # Deduplication: query for similar content
-        try:
-            chat = kg.chat_session()
-            existing = chat.send_message(
-                f"Find entries very similar to: {content[:200]}"
-            )
-            existing_response = existing.get("response", "")
-            if existing_response and "no " not in existing_response.lower():
-                # Found potential duplicate — note in the stored content
-                content = (
-                    f"[UPDATE - supersedes similar existing entry]\n{content}"
-                )
-        except Exception:
-            pass  # Dedup is best-effort; proceed with storage
+    parts = [result["response"]]
+    if result.get("sources"):
+        parts.append("\n**Sources:** " + ", ".join(result["sources"]))
+    if result.get("chunks"):
+        parts.append(f"\n({len(result['chunks'])} chunks retrieved, {result.get('expanded_count', 0)} via graph expansion)")
 
-        # Build metadata-enriched text
-        timestamp = datetime.now(timezone.utc).isoformat()
-        roles_str = ", ".join(roles)
-        source_str = source or "unknown"
+    return [types.TextContent(type="text", text="\n".join(parts))]
 
-        enriched = (
-            f"Knowledge Entry\n"
-            f"Roles: {roles_str}\n"
-            f"Source: {source_str}\n"
-            f"Timestamp: {timestamp}\n"
-            f"---\n"
-            f"{content}"
-        )
 
-        # Write to temp file and ingest
-        tmp_path = _write_temp_txt(enriched)
-        try:
-            src = Source(tmp_path)
-            kg.process_sources(
-                [src],
-                instructions=(
-                    "Extract knowledge entries with their metadata "
-                    "(roles, source, timestamp). Preserve role tags as "
-                    "attributes on entities."
-                ),
-                hide_progress=True,
-            )
-        finally:
-            os.unlink(tmp_path)
+async def _handle_store(arguments: dict) -> list[types.TextContent]:
+    graph = _ensure_graph()
+    content = arguments["content"]
+    roles = arguments["roles"]
+    source = arguments.get("source", "mcp")
+    roles_str = ",".join(roles)
 
-        # Save ontology after ingestion (it may have been updated)
-        if kg.ontology is not None:
-            _save_ontology(kg.ontology)
+    # Parse content into chunks
+    if content.startswith("- "):
+        # Single bullet point → single chunk
+        raw_chunks = [content[2:].strip()]
+    else:
+        # Split by newlines, skip empty/header lines
+        raw_chunks = [
+            line.strip()
+            for line in content.split("\n")
+            if line.strip() and not line.strip().startswith("#")
+        ]
 
-        return [TextContent(
-            type="text",
-            text=f"Knowledge stored successfully.\nRoles: {roles_str}\nSource: {source_str}",
-        )]
+    if not raw_chunks:
+        return [types.TextContent(type="text", text="No content to store")]
 
-    except ValueError as e:
-        return [TextContent(type="text", text=str(e))]
-    except Exception as e:
-        return [TextContent(type="text", text=f"Error storing knowledge: {e}")]
+    chunks = []
+    for text in raw_chunks:
+        chunks.append({
+            "id": chunk_id(source, text),
+            "content": text,
+            "section": "General",
+            "source": source,
+            "roles": roles_str,
+        })
+
+    ingest_chunks(graph, chunks)
+
+    return [types.TextContent(
+        type="text",
+        text=f"Stored {len(chunks)} chunk(s). Roles: {roles_str}, Source: {source}",
+    )]
 
 
 async def main():
-    async with stdio_server() as (read_stream, write_stream):
-        await server.run(read_stream, write_stream, server.create_initialization_options())
+    async with stdio_server() as (read, write):
+        await server.run(read, write, server.create_initialization_options())
 
 
 if __name__ == "__main__":
