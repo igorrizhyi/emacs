@@ -20,7 +20,9 @@ docker compose up -d
 2. Install dependencies:
 
 ```bash
-pip install -r requirements.txt
+cd knowledge-mcp-server
+python3 -m venv .venv
+.venv/bin/pip install -e .
 ```
 
 3. Add to Claude Code MCP config (`~/.claude/settings.json`):

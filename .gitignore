@@ -1,3 +1,4 @@
 .local
 .agent-shell/
 .claude-code-mcp.log
+knowledge-mcp-server/.venv/
