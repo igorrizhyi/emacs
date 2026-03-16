@@ -8,11 +8,11 @@ Usage:
 
 import argparse
 
-from common import get_graph, query_knowledge, set_graph_name
+from common import get_graph, init_schema, query_knowledge, set_graph_name
 
 
 def _print_result(result: dict):
-    print(f"\nAnswer: {result['response']}")
+    print(f"\n{result['response']}")
     if result.get("sources"):
         print(f"Sources: {', '.join(result['sources'])}")
     print(f"({len(result.get('chunks', []))} chunks, {result.get('expanded_count', 0)} via graph)")
@@ -32,6 +32,7 @@ def main():
         set_graph_name(args.project_root)
 
     graph = get_graph()
+    init_schema(graph)
 
     if args.question:
         question = " ".join(args.question)

@@ -29,7 +29,10 @@ def migrate(knowledge_dir: str, clean: bool = False):
 
     if clean:
         print("Cleaning graph...")
-        graph.delete()
+        try:
+            graph.delete()
+        except Exception:
+            pass  # graph may not exist yet
         # Re-select after delete
         graph = get_graph()
         # Remove legacy ontology artifact

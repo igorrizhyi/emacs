@@ -33,11 +33,12 @@ def set_graph_name(project_root: str):
     global GRAPH_NAME, PROJECT_ROOT
     PROJECT_ROOT = project_root
     GRAPH_NAME = _derive_graph_name(project_root)
+
 FALKORDB_HOST = os.environ.get("FALKORDB_HOST", "127.0.0.1")
 FALKORDB_PORT = int(os.environ.get("FALKORDB_PORT", "6380"))
 EMBED_MODEL = "text-embedding-3-small"
 EMBED_DIM = 1536
-LLM_MODEL = os.environ.get("GRAPHRAG_MODEL", "gpt-4o-mini")
+LLM_MODEL = os.environ.get("GRAPHRAG_MODEL", "gpt-4o")
 BATCH_SIZE = 100
 
 # ---------------------------------------------------------------------------
@@ -419,7 +420,7 @@ def create_similarity_edges_for_chunks(graph, chunk_ids: list[str], threshold: f
 
 
 MAX_CONTEXT_CHARS = 12000
-MAX_REPORT_CHUNK_CHARS = 500
+MAX_REPORT_CHUNK_CHARS = 2000
 MAX_EXPANDED_CHUNKS = 5
 SCORE_THRESHOLD = 0.5  # cosine distance; lower = better
 

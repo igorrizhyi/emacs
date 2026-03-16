@@ -189,7 +189,52 @@ Guarded against nil process during initialization."
                  (current-buffer)))
       (when proc
         (set-marker (process-mark proc) pos))))
-  (message "agent-shell-team: shell-maker--set-pm guarded"))
+
+  (defun shell-maker--pm ()
+    "Return the process mark of the current buffer.
+Guarded against nil process during initialization."
+    (let ((proc (get-buffer-process
+                 (shell-maker-buffer shell-maker--config))))
+      (unless proc
+        (message "agent-shell-team: shell-maker--pm called with nil process in %s"
+                 (current-buffer)))
+      (when proc
+        (process-mark proc))))
+
+  (defun shell-maker--process ()
+    "Get shell buffer process.
+Guarded against nil process during initialization."
+    (let* ((buf (shell-maker-buffer shell-maker--config))
+           (proc (get-buffer-process buf)))
+      (unless proc
+        (message "agent-shell-team: shell-maker--process returned nil in %s (resolved-buf=%s, current-buf=%s, override=%s, buf-name=%s)"
+                 (current-buffer) buf (buffer-name) shell-maker--buffer-name-override
+                 (when shell-maker--config (shell-maker-buffer-name shell-maker--config))))
+      proc))
+
+  ;; Wrap shell-maker--initialize to guard against nil process after start-process
+  (defun my/shell-maker--initialize-guard-a (orig-fn config)
+    "Around advice: catch processp nil errors during shell initialization."
+    (condition-case err
+        (funcall orig-fn config)
+      (wrong-type-argument
+       (message "agent-shell-team: shell-maker--initialize caught error: %S in buffer %s (process=%s)"
+                err (current-buffer) (get-buffer-process (current-buffer)))
+       ;; Try to recover: if process exists in current buffer, set things up
+       (when-let ((proc (get-buffer-process (current-buffer))))
+         (set-process-query-on-exit-flag proc nil)
+         (goto-char (point-max))
+         (setq-local comint-inhibit-carriage-motion t)
+         (shell-maker--set-pm (point-max))
+         (shell-maker--output-filter proc (shell-maker-prompt config))
+         (when (shell-maker--pm)
+           (set-marker comint-last-input-start (shell-maker--pm)))
+         (set-process-filter proc 'shell-maker--output-filter)
+         (set-buffer-modified-p nil)))))
+
+  (advice-add 'shell-maker--initialize :around #'my/shell-maker--initialize-guard-a)
+
+  (message "agent-shell-team: shell-maker--set-pm, --pm, --process all guarded"))
 
 (message "agent-shell-team: stuck-busy-fixes loaded")
 
