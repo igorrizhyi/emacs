@@ -9,7 +9,8 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent
 
-from graphrag_sdk import KnowledgeGraph, KnowledgeGraphModelConfig, Source, Ontology
+from graphrag_sdk import KnowledgeGraph, KnowledgeGraphModelConfig, Ontology, Source
+from graphrag_sdk.source import Source_FromRawText
 from graphrag_sdk.models.litellm import LiteModel
 
 GRAPH_NAME = "team_knowledge"
@@ -49,8 +50,29 @@ def _save_ontology(ontology):
         json.dump(ontology.to_json(), f, indent=2)
 
 
-def _get_kg():
-    """Get or create the KnowledgeGraph instance."""
+def _bootstrap_ontology(model):
+    """Generate a seed ontology when none exists (first-time use)."""
+    seed = (
+        "Knowledge entries about software engineering: bug fixes, code patterns, "
+        "architecture decisions, environment setup, testing conventions. "
+        "Each entry has roles (dev, tester, researcher, lead), topics, "
+        "and source attribution."
+    )
+    sources = [Source_FromRawText(seed)]
+    return Ontology.from_sources(
+        sources,
+        model,
+        boundaries="Team knowledge management system for software engineering",
+    )
+
+
+def _get_kg(bootstrap_if_missing=False):
+    """Get or create the KnowledgeGraph instance.
+
+    Args:
+        bootstrap_if_missing: If True and no ontology exists, generate a seed
+            ontology. If False and no ontology exists, return None.
+    """
     global _kg
     if _kg is not None:
         return _kg
@@ -58,6 +80,23 @@ def _get_kg():
     model = _get_model()
     model_config = KnowledgeGraphModelConfig.with_model(model)
     ontology = _load_ontology()
+
+    if ontology is None:
+        # Try without ontology — works if FalkorDB already has a schema graph
+        try:
+            _kg = KnowledgeGraph(
+                name=GRAPH_NAME,
+                model_config=model_config,
+                host=FALKORDB_HOST,
+                port=FALKORDB_PORT,
+            )
+            return _kg
+        except Exception:
+            # "The ontology is empty" — need to bootstrap
+            if not bootstrap_if_missing:
+                return None
+            ontology = _bootstrap_ontology(model)
+            _save_ontology(ontology)
 
     _kg = KnowledgeGraph(
         name=GRAPH_NAME,
@@ -88,6 +127,11 @@ async def query_knowledge(query: str, role: str | None = None) -> list[TextConte
     try:
         _check_team_session()
         kg = _get_kg()
+        if kg is None:
+            return [TextContent(
+                type="text",
+                text="Knowledge base not initialized yet. Store some knowledge first.",
+            )]
 
         # Build the query, incorporating role filter if provided
         full_query = query
@@ -125,7 +169,7 @@ async def store_knowledge(
     """
     try:
         _check_team_session()
-        kg = _get_kg()
+        kg = _get_kg(bootstrap_if_missing=True)
 
         # Deduplication: query for similar content
         try:

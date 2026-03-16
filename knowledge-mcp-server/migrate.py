@@ -6,7 +6,7 @@ import re
 import sys
 import tempfile
 
-from graphrag_sdk import KnowledgeGraph, KnowledgeGraphModelConfig, Source
+from graphrag_sdk import KnowledgeGraph, KnowledgeGraphModelConfig, Ontology, Source
 from graphrag_sdk.models.litellm import LiteModel
 
 GRAPH_NAME = "team_knowledge"
@@ -62,12 +62,66 @@ def build_entry(role: str, section_title: str, section_content: str) -> str:
     )
 
 
+def _load_ontology():
+    """Load ontology from saved JSON if it exists."""
+    import json
+
+    if os.path.exists(ONTOLOGY_PATH):
+        with open(ONTOLOGY_PATH) as f:
+            return Ontology.from_json(json.load(f))
+    return None
+
+
+def _generate_ontology(knowledge_dir: str, model):
+    """Auto-generate ontology from all knowledge source files."""
+    print("Generating ontology from knowledge files...")
+    sources = []
+    tmp_paths = []
+
+    for filename in ROLE_MAP:
+        filepath = os.path.join(knowledge_dir, filename)
+        if not os.path.exists(filepath):
+            continue
+        with open(filepath) as f:
+            text = f.read()
+        tmp_path = _write_temp_txt(text)
+        tmp_paths.append(tmp_path)
+        sources.append(Source(tmp_path))
+
+    if not sources:
+        raise RuntimeError("No knowledge files found to generate ontology from.")
+
+    try:
+        ontology = Ontology.from_sources(
+            sources,
+            model,
+            boundaries=(
+                "Focus on software engineering team knowledge: patterns, "
+                "conventions, bugs, architecture decisions, roles, and topics"
+            ),
+        )
+    finally:
+        for p in tmp_paths:
+            os.unlink(p)
+
+    print(f"Ontology generated: {len(ontology.entities)} entities, "
+          f"{len(ontology.relations)} relations.")
+    return ontology
+
+
 def migrate(knowledge_dir: str):
     model = LiteModel(model_name=MODEL_NAME)
     model_config = KnowledgeGraphModelConfig.with_model(model)
+
+    # Load existing ontology, or generate one from source files
+    ontology = _load_ontology()
+    if ontology is None:
+        ontology = _generate_ontology(knowledge_dir, model)
+
     kg = KnowledgeGraph(
         name=GRAPH_NAME,
         model_config=model_config,
+        ontology=ontology,
         host=FALKORDB_HOST,
         port=FALKORDB_PORT,
     )
