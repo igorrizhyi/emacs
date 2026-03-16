@@ -239,41 +239,6 @@ files = [
 ]
 
 [[package]]
-name = "backoff"
-version = "2.2.1"
-description = "Function decoration for backoff and retry"
-optional = false
-python-versions = ">=3.7,<4.0"
-groups = ["main"]
-files = [
-    {file = "backoff-2.2.1-py3-none-any.whl", hash = "sha256:63579f9a0628e06278f7e47b7d7d5b6ce20dc65c5e96a6f3ca99a6adca0396e8"},
-    {file = "backoff-2.2.1.tar.gz", hash = "sha256:03f829f5bb1923180821643f8753b0502c3b682293992485b0eef2807afa5cba"},
-]
-
-[[package]]
-name = "beautifulsoup4"
-version = "4.14.3"
-description = "Screen-scraping library"
-optional = false
-python-versions = ">=3.7.0"
-groups = ["main"]
-files = [
-    {file = "beautifulsoup4-4.14.3-py3-none-any.whl", hash = "sha256:0918bfe44902e6ad8d57732ba310582e98da931428d231a5ecb9e7c703a735bb"},
-    {file = "beautifulsoup4-4.14.3.tar.gz", hash = "sha256:6292b1c5186d356bba669ef9f7f051757099565ad9ada5dd630bd9de5fa7fb86"},
-]
-
-[package.dependencies]
-soupsieve = ">=1.6.1"
-typing-extensions = ">=4.0.0"
-
-[package.extras]
-cchardet = ["cchardet"]
-chardet = ["chardet"]
-charset-normalizer = ["charset-normalizer"]
-html5lib = ["html5lib"]
-lxml = ["lxml"]
-
-[[package]]
 name = "certifi"
 version = "2026.2.25"
 description = "Python package for providing Mozilla's CA Bundle."
@@ -754,18 +719,6 @@ files = [
 ]
 
 [[package]]
-name = "fix-busted-json"
-version = "0.0.18"
-description = "Fixes broken JSON string objects"
-optional = false
-python-versions = ">=3.6"
-groups = ["main"]
-files = [
-    {file = "fix-busted-json-0.0.18.tar.gz", hash = "sha256:93c5dab7cae3b5d0b055f2c7043f9fe727a88a80d0be753c5f2c20bb9b69672f"},
-    {file = "fix_busted_json-0.0.18-py3-none-any.whl", hash = "sha256:fdce0e02c9a810b3aa28e1c3c32c24b21b44e89f6315ec25d2b963bd52a6ef03"},
-]
-
-[[package]]
 name = "frozenlist"
 version = "1.8.0"
 description = "A list-like structure which implements collections.abc.MutableSequence"
@@ -944,32 +897,6 @@ test = ["aiohttp (!=4.0.0a0,!=4.0.0a1)", "numpy", "pytest", "pytest-asyncio (!=0
 test-downstream = ["aiobotocore (>=2.5.4,<3.0.0)", "dask[dataframe,test]", "moto[server] (>4,<5)", "pytest-timeout", "xarray"]
 test-full = ["adlfs", "aiohttp (!=4.0.0a0,!=4.0.0a1)", "backports-zstd ; python_version < \"3.14\"", "cloudpickle", "dask", "distributed", "dropbox", "dropboxdrivefs", "fastparquet", "fusepy", "gcsfs", "jinja2", "kerchunk", "libarchive-c", "lz4", "notebook", "numpy", "ocifs", "pandas (<3.0.0)", "panel", "paramiko", "pyarrow", "pyarrow (>=1)", "pyftpdlib", "pygit2", "pytest", "pytest-asyncio (!=0.22.0)", "pytest-benchmark", "pytest-cov", "pytest-mock", "pytest-recording", "pytest-rerunfailures", "python-snappy", "requests", "smbprotocol", "tqdm", "urllib3", "zarr", "zstandard ; python_version < \"3.14\""]
 tqdm = ["tqdm"]
-
-[[package]]
-name = "graphrag-sdk"
-version = "0.8.2"
-description = "Enables graph-based RAG and integration with LLMs for advanced querying and knowledge graph creation."
-optional = false
-python-versions = "<3.14,>=3.10.0"
-groups = ["main"]
-files = [
-    {file = "graphrag_sdk-0.8.2-py3-none-any.whl", hash = "sha256:f77a0addd08c13f89bbb87cd3b9a432729e1808bcabf2adeef79d8df3897e0e7"},
-    {file = "graphrag_sdk-0.8.2.tar.gz", hash = "sha256:5d9d275e1b1bc1128eb56233a07ac4a7324d95430057164629da23948c4b4b69"},
-]
-
-[package.dependencies]
-backoff = ">=2.2.1,<3.0.0"
-beautifulsoup4 = ">=4.12.3,<5.0.0"
-falkordb = ">=1.0.9,<2.0.0"
-fix-busted-json = ">=0.0.18,<0.0.19"
-litellm = ">=1.73.1,<2.0.0"
-pypdf = ">=5.9.0,<6.0.0"
-python-dotenv = ">=1.0.1,<2.0.0"
-ratelimit = ">=2.2.1,<3.0.0"
-rdflib = ">=7.0.0,<8.0.0"
-requests = ">=2.32.3,<3.0.0"
-rich = ">=13.9.4,<14.0.0"
-typing-extensions = ">=4.12.1,<5.0.0"
 
 [[package]]
 name = "h11"
@@ -1683,22 +1610,6 @@ files = [
 ]
 
 [[package]]
-name = "ollama"
-version = "0.6.1"
-description = "The official Python client for Ollama."
-optional = false
-python-versions = ">=3.8"
-groups = ["main"]
-files = [
-    {file = "ollama-0.6.1-py3-none-any.whl", hash = "sha256:fc4c984b345735c5486faeee67d8a265214a31cbb828167782dc642ce0a2bf8c"},
-    {file = "ollama-0.6.1.tar.gz", hash = "sha256:478c67546836430034b415ed64fa890fd3d1ff91781a9d548b3325274e69d7c6"},
-]
-
-[package.dependencies]
-httpx = ">=0.27"
-pydantic = ">=2.9"
-
-[[package]]
 name = "openai"
 version = "2.28.0"
 description = "The official Python library for the openai API"
@@ -2100,41 +2011,6 @@ docs = ["sphinx", "sphinx-rtd-theme", "zope.interface"]
 tests = ["coverage[toml] (==7.10.7)", "pytest (>=8.4.2,<9.0.0)"]
 
 [[package]]
-name = "pyparsing"
-version = "3.3.2"
-description = "pyparsing - Classes and methods to define and execute parsing grammars"
-optional = false
-python-versions = ">=3.9"
-groups = ["main"]
-files = [
-    {file = "pyparsing-3.3.2-py3-none-any.whl", hash = "sha256:850ba148bd908d7e2411587e247a1e4f0327839c40e2e5e6d05a007ecc69911d"},
-    {file = "pyparsing-3.3.2.tar.gz", hash = "sha256:c777f4d763f140633dcb6d8a3eda953bf7a214dc4eff598413c070bcdc117cbc"},
-]
-
-[package.extras]
-diagrams = ["jinja2", "railroad-diagrams"]
-
-[[package]]
-name = "pypdf"
-version = "5.9.0"
-description = "A pure-python PDF library capable of splitting, merging, cropping, and transforming PDF files"
-optional = false
-python-versions = ">=3.8"
-groups = ["main"]
-files = [
-    {file = "pypdf-5.9.0-py3-none-any.whl", hash = "sha256:be10a4c54202f46d9daceaa8788be07aa8cd5ea8c25c529c50dd509206382c35"},
-    {file = "pypdf-5.9.0.tar.gz", hash = "sha256:30f67a614d558e495e1fbb157ba58c1de91ffc1718f5e0dfeb82a029233890a1"},
-]
-
-[package.extras]
-crypto = ["cryptography"]
-cryptodome = ["PyCryptodome"]
-dev = ["black", "flit", "pip-tools", "pre-commit", "pytest-cov", "pytest-socket", "pytest-timeout", "pytest-xdist", "wheel"]
-docs = ["myst_parser", "sphinx", "sphinx_rtd_theme"]
-full = ["Pillow (>=8.0.0)", "cryptography"]
-image = ["Pillow (>=8.0.0)"]
-
-[[package]]
 name = "python-dateutil"
 version = "2.9.0.post0"
 description = "Extensions to the standard Python datetime module"
@@ -2289,41 +2165,6 @@ files = [
     {file = "pyyaml-6.0.3-cp39-cp39-win_amd64.whl", hash = "sha256:2e71d11abed7344e42a8849600193d15b6def118602c4c176f748e4583246007"},
     {file = "pyyaml-6.0.3.tar.gz", hash = "sha256:d76623373421df22fb4cf8817020cbb7ef15c725b9d5e45f17e189bfc384190f"},
 ]
-
-[[package]]
-name = "ratelimit"
-version = "2.2.1"
-description = "API rate limit decorator"
-optional = false
-python-versions = "*"
-groups = ["main"]
-files = [
-    {file = "ratelimit-2.2.1.tar.gz", hash = "sha256:af8a9b64b821529aca09ebaf6d8d279100d766f19e90b5059ac6a718ca6dee42"},
-]
-
-[[package]]
-name = "rdflib"
-version = "7.6.0"
-description = "RDFLib is a Python library for working with RDF, a simple yet powerful language for representing information."
-optional = false
-python-versions = ">=3.8.1"
-groups = ["main"]
-files = [
-    {file = "rdflib-7.6.0-py3-none-any.whl", hash = "sha256:30c0a3ebf4c0e09215f066be7246794b6492e054e782d7ac2a34c9f70a15e0dd"},
-    {file = "rdflib-7.6.0.tar.gz", hash = "sha256:6c831288d5e4a5a7ece85d0ccde9877d512a3d0f02d7c06455d00d6d0ea379df"},
-]
-
-[package.dependencies]
-pyparsing = ">=2.1.0,<4"
-
-[package.extras]
-berkeleydb = ["berkeleydb (>=18.1.0,<19.0.0)"]
-graphdb = ["httpx (>=0.28.1,<0.29.0)"]
-html = ["html5rdf (>=1.2,<2)"]
-lxml = ["lxml (>=4.3,<6.0)"]
-networkx = ["networkx (>=2,<4)"]
-orjson = ["orjson (>=3.9.14,<4)"]
-rdf4j = ["httpx (>=0.28.1,<0.29.0)"]
 
 [[package]]
 name = "redis"
@@ -2513,14 +2354,14 @@ use-chardet-on-py3 = ["chardet (>=3.0.2,<6)"]
 
 [[package]]
 name = "rich"
-version = "13.9.4"
+version = "14.3.3"
 description = "Render rich text, tables, progress bars, syntax highlighting, markdown and more to the terminal"
 optional = false
 python-versions = ">=3.8.0"
 groups = ["main"]
 files = [
-    {file = "rich-13.9.4-py3-none-any.whl", hash = "sha256:6049d5e6ec054bf2779ab3358186963bac2ea89175919d699e378b99738c2a90"},
-    {file = "rich-13.9.4.tar.gz", hash = "sha256:439594978a49a09530cff7ebc4b5c7103ef57baf48d5ea3184f21d9a2befa098"},
+    {file = "rich-14.3.3-py3-none-any.whl", hash = "sha256:793431c1f8619afa7d3b52b2cdec859562b950ea0d4b6b505397612db8d5362d"},
+    {file = "rich-14.3.3.tar.gz", hash = "sha256:b8daa0b9e4eef54dd8cf7c86c03713f53241884e814f4e2f5fb342fe520f639b"},
 ]
 
 [package.dependencies]
@@ -2689,18 +2530,6 @@ groups = ["main"]
 files = [
     {file = "sniffio-1.3.1-py3-none-any.whl", hash = "sha256:2f6da418d1f1e0fddd844478f41680e794e6051915791a034ff65e5f100525a2"},
     {file = "sniffio-1.3.1.tar.gz", hash = "sha256:f4324edc670a0f49750a81b895f35c3adb843cca46f0530f79fc1babb23789dc"},
-]
-
-[[package]]
-name = "soupsieve"
-version = "2.8.3"
-description = "A modern CSS selector implementation for Beautiful Soup."
-optional = false
-python-versions = ">=3.9"
-groups = ["main"]
-files = [
-    {file = "soupsieve-2.8.3-py3-none-any.whl", hash = "sha256:ed64f2ba4eebeab06cc4962affce381647455978ffc1e36bb79a545b91f45a95"},
-    {file = "soupsieve-2.8.3.tar.gz", hash = "sha256:3267f1eeea4251fb42728b6dfb746edc9acaffc4a45b27e19450b676586e8349"},
 ]
 
 [[package]]
@@ -3131,4 +2960,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.14"
-content-hash = "b137275886f26820c4cd7f99ea9bd6fe52a494d4e1cc104cecafe625e4551948"
+content-hash = "f1ff7e7d38244812e8be4ef04311031ec4dafd0026013a375aa37f45665a0ee0"

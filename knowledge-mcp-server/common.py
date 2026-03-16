@@ -65,6 +65,7 @@ def init_schema(graph):
     for stmt in (
         "CREATE INDEX FOR (c:Chunk) ON (c.source)",
         "CREATE INDEX FOR (c:Chunk) ON (c.roles)",
+        "CREATE INDEX FOR (c:Chunk) ON (c.type)",
     ):
         try:
             graph.query(stmt)
@@ -122,6 +123,7 @@ def chunk_report(report_text: str, request_id: str, role: str) -> list[dict]:
                         "source": source,
                         "section": current_section,
                         "roles": role,
+                        "type": "report",
                     })
             current_section = line[3:].strip()
             current_lines = []
@@ -140,6 +142,7 @@ def chunk_report(report_text: str, request_id: str, role: str) -> list[dict]:
                 "source": source,
                 "section": current_section,
                 "roles": role,
+                "type": "report",
             })
     return chunks
 
@@ -169,6 +172,7 @@ def chunk_knowledge_file(filepath: str, role: str) -> list[dict]:
                     "source": source,
                     "section": current_section,
                     "roles": role,
+                    "type": "knowledge",
                 }
             )
             current_bullet.clear()
@@ -225,6 +229,7 @@ def ingest_chunks(graph, chunks: list[dict]):
                 c.source    = $source,
                 c.section   = $section,
                 c.roles     = $roles,
+                c.type      = $type,
                 c.created_at = $ts
             """,
             params={
@@ -234,6 +239,7 @@ def ingest_chunks(graph, chunks: list[dict]):
                 "source": chunk["source"],
                 "section": chunk["section"],
                 "roles": chunk["roles"],
+                "type": chunk.get("type", "knowledge"),
                 "ts": now,
             },
         )

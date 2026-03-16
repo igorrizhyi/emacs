@@ -112,11 +112,11 @@ async def _handle_store(arguments: dict) -> list[types.TextContent]:
     elif content.startswith("- "):
         chunks = [{"id": chunk_id(source, content[2:].strip()),
                    "content": content[2:].strip(), "section": "General",
-                   "source": source, "roles": roles_str}]
+                   "source": source, "roles": roles_str, "type": "knowledge"}]
     else:
         raw = [l.strip() for l in content.split("\n") if l.strip() and not l.strip().startswith("#")]
         chunks = [{"id": chunk_id(source, t), "content": t, "section": "General",
-                   "source": source, "roles": roles_str} for t in raw]
+                   "source": source, "roles": roles_str, "type": "knowledge"} for t in raw]
 
     if not chunks:
         return [types.TextContent(type="text", text="No content to store")]
