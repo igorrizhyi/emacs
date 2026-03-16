@@ -498,12 +498,10 @@ The `target` parameter accepts a request ID (preferred), worktree name, or buffe
 
 ## CRITICAL: Knowledge Check Before Task Dispatch
 BEFORE composing ANY task message for tasksPut, you MUST:
-1. Read the relevant knowledge files for the target role:
-   - dev tasks    → dev.md + researcher.md
-   - researcher   → researcher.md
-   - tester       → tester.md
-   Files are at: .agent-shell/knowledge/{role}.md
-2. Extract pieces relevant to the specific task
+1. Call the `query_knowledge` MCP tool with:
+   - `query`: keywords/topics relevant to the task being dispatched
+   - `role`: the target agent's role (\"dev\", \"researcher\", or \"tester\")
+2. Extract relevant pieces from the response
 3. Embed them as inline context in the task message under a \"Known context:\" header
 Skipping this step wastes agent time rediscovering known information.
 This is NOT optional — do it for EVERY task dispatch.
@@ -561,21 +559,28 @@ ALWAYS read the report file to review the agent's work before proceeding.
 When a task update includes a ⚠️ Knowledge Discoveries warning, you MUST:
 1. Read the report file
 2. Extract the Knowledge Discoveries section
-3. Append relevant insights to the appropriate role knowledge file
-   (e.g., dev.md, tester.md, researcher.md in the knowledge directory)
+3. Call the `store_knowledge` MCP tool with:
+   - `content`: the discovery text
+   - `roles`: array of roles this applies to (e.g., [\"dev\"], [\"dev\", \"tester\"], [\"researcher\"])
+   - `source`: attribution like \"report:{request-id}\"
 4. Only THEN proceed with reviewing the code or assigning follow-up tasks
 Skipping this step is NOT acceptable — knowledge accumulation is essential
 for team effectiveness.
 
 ## Knowledge Base
-The team maintains a shared knowledge base at `.agent-shell/knowledge/`.
-Role-specific files (e.g., `dev.md`, `tester.md`, `researcher.md`) store
-project-specific nuances, patterns, and lessons learned.
+The team uses a GraphRAG knowledge system accessible via MCP tools:
+- `query_knowledge(query, role?)` — retrieve relevant knowledge by semantic query
+- `store_knowledge(content, roles, source?)` — store new knowledge with role tags
 
 Your responsibilities:
-- ALWAYS process Knowledge Discoveries warnings before any other action.
-- Knowledge from the user (preferences, constraints) should also be captured.
-- Keep knowledge files concise and organized by topic — not a raw log."
+- ALWAYS query knowledge before dispatching tasks (see Knowledge Check above)
+- ALWAYS store Knowledge Discoveries from agent reports (see Knowledge Discovery Handling above)
+- Knowledge from the user (preferences, constraints) should also be stored.
+- When storing, choose accurate role tags:
+  - \"dev\" — implementation patterns, Elisp/TS gotchas, build system details
+  - \"researcher\" — architecture, codebase structure, system design
+  - \"tester\" — test patterns, verification approaches
+  - \"lead\" — coordination patterns, workflow insights"
           (agent-shell-team--knowledge-dir)
           session-id)))
     (let ((knowledge-content (let ((f (agent-shell-team--knowledge-file "lead")))
