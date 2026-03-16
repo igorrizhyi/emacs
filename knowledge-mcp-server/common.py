@@ -452,6 +452,32 @@ def query_knowledge(graph, question: str, role: str = None, top_k: int = 8) -> d
         }
         hits.append(hit)
 
+    # 2b. Fulltext fallback when vector search finds nothing
+    if not hits:
+        try:
+            ft = graph.query(
+                """
+                CALL db.idx.fulltext.queryNodes('Chunk', 'content', $q)
+                YIELD node
+                RETURN node.id AS id, node.content AS content,
+                       node.source AS source, node.section AS section,
+                       node.roles AS roles
+                LIMIT $k
+                """,
+                params={"q": question, "k": top_k},
+            )
+            for row in ft.result_set:
+                hits.append({
+                    "id": row[0],
+                    "content": row[1],
+                    "source": row[2],
+                    "section": row[3],
+                    "roles": row[4],
+                    "score": 0.99,  # synthetic score — fulltext hits have no vector score
+                })
+        except Exception:
+            pass  # fulltext index may not exist or query may fail
+
     # 3. Optional role filter (post-retrieval)
     if role:
         hits = [h for h in hits if role in (h.get("roles") or "").split(",")]
