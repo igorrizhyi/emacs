@@ -7,7 +7,10 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 import mcp.types as types
 
-from common import get_graph, init_schema, ingest_chunks, query_knowledge, chunk_id
+from common import (
+    get_graph, init_schema, ingest_chunks, query_knowledge, chunk_id,
+    chunk_report, create_topic_links, create_similarity_edges_for_chunks,
+)
 
 server = Server("knowledge")
 
@@ -103,37 +106,27 @@ async def _handle_store(arguments: dict) -> list[types.TextContent]:
     source = arguments.get("source", "mcp")
     roles_str = ",".join(roles)
 
-    # Parse content into chunks
-    if content.startswith("- "):
-        # Single bullet point → single chunk
-        raw_chunks = [content[2:].strip()]
+    if source.startswith("report:"):
+        request_id = source.split(":", 1)[1]
+        chunks = chunk_report(content, request_id, roles_str)
+    elif content.startswith("- "):
+        chunks = [{"id": chunk_id(source, content[2:].strip()),
+                   "content": content[2:].strip(), "section": "General",
+                   "source": source, "roles": roles_str}]
     else:
-        # Split by newlines, skip empty/header lines
-        raw_chunks = [
-            line.strip()
-            for line in content.split("\n")
-            if line.strip() and not line.strip().startswith("#")
-        ]
+        raw = [l.strip() for l in content.split("\n") if l.strip() and not l.strip().startswith("#")]
+        chunks = [{"id": chunk_id(source, t), "content": t, "section": "General",
+                   "source": source, "roles": roles_str} for t in raw]
 
-    if not raw_chunks:
+    if not chunks:
         return [types.TextContent(type="text", text="No content to store")]
 
-    chunks = []
-    for text in raw_chunks:
-        chunks.append({
-            "id": chunk_id(source, text),
-            "content": text,
-            "section": "General",
-            "source": source,
-            "roles": roles_str,
-        })
-
     ingest_chunks(graph, chunks)
+    create_topic_links(graph, chunks)
+    new_ids = [c["id"] for c in chunks]
+    create_similarity_edges_for_chunks(graph, new_ids)
 
-    return [types.TextContent(
-        type="text",
-        text=f"Stored {len(chunks)} chunk(s). Roles: {roles_str}, Source: {source}",
-    )]
+    return [types.TextContent(type="text", text=f"Stored {len(chunks)} chunk(s). Source: {source}")]
 
 
 async def main():

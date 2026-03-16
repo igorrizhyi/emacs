@@ -9,6 +9,7 @@ from common import (
     get_graph,
     init_schema,
     chunk_knowledge_file,
+    chunk_report,
     ingest_chunks,
     create_topic_links,
     create_similarity_edges,
@@ -79,9 +80,68 @@ def migrate(knowledge_dir: str, clean: bool = False):
     print("Done.")
 
 
+def _infer_role(content: str) -> str:
+    """Infer role from report content heuristics."""
+    if "Research Report" in content:
+        return "researcher"
+    if "Branch:" in content or "Commit:" in content:
+        return "dev"
+    return "dev"
+
+
+def migrate_reports(reports_dir: str):
+    """Import historical task reports from .agent-shell/reports/."""
+    graph = get_graph()
+    init_schema(graph)
+
+    all_chunks: list[dict] = []
+    report_count = 0
+
+    for session_id in sorted(os.listdir(reports_dir)):
+        session_path = os.path.join(reports_dir, session_id)
+        if not os.path.isdir(session_path):
+            continue
+        for filename in sorted(os.listdir(session_path)):
+            if not filename.endswith(".md"):
+                continue
+            filepath = os.path.join(session_path, filename)
+            with open(filepath) as f:
+                content = f.read()
+            if not content.strip():
+                continue
+
+            request_id = filename[:-3]  # strip .md
+            role = _infer_role(content)
+            chunks = chunk_report(content, request_id, role)
+            all_chunks.extend(chunks)
+            report_count += 1
+            print(f"  {session_id}/{filename}: {len(chunks)} chunks (role={role})")
+
+    if not all_chunks:
+        print("No report chunks to ingest.")
+        return
+
+    print(f"\nIngesting {len(all_chunks)} chunks from {report_count} reports...")
+    ingest_chunks(graph, all_chunks)
+
+    print("Creating topic links...")
+    create_topic_links(graph, all_chunks)
+
+    print("Creating similarity edges (full rebuild)...")
+    create_similarity_edges(graph)
+
+    print(f"\n--- Report Migration Stats ---")
+    print(f"  Reports processed: {report_count}")
+    print(f"  Chunks created: {len(all_chunks)}")
+    print("Done.")
+
+
 def main():
     default_knowledge_dir = os.path.normpath(
         os.path.join(os.path.dirname(__file__), "..", ".agent-shell", "knowledge")
+    )
+    default_reports_dir = os.path.normpath(
+        os.path.join(os.path.dirname(__file__), "..", ".agent-shell", "reports")
     )
 
     parser = argparse.ArgumentParser(
@@ -97,7 +157,24 @@ def main():
         action="store_true",
         help="Delete existing graph and re-create from scratch",
     )
+    parser.add_argument(
+        "--reports",
+        action="store_true",
+        help="Import historical task reports from .agent-shell/reports/",
+    )
+    parser.add_argument(
+        "--reports-dir",
+        default=default_reports_dir,
+        help=f"Path to reports directory (default: {default_reports_dir})",
+    )
     args = parser.parse_args()
+
+    if args.reports:
+        if not os.path.isdir(args.reports_dir):
+            print(f"Error: Reports directory not found: {args.reports_dir}")
+            sys.exit(1)
+        migrate_reports(args.reports_dir)
+        return
 
     if not os.path.isdir(args.knowledge_dir):
         print(f"Error: Knowledge directory not found: {args.knowledge_dir}")
