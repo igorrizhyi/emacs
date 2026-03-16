@@ -2,23 +2,26 @@
 
 import os
 import json
-import tempfile
 from datetime import datetime, timezone
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent
 
-from graphrag_sdk import KnowledgeGraph, KnowledgeGraphModelConfig, Ontology, Source
+from graphrag_sdk import Ontology, Source
 from graphrag_sdk.source import Source_FromRawText
-from graphrag_sdk.models.litellm import LiteModel
 
-GRAPH_NAME = "team_knowledge"
-ONTOLOGY_PATH = os.path.join(os.path.dirname(__file__), "ontology.json")
-MODEL_NAME = os.environ.get("GRAPHRAG_MODEL", "gpt-4o-mini")
-
-FALKORDB_HOST = os.environ.get("FALKORDB_HOST", "127.0.0.1")
-FALKORDB_PORT = int(os.environ.get("FALKORDB_PORT", "6380"))
+from common import (
+    GRAPH_NAME,
+    FALKORDB_HOST,
+    FALKORDB_PORT,
+    get_model,
+    get_model_config,
+    load_ontology,
+    save_ontology,
+    create_kg,
+    write_temp_txt,
+)
 
 server = Server("knowledge-mcp-server")
 
@@ -30,24 +33,6 @@ def _check_team_session():
     """Gate: only available in team sessions."""
     if not os.environ.get("AGENT_SHELL_TEAM"):
         raise ValueError("Knowledge system only available in team sessions")
-
-
-def _get_model():
-    return LiteModel(model_name=MODEL_NAME)
-
-
-def _load_ontology():
-    """Load ontology from saved JSON if it exists."""
-    if os.path.exists(ONTOLOGY_PATH):
-        with open(ONTOLOGY_PATH) as f:
-            return Ontology.from_json(json.load(f))
-    return None
-
-
-def _save_ontology(ontology):
-    """Save ontology to JSON for reuse."""
-    with open(ONTOLOGY_PATH, "w") as f:
-        json.dump(ontology.to_json(), f, indent=2)
 
 
 def _bootstrap_ontology(model):
@@ -77,43 +62,23 @@ def _get_kg(bootstrap_if_missing=False):
     if _kg is not None:
         return _kg
 
-    model = _get_model()
-    model_config = KnowledgeGraphModelConfig.with_model(model)
-    ontology = _load_ontology()
+    model = get_model()
+    ontology = load_ontology()
 
     if ontology is None:
         # Try without ontology — works if FalkorDB already has a schema graph
         try:
-            _kg = KnowledgeGraph(
-                name=GRAPH_NAME,
-                model_config=model_config,
-                host=FALKORDB_HOST,
-                port=FALKORDB_PORT,
-            )
+            _kg = create_kg()
             return _kg
         except Exception:
             # "The ontology is empty" — need to bootstrap
             if not bootstrap_if_missing:
                 return None
             ontology = _bootstrap_ontology(model)
-            _save_ontology(ontology)
+            save_ontology(ontology)
 
-    _kg = KnowledgeGraph(
-        name=GRAPH_NAME,
-        model_config=model_config,
-        ontology=ontology,
-        host=FALKORDB_HOST,
-        port=FALKORDB_PORT,
-    )
+    _kg = create_kg(ontology=ontology)
     return _kg
-
-
-def _write_temp_txt(content: str) -> str:
-    """Write content to a temporary .txt file for Source() ingestion."""
-    fd, path = tempfile.mkstemp(suffix=".txt")
-    with os.fdopen(fd, "w") as f:
-        f.write(content)
-    return path
 
 
 @server.tool()
@@ -201,7 +166,7 @@ async def store_knowledge(
         )
 
         # Write to temp file and ingest
-        tmp_path = _write_temp_txt(enriched)
+        tmp_path = write_temp_txt(enriched)
         try:
             src = Source(tmp_path)
             kg.process_sources(
@@ -218,7 +183,7 @@ async def store_knowledge(
 
         # Save ontology after ingestion (it may have been updated)
         if kg.ontology is not None:
-            _save_ontology(kg.ontology)
+            save_ontology(kg.ontology)
 
         return [TextContent(
             type="text",
