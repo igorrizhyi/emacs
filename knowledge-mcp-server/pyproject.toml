@@ -2,9 +2,10 @@
 name = "knowledge-mcp-server"
 version = "0.1.0"
 description = "FalkorDB GraphRAG knowledge system for agent-shell team sessions"
+package-mode = false
 
 [tool.poetry.dependencies]
-python = ">=3.11"
+python = ">=3.11,<3.14"
 mcp = ">=1.0.0"
 graphrag-sdk = ">=0.6.0"
 litellm = ">=1.0.0"

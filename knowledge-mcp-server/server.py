@@ -17,7 +17,7 @@ ONTOLOGY_PATH = os.path.join(os.path.dirname(__file__), "ontology.json")
 MODEL_NAME = "anthropic/claude-sonnet-4-20250514"
 
 FALKORDB_HOST = os.environ.get("FALKORDB_HOST", "127.0.0.1")
-FALKORDB_PORT = int(os.environ.get("FALKORDB_PORT", "6379"))
+FALKORDB_PORT = int(os.environ.get("FALKORDB_PORT", "6380"))
 
 server = Server("knowledge-mcp-server")
 
