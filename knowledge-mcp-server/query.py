@@ -1,36 +1,21 @@
 """Interactive query script for the knowledge graph."""
 
-import os
-import sys
 import json
+import sys
 
-from graphrag_sdk import KnowledgeGraph, KnowledgeGraphModelConfig, Ontology
-from graphrag_sdk.models.litellm import LiteModel
-
-GRAPH_NAME = "team_knowledge"
-ONTOLOGY_PATH = os.path.join(os.path.dirname(__file__), "ontology.json")
-MODEL_NAME = os.environ.get("GRAPHRAG_MODEL", "gpt-4o-mini")
-FALKORDB_HOST = os.environ.get("FALKORDB_HOST", "127.0.0.1")
-FALKORDB_PORT = int(os.environ.get("FALKORDB_PORT", "6380"))
+from common import (
+    GRAPH_NAME,
+    MODEL_NAME,
+    FALKORDB_HOST,
+    FALKORDB_PORT,
+    load_ontology,
+    create_kg,
+)
 
 
 def main():
-    model = LiteModel(model_name=MODEL_NAME)
-    model_config = KnowledgeGraphModelConfig.with_model(model)
-
-    # Load ontology
-    ontology = None
-    if os.path.exists(ONTOLOGY_PATH):
-        with open(ONTOLOGY_PATH) as f:
-            ontology = Ontology.from_json(json.load(f))
-
-    kg = KnowledgeGraph(
-        name=GRAPH_NAME,
-        model_config=model_config,
-        ontology=ontology,
-        host=FALKORDB_HOST,
-        port=FALKORDB_PORT,
-    )
+    ontology = load_ontology()
+    kg = create_kg(ontology=ontology)
 
     # Single query from args, or interactive mode
     if len(sys.argv) > 1:

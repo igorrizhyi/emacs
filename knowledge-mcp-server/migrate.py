@@ -4,15 +4,16 @@ import argparse
 import os
 import re
 import sys
-import tempfile
 
-from graphrag_sdk import KnowledgeGraph, KnowledgeGraphModelConfig, Ontology, Source
-from graphrag_sdk.models.litellm import LiteModel
+from graphrag_sdk import Ontology, Source
 
-GRAPH_NAME = "team_knowledge"
-MODEL_NAME = os.environ.get("GRAPHRAG_MODEL", "gpt-4o-mini")
-FALKORDB_HOST = os.environ.get("FALKORDB_HOST", "127.0.0.1")
-FALKORDB_PORT = int(os.environ.get("FALKORDB_PORT", "6380"))
+from common import (
+    get_model,
+    load_ontology,
+    save_ontology,
+    create_kg,
+    write_temp_txt,
+)
 
 ROLE_MAP = {
     "dev.md": ["dev"],
@@ -20,22 +21,6 @@ ROLE_MAP = {
     "tester.md": ["tester"],
     "lead.md": ["lead"],
 }
-
-ONTOLOGY_PATH = os.path.join(os.path.dirname(__file__), "ontology.json")
-
-
-def _save_ontology(ontology):
-    import json
-
-    with open(ONTOLOGY_PATH, "w") as f:
-        json.dump(ontology.to_json(), f, indent=2)
-
-
-def _write_temp_txt(content: str) -> str:
-    fd, path = tempfile.mkstemp(suffix=".txt")
-    with os.fdopen(fd, "w") as f:
-        f.write(content)
-    return path
 
 
 def parse_sections(text: str) -> list[tuple[str, str]]:
@@ -62,16 +47,6 @@ def build_entry(role: str, section_title: str, section_content: str) -> str:
     )
 
 
-def _load_ontology():
-    """Load ontology from saved JSON if it exists."""
-    import json
-
-    if os.path.exists(ONTOLOGY_PATH):
-        with open(ONTOLOGY_PATH) as f:
-            return Ontology.from_json(json.load(f))
-    return None
-
-
 def _generate_ontology(knowledge_dir: str, model):
     """Auto-generate ontology from all knowledge source files."""
     print("Generating ontology from knowledge files...")
@@ -84,7 +59,7 @@ def _generate_ontology(knowledge_dir: str, model):
             continue
         with open(filepath) as f:
             text = f.read()
-        tmp_path = _write_temp_txt(text)
+        tmp_path = write_temp_txt(text)
         tmp_paths.append(tmp_path)
         sources.append(Source(tmp_path))
 
@@ -110,21 +85,12 @@ def _generate_ontology(knowledge_dir: str, model):
 
 
 def migrate(knowledge_dir: str):
-    model = LiteModel(model_name=MODEL_NAME)
-    model_config = KnowledgeGraphModelConfig.with_model(model)
-
-    # Load existing ontology, or generate one from source files
-    ontology = _load_ontology()
+    model = get_model()
+    ontology = load_ontology()
     if ontology is None:
         ontology = _generate_ontology(knowledge_dir, model)
 
-    kg = KnowledgeGraph(
-        name=GRAPH_NAME,
-        model_config=model_config,
-        ontology=ontology,
-        host=FALKORDB_HOST,
-        port=FALKORDB_PORT,
-    )
+    kg = create_kg(ontology=ontology)
 
     total_sections = 0
     total_files = 0
@@ -149,7 +115,7 @@ def migrate(knowledge_dir: str):
 
         for i, (title, content) in enumerate(sections, 1):
             entry = build_entry(role_str, title, content)
-            tmp_path = _write_temp_txt(entry)
+            tmp_path = write_temp_txt(entry)
             try:
                 src = Source(tmp_path)
                 kg.process_sources(
@@ -170,7 +136,7 @@ def migrate(knowledge_dir: str):
 
     # Save ontology after all ingestion
     if kg.ontology is not None:
-        _save_ontology(kg.ontology)
+        save_ontology(kg.ontology)
         print("Ontology saved.")
 
     print(f"\nDone. Migrated {total_sections} sections from {total_files} files.")
