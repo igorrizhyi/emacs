@@ -60,6 +60,16 @@ without prompting for confirmation."
   :type 'integer
   :group 'agent-shell-team)
 
+(defcustom agent-shell-team-auto-compact-threshold 75.0
+  "Context usage percentage at which to auto-compact the lead agent."
+  :type 'float
+  :group 'agent-shell-team)
+
+(defcustom agent-shell-team-compact-cooldown 120
+  "Minimum seconds between auto-compactions for the same buffer."
+  :type 'integer
+  :group 'agent-shell-team)
+
 ;;; Faces for doom-modeline role badges
 
 (defface agent-shell-team-role-lead-face
@@ -124,6 +134,9 @@ Each entry is: ((buffer . #<buffer>) (role . \"dev\") (mode . \"isolated\")
 (defvar agent-shell-team--pending-for-lead (make-hash-table :test 'equal)
   "Messages pending delivery to a lead that hasn't registered yet.
 Keyed by session-id, values are lists of formatted message strings.")
+
+(defvar agent-shell-team--last-compact-time (make-hash-table :test 'eq)
+  "Buffer -> float-time of last auto-compact.")
 
 (defvar agent-shell-team--assigning-p nil
   "Non-nil while `agent-shell-team--try-assign-tasks' is running, preventing re-entrant calls.")
@@ -1018,6 +1031,7 @@ Only the lead role may call this.  Returns an alist with success/message."
               (remhash group-id agent-shell-team--task-groups))))
         (remhash rid agent-shell-team--request-to-group))))
   (remhash buffer agent-shell-team--last-activity)
+  (remhash buffer agent-shell-team--last-compact-time)
   (when (buffer-live-p buffer)
     (agent-shell-team--unregister-agent buffer)
     (kill-buffer buffer))
@@ -1543,6 +1557,45 @@ Used to detect truly stuck agents (no output while busy).")
 
 (advice-add 'agent-shell--on-notification :before #'agent-shell-team--track-activity)
 
+(defun agent-shell-team--maybe-auto-compact ()
+  "Check if the current buffer is a lead agent needing compaction.
+Called after usage_update notification arrives.  Only acts when:
+- Buffer is a lead agent
+- Agent is idle (not busy)
+- Context usage >= threshold
+- Cooldown has elapsed since last compact"
+  (when (and (boundp 'agent-shell-team--role)
+             agent-shell-team--role
+             (string= agent-shell-team--role "lead")
+             (boundp 'agent-shell--state)
+             agent-shell--state
+             (not shell-maker--busy))
+    (let* ((usage (map-elt agent-shell--state :usage))
+           (used (or (map-elt usage :context-used) 0))
+           (size (or (map-elt usage :context-size) 0))
+           (pct (if (> size 0) (* 100.0 (/ (float used) size)) 0.0))
+           (last-compact (gethash (current-buffer) agent-shell-team--last-compact-time 0))
+           (cooldown-elapsed (> (- (float-time) last-compact)
+                                agent-shell-team-compact-cooldown)))
+      (when (and (>= pct agent-shell-team-auto-compact-threshold)
+                 cooldown-elapsed)
+        (agent-shell-team--log agent-shell-team--session-id
+          (format "[auto-compact] Lead context at %.0f%% (%d/%d tokens), triggering /compact"
+                  pct used size))
+        (puthash (current-buffer) (float-time) agent-shell-team--last-compact-time)
+        ;; Use run-at-time 0 to avoid re-entrancy issues
+        (let ((buf (current-buffer)))
+          (run-at-time 0 nil
+            (lambda ()
+              (when (and (buffer-live-p buf)
+                         (not (with-current-buffer buf shell-maker--busy)))
+                (with-current-buffer buf
+                  (shell-maker-submit :input "/compact"))))))))))
+
+(advice-add 'agent-shell--update-usage-from-notification :after
+  (lambda (&rest _)
+    (agent-shell-team--maybe-auto-compact)))
+
 (defun agent-shell-team--start-drain-timer ()
   "Start periodic drain timer."
   (unless agent-shell-team--drain-timer
@@ -1625,7 +1678,8 @@ Also detects agents stuck in busy state with no ACP output for
     (agent-shell-team--unregister-agent (current-buffer))
     ;; Clean up any queued messages and activity tracking for this buffer
     (remhash (current-buffer) agent-shell-team--message-queue)
-    (remhash (current-buffer) agent-shell-team--last-activity)))
+    (remhash (current-buffer) agent-shell-team--last-activity)
+    (remhash (current-buffer) agent-shell-team--last-compact-time)))
 
 (add-hook 'kill-buffer-hook #'agent-shell-team--buffer-kill-hook)
 
