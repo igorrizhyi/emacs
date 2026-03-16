@@ -1,10 +1,13 @@
-;;; my-request-human.el --- MCP tool for requesting human interaction -*- lexical-binding: t; -*-
+;;; my-request-human.el --- Human interaction capture tool -*- lexical-binding: t; -*-
 
+;; Interactive command: my/request-human-capture
 ;; MCP handler: claude-code-mcp-handle-requestHuman
 ;; Auto-discovered via (intern (format "claude-code-mcp-handle-%s" tool-name))
 ;; in mcp-stdio-server.el
 
 (require 'posframe)
+
+;;; --- State Variables ---
 
 (defvar my-request-human--done nil
   "Flag set when human interaction is complete.")
@@ -42,6 +45,30 @@
 
 (defconst my-request-human--buffer-name " *request-human*"
   "Buffer name for the posframe popup.")
+
+;;; --- Action Registry ---
+
+(defvar my-request-human-action-registry
+  '(("adb-logcat" . (:label "ADB Logcat"
+                     :command (lambda (dir)
+                                (start-process-shell-command
+                                 "adb-logcat" nil
+                                 (format "adb logcat > %s"
+                                         (shell-quote-argument
+                                          (expand-file-name "logcat.txt" dir)))))))
+    ("adb-screenshot" . (:label "ADB Screenshot"
+                         :command (lambda (dir)
+                                    (start-process-shell-command
+                                     "adb-screenshot" nil
+                                     (format "adb exec-out screencap -p > %s"
+                                             (shell-quote-argument
+                                              (expand-file-name "screenshot.png" dir))))))))
+  "Registry of available capture actions.
+Each entry is (ACTION-ID . PLIST) where PLIST has:
+  :label   - Human-readable label for display
+  :command - Function taking a directory, returning a process or nil.")
+
+;;; --- Keymap & Minor Mode ---
 
 (defvar my-request-human-mode-map
   (let ((map (make-sparse-keymap)))
@@ -146,21 +173,13 @@
         (run-with-timer 0 0.1 #'my-request-human--update-spinner)))
 
 (defun my-request-human--start-action (action)
-  "Start capture process for ACTION. Return the process or nil."
-  (pcase action
-    ("adb-logcat"
-     (start-process-shell-command
-      "adb-logcat" nil
-      (format "adb logcat > %s"
-              (shell-quote-argument
-               (expand-file-name "logcat.txt" my-request-human--temp-dir)))))
-    ("adb-screenshot"
-     (start-process-shell-command
-      "adb-screenshot" nil
-      (format "adb exec-out screencap -p > %s"
-              (shell-quote-argument
-               (expand-file-name "screenshot.png" my-request-human--temp-dir)))))
-    (_ nil)))
+  "Start capture process for ACTION using the action registry.
+Return the process or nil."
+  (let ((entry (assoc action my-request-human-action-registry)))
+    (when entry
+      (let ((command-fn (plist-get (cdr entry) :command)))
+        (when command-fn
+          (funcall command-fn my-request-human--temp-dir))))))
 
 (defun my-request-human--render-capture ()
   "Render the capture phase UI."
@@ -216,19 +235,21 @@
     (setq my-request-human--spinner-timer nil))
   (setq my-request-human--done t))
 
-;;; --- MCP Handler ---
+;;; --- Core Interactive Command ---
 
-(defun claude-code-mcp-handle-requestHuman (params)
-  "Handle requestHuman MCP tool call.
-Shows a popup for human interaction with optional capture actions.
-PARAMS is an alist with `message' (required) and `actions' (optional)."
-  (let* ((message (or (map-elt params 'message)
-                      (map-elt params "message")
-                      "Agent requests your attention"))
-         (actions (or (map-elt params 'actions)
-                      (map-elt params "actions")))
-         ;; Coerce actions to list of strings
-         (actions (if (vectorp actions) (append actions nil) actions))
+(defun my/request-human-capture (&optional message actions)
+  "Show capture popup with checkbox selection and run selected captures.
+
+When called interactively, uses default MESSAGE and shows all
+registered actions from `my-request-human-action-registry'.
+
+When called from Lisp, MESSAGE is the prompt string and ACTIONS
+is a list of action ID strings (subset of registry keys).
+
+Returns an alist with keys `success', `artifacts_dir', and `files'."
+  (interactive)
+  (let* ((message (or message "Select capture actions"))
+         (actions (or actions (mapcar #'car my-request-human-action-registry)))
          (temp-dir (make-temp-file "request-human-" t))
          (parent-frame (selected-frame)))
     ;; Reset state
@@ -273,6 +294,21 @@ PARAMS is an alist with `message' (required) and `actions' (optional)."
       `((success . t)
         (artifacts_dir . ,temp-dir)
         (files . ,(directory-files temp-dir nil "^[^.]"))))))
+
+;;; --- MCP Handler (thin wrapper) ---
+
+(defun claude-code-mcp-handle-requestHuman (params)
+  "Handle requestHuman MCP tool call.
+Parses MCP PARAMS and delegates to `my/request-human-capture'."
+  (let* ((message (or (map-elt params 'message)
+                      (map-elt params "message")
+                      "Agent requests your attention"))
+         (actions (or (map-elt params 'actions)
+                      (map-elt params "actions")))
+         ;; Coerce JSON vector to list of strings
+         (actions (when actions
+                    (if (vectorp actions) (append actions nil) actions))))
+    (my/request-human-capture message actions)))
 
 (provide 'my-request-human)
 ;;; my-request-human.el ends here
