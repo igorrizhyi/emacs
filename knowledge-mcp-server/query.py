@@ -8,7 +8,7 @@ Usage:
 
 import argparse
 
-from common import get_graph, query_knowledge
+from common import get_graph, query_knowledge, set_graph_name
 
 
 def _print_result(result: dict):
@@ -24,7 +24,12 @@ def main():
     parser.add_argument("question", nargs="*", help="Natural language question")
     parser.add_argument("--mode", choices=["summary", "technical"], default="summary",
                         help="Response mode: summary (default) or technical")
+    parser.add_argument("--project-root",
+                        help="Project root for graph name derivation (overrides PROJECT_ROOT env var)")
     args = parser.parse_args()
+
+    if args.project_root:
+        set_graph_name(args.project_root)
 
     graph = get_graph()
 

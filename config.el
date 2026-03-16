@@ -1142,6 +1142,9 @@
   :config
   ;; optional IDE integration with Monet
   (add-hook 'claude-code-process-environment-functions #'monet-start-server-function)
+  (add-hook 'claude-code-process-environment-functions
+            (lambda (_buffer-name dir)
+              (list (format "PROJECT_ROOT=%s" (directory-file-name dir)))))
   (monet-mode 1)
 
   ;; Custom display function to use our window layout main center

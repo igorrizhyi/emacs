@@ -8,6 +8,7 @@ from common import (
     GRAPH_NAME,
     get_graph,
     init_schema,
+    set_graph_name,
     chunk_knowledge_file,
     chunk_report,
     ingest_chunks,
@@ -182,7 +183,14 @@ def main():
         default=default_reports_dir,
         help=f"Path to reports directory (default: {default_reports_dir})",
     )
+    parser.add_argument(
+        "--project-root",
+        help="Project root for graph name derivation (overrides PROJECT_ROOT env var)",
+    )
     args = parser.parse_args()
+
+    if args.project_root:
+        set_graph_name(args.project_root)
 
     if args.reports:
         if not os.path.isdir(args.reports_dir):

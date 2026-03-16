@@ -1,6 +1,7 @@
 """MCP server for hybrid vector+graph knowledge system."""
 
 import os
+import sys
 import json
 
 from mcp.server import Server
@@ -8,9 +9,12 @@ from mcp.server.stdio import stdio_server
 import mcp.types as types
 
 from common import (
+    GRAPH_NAME, PROJECT_ROOT,
     get_graph, init_schema, ingest_chunks, query_knowledge, chunk_id,
     chunk_report, create_topic_links, create_similarity_edges_for_chunks,
 )
+
+print(f"Knowledge graph: {GRAPH_NAME} (project: {PROJECT_ROOT or 'default'})", file=sys.stderr)
 
 server = Server("knowledge")
 

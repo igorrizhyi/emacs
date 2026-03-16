@@ -12,7 +12,27 @@ from litellm import completion, embedding
 # Constants
 # ---------------------------------------------------------------------------
 
-GRAPH_NAME = "team_knowledge"
+PROJECT_ROOT = os.environ.get("PROJECT_ROOT", "")
+
+
+def _derive_graph_name(project_root: str) -> str:
+    """Derive a FalkorDB graph name from project root path."""
+    if not project_root:
+        return "team_knowledge"  # backward compat fallback
+    basename = os.path.basename(project_root.rstrip("/")) or "default"
+    safe_base = re.sub(r'[^a-zA-Z0-9]', '_', basename).strip('_').lower()
+    short_hash = hashlib.sha256(project_root.encode()).hexdigest()[:6]
+    return f"knowledge_{safe_base}_{short_hash}"
+
+
+GRAPH_NAME = _derive_graph_name(PROJECT_ROOT)
+
+
+def set_graph_name(project_root: str):
+    """Recalculate and set the module-level GRAPH_NAME from a project root path."""
+    global GRAPH_NAME, PROJECT_ROOT
+    PROJECT_ROOT = project_root
+    GRAPH_NAME = _derive_graph_name(project_root)
 FALKORDB_HOST = os.environ.get("FALKORDB_HOST", "127.0.0.1")
 FALKORDB_PORT = int(os.environ.get("FALKORDB_PORT", "6380"))
 EMBED_MODEL = "text-embedding-3-small"

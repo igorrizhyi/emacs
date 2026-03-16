@@ -88,8 +88,9 @@ Returns a Claude Code config that includes our Emacs MCP server."
   (puthash (buffer-name buffer) (current-time) agent-shell-emacs-mcp--active-sessions)
   ;; Create the anthropic client with EMACS_INSTANCE_ID for session isolation
   (let ((agent-shell-anthropic-claude-environment
-         (cons (format "EMACS_INSTANCE_ID=%d" (emacs-pid))
-               agent-shell-anthropic-claude-environment)))
+         (append (list (format "EMACS_INSTANCE_ID=%d" (emacs-pid))
+                       (format "PROJECT_ROOT=%s" (directory-file-name default-directory)))
+                 agent-shell-anthropic-claude-environment)))
     (agent-shell-anthropic-make-claude-client :buffer buffer)))
 
 (defun agent-shell-emacs-mcp--welcome-message (config)
