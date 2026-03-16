@@ -39,6 +39,8 @@
 (require 'acp)
 (require 'transient)
 
+(declare-function my/team-sidebar--show "my-agent-shell-sidebar")
+
 ;;; Customization
 
 (defgroup agent-shell-team nil
@@ -1802,6 +1804,10 @@ When called from an existing team buffer:
       (agent-shell-team--start-drain-timer)
       ;; Switch to the new buffer
       (switch-to-buffer buffer)
+      ;; Auto-show team sidebar for lead agent
+      (when (equal role "lead")
+        (when (fboundp 'my/team-sidebar--show)
+          (my/team-sidebar--show)))
       (message "Team %s: %s agent started (%s mode)"
                (agent-shell-team--short-session-id session-id)
                role mode))))
