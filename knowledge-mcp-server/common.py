@@ -392,6 +392,24 @@ def create_similarity_edges_for_chunks(graph, chunk_ids: list[str], threshold: f
 # ---------------------------------------------------------------------------
 
 
+MAX_CONTEXT_CHARS = 12000
+MAX_REPORT_CHUNK_CHARS = 500
+MAX_EXPANDED_CHUNKS = 5
+SCORE_THRESHOLD = 0.5  # cosine distance; lower = better
+
+
+def _truncate_report_content(content: str) -> str:
+    """Truncate report chunk content to MAX_REPORT_CHUNK_CHARS."""
+    if len(content) <= MAX_REPORT_CHUNK_CHARS:
+        return content
+    return content[:MAX_REPORT_CHUNK_CHARS] + "... [truncated]"
+
+
+def _is_report_chunk(hit: dict) -> bool:
+    """Check if a chunk originates from a task report."""
+    return (hit.get("source") or "").startswith("report:")
+
+
 def query_knowledge(graph, question: str, role: str = None, top_k: int = 8) -> dict:
     """Vector search + graph expansion + LLM answer.
 
@@ -414,13 +432,17 @@ def query_knowledge(graph, question: str, role: str = None, top_k: int = 8) -> d
 
     hits = []
     for row in knn.result_set:
+        score = row[5]
+        # Filter out low-relevance hits (cosine distance > threshold)
+        if score > SCORE_THRESHOLD:
+            continue
         hit = {
             "id": row[0],
             "content": row[1],
             "source": row[2],
             "section": row[3],
             "roles": row[4],
-            "score": row[5],
+            "score": score,
         }
         hits.append(hit)
 
@@ -430,12 +452,12 @@ def query_knowledge(graph, question: str, role: str = None, top_k: int = 8) -> d
 
     hit_ids = [h["id"] for h in hits]
 
-    # 4. Graph expansion 1-2 hops
+    # 4. Graph expansion — 1 hop only to limit context size
     expanded_chunks = []
     for hid in hit_ids:
         exp = graph.query(
             """
-            MATCH (c1:Chunk {id: $id})-[:RELATED_TO|HAS_TOPIC*1..2]-(c2:Chunk)
+            MATCH (c1:Chunk {id: $id})-[:RELATED_TO|HAS_TOPIC*1..1]-(c2:Chunk)
             WHERE c2.id <> $id
             RETURN DISTINCT c2.id AS id, c2.content AS content,
                    c2.source AS source, c2.section AS section
@@ -448,22 +470,30 @@ def query_knowledge(graph, question: str, role: str = None, top_k: int = 8) -> d
                     {"id": row[0], "content": row[1], "source": row[2], "section": row[3]}
                 )
 
-    # Deduplicate expanded
+    # Deduplicate expanded and cap at MAX_EXPANDED_CHUNKS
     seen = set(hit_ids)
     unique_expanded = []
     for ec in expanded_chunks:
         if ec["id"] not in seen:
             seen.add(ec["id"])
             unique_expanded.append(ec)
+        if len(unique_expanded) >= MAX_EXPANDED_CHUNKS:
+            break
 
     # 5. Build context for LLM
     context_parts = []
     for h in hits:
-        context_parts.append(f"[{h['source']} / {h['section']}] {h['content']}")
+        content = _truncate_report_content(h["content"]) if _is_report_chunk(h) else h["content"]
+        context_parts.append(f"[{h['source']} / {h['section']}] {content}")
     for ec in unique_expanded:
-        context_parts.append(f"[expanded: {ec['source']} / {ec['section']}] {ec['content']}")
+        content = _truncate_report_content(ec["content"]) if _is_report_chunk(ec) else ec["content"]
+        context_parts.append(f"[expanded: {ec['source']} / {ec['section']}] {content}")
 
     context_text = "\n\n".join(context_parts)
+
+    # Safety net: hard-truncate context to stay within TPM budget
+    if len(context_text) > MAX_CONTEXT_CHARS:
+        context_text = context_text[:MAX_CONTEXT_CHARS] + "\n... [context truncated]"
 
     messages = [
         {
