@@ -144,7 +144,8 @@ Each entry is (ACTION-ID . PLIST) where PLIST has:
       (if my-request-human--selected-actions
           (my-request-human--start-capture)
         ;; No actions selected, just finish
-        (setq my-request-human--done t))
+        (setq my-request-human--done t)
+        (exit-recursive-edit))
     ;; Phase 2: stop captures and finish
     (my-request-human--stop-captures)))
 
@@ -152,7 +153,8 @@ Each entry is (ACTION-ID . PLIST) where PLIST has:
   "Cancel the interaction."
   (interactive)
   (setq my-request-human--cancelled t
-        my-request-human--done t))
+        my-request-human--done t)
+  (exit-recursive-edit))
 
 ;;; --- Phase 2: Capture ---
 
@@ -233,7 +235,8 @@ Return the process or nil."
   (when my-request-human--spinner-timer
     (cancel-timer my-request-human--spinner-timer)
     (setq my-request-human--spinner-timer nil))
-  (setq my-request-human--done t))
+  (setq my-request-human--done t)
+  (exit-recursive-edit))
 
 ;;; --- Core Interactive Command ---
 
@@ -269,10 +272,12 @@ Returns an alist with keys `success', `artifacts_dir', and `files'."
     ;; Enable minor mode in posframe buffer
     (with-current-buffer my-request-human--buffer-name
       (my-request-human-mode 1))
-    ;; Block synchronously with sit-for
+    ;; Block with recursive-edit so keymaps dispatch properly
     (unwind-protect
-        (while (not my-request-human--done)
-          (sit-for 0.1))
+        (condition-case nil
+            (recursive-edit)
+          (quit (setq my-request-human--cancelled t
+                      my-request-human--done t)))
       ;; Cleanup
       (when my-request-human--spinner-timer
         (cancel-timer my-request-human--spinner-timer)
