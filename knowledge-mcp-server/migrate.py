@@ -94,28 +94,43 @@ def migrate_reports(reports_dir: str):
     graph = get_graph()
     init_schema(graph)
 
+    print(f"Scanning reports in: {reports_dir}")
+
     all_chunks: list[dict] = []
     report_count = 0
+    sessions_scanned = 0
 
     for session_id in sorted(os.listdir(reports_dir)):
         session_path = os.path.join(reports_dir, session_id)
         if not os.path.isdir(session_path):
+            print(f"  Skipping non-directory: {session_id}")
             continue
+
+        print(f"\n[session: {session_id}]")
+        sessions_scanned += 1
+
         for filename in sorted(os.listdir(session_path)):
             if not filename.endswith(".md"):
+                print(f"  Skipping non-md: {filename}")
                 continue
             filepath = os.path.join(session_path, filename)
             with open(filepath) as f:
                 content = f.read()
             if not content.strip():
+                print(f"  Skipping empty: {filename}")
                 continue
 
             request_id = filename[:-3]  # strip .md
             role = _infer_role(content)
             chunks = chunk_report(content, request_id, role)
+            if not chunks:
+                print(f"  WARNING: {filename} produced 0 chunks (content too short?)")
+                continue
             all_chunks.extend(chunks)
             report_count += 1
             print(f"  {session_id}/{filename}: {len(chunks)} chunks (role={role})")
+
+    print(f"\nSessions scanned: {sessions_scanned}")
 
     if not all_chunks:
         print("No report chunks to ingest.")
