@@ -97,6 +97,47 @@ def chunk_id(source: str, content: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def chunk_report(report_text: str, request_id: str, role: str) -> list[dict]:
+    """Split a task report into per-section chunks."""
+    source = f"report:{request_id}"
+    chunks = []
+    current_section = "Summary"
+    current_lines = []
+
+    for line in report_text.split("\n"):
+        if line.startswith("## "):
+            # Flush previous section
+            if current_lines:
+                content = "\n".join(current_lines).strip()
+                if content and len(content) > 20:  # Skip trivially short sections
+                    chunks.append({
+                        "id": chunk_id(source, content),
+                        "content": content,
+                        "source": source,
+                        "section": current_section,
+                        "roles": role,
+                    })
+            current_section = line[3:].strip()
+            current_lines = []
+        elif line.startswith("# "):
+            current_section = line[2:].strip()
+        else:
+            current_lines.append(line)
+
+    # Flush last section
+    if current_lines:
+        content = "\n".join(current_lines).strip()
+        if content and len(content) > 20:
+            chunks.append({
+                "id": chunk_id(source, content),
+                "content": content,
+                "source": source,
+                "section": current_section,
+                "roles": role,
+            })
+    return chunks
+
+
 def chunk_knowledge_file(filepath: str, role: str) -> list[dict]:
     """Parse a markdown knowledge file into per-bullet chunks.
 
@@ -275,6 +316,33 @@ def create_similarity_edges(graph, threshold: float = 0.15):
                 SET r.score = $score
                 """,
                 params={"a": cid, "b": nid, "score": score},
+            )
+
+
+def create_similarity_edges_for_chunks(graph, chunk_ids: list[str], threshold: float = 0.25):
+    """Create RELATED_TO edges only for the given chunks (incremental)."""
+    for cid in chunk_ids:
+        res = graph.query(
+            "MATCH (c:Chunk {id: $id}) RETURN c.embedding",
+            params={"id": cid},
+        )
+        if not res.result_set or not res.result_set[0][0]:
+            continue
+        vec = res.result_set[0][0]
+
+        neighbours = graph.query(
+            """
+            CALL db.idx.vector.queryNodes('Chunk', 'embedding', 10, vecf32($vec))
+            YIELD node, score
+            WHERE node.id <> $id AND score <= $threshold
+            RETURN node.id, score
+            """,
+            params={"vec": list(vec), "id": cid, "threshold": threshold},
+        )
+        for row in neighbours.result_set:
+            graph.query(
+                "MATCH (a:Chunk {id: $a}), (b:Chunk {id: $b}) MERGE (a)-[r:RELATED_TO]->(b) SET r.score = $score",
+                params={"a": cid, "b": row[0], "score": row[1]},
             )
 
 
