@@ -10,7 +10,7 @@ from graphrag_sdk.models.litellm import LiteModel
 
 GRAPH_NAME = "team_knowledge"
 ONTOLOGY_PATH = os.path.join(os.path.dirname(__file__), "ontology.json")
-MODEL_NAME = os.environ.get("GRAPHRAG_MODEL", "gpt-4o-mini")
+MODEL_NAME = os.environ.get("GRAPHRAG_MODEL", "gpt-4o")
 
 FALKORDB_HOST = os.environ.get("FALKORDB_HOST", "127.0.0.1")
 FALKORDB_PORT = int(os.environ.get("FALKORDB_PORT", "6380"))
