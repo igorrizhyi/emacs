@@ -121,6 +121,9 @@ Generated eagerly at load time so MCP handlers always have a valid session.")
 (defvar-local agent-shell-team--watcher-setup-p nil
   "When non-nil, the tool-call watcher has already been set up for this buffer.")
 
+(defvar-local agent-shell-team--init-finished-p nil
+  "Non-nil after ACP initialization has completed for this agent buffer.")
+
 ;;; Global registry
 
 (defvar agent-shell-team--sessions (make-hash-table :test 'equal)
@@ -381,6 +384,7 @@ WORKTREE-NAME is the worktree name (for isolated mode)."
   (cond
    ((not (buffer-live-p buffer)) 'dead)
    ((not (agent-shell-team--buffer-ready-p buffer)) 'initializing)
+   ((not (buffer-local-value 'agent-shell-team--init-finished-p buffer)) 'initializing)
    ((agent-shell-team--buffer-busy-p buffer) 'busy)
    (t 'idle)))
 
@@ -1771,6 +1775,9 @@ WORKTREE-PATH and WORKTREE-NAME are for isolated mode."
                      (with-current-buffer buffer
                        (doom-modeline-set-modeline 'agent-shell-team)))
                    (message "agent-shell-team: init-finished complete for %s" buffer)
+                   ;; Mark ACP init as done so --agent-status returns 'idle
+                   (with-current-buffer buffer
+                     (setq agent-shell-team--init-finished-p t))
                    ;; Immediately try assigning queued tasks to this newly ready agent
                    ;; instead of waiting up to 3s for the next drain timer tick
                    (agent-shell-team--try-assign-tasks)))
