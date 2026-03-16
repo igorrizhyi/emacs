@@ -567,10 +567,23 @@ When a task update includes a ⚠️ Knowledge Discoveries warning, you MUST:
 Skipping this step is NOT acceptable — knowledge accumulation is essential
 for team effectiveness.
 
+## Report Storage
+After reading a finished task report, store it in the knowledge graph:
+1. Call `store_knowledge` with:
+   - content: the FULL report text (entire file content from the report path)
+   - roles: [\"{role}\"] matching the agent's role (dev, researcher, tester)
+   - source: \"report:{request-id}\"
+   This stores each report section as a searchable knowledge chunk.
+2. Then handle Knowledge Discoveries as usual (extract and append to role .md file).
+
+Do NOT store reports that only contain errors or empty results.
+
 ## Knowledge Base
 The team uses a GraphRAG knowledge system accessible via MCP tools:
 - `query_knowledge(query, role?)` — retrieve relevant knowledge by semantic query
 - `store_knowledge(content, roles, source?)` — store new knowledge with role tags
+
+Report chunks are searchable via `query_knowledge` — queries like \"what was the root cause of the posframe focus bug?\" will find relevant report sections alongside knowledge file bullets.
 
 Your responsibilities:
 - ALWAYS query knowledge before dispatching tasks (see Knowledge Check above)
