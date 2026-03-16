@@ -12,6 +12,7 @@ from mcp.types import TextContent
 from graphrag_sdk import KnowledgeGraph, KnowledgeGraphModelConfig, Ontology, Source
 from graphrag_sdk.source import Source_FromRawText
 from graphrag_sdk.models.litellm import LiteModel
+from graphrag_sdk.fixtures.prompts import CYPHER_GEN_SYSTEM
 
 GRAPH_NAME = "team_knowledge"
 ONTOLOGY_PATH = os.path.join(os.path.dirname(__file__), "ontology.json")
@@ -19,6 +20,15 @@ MODEL_NAME = os.environ.get("GRAPHRAG_MODEL", "gpt-4o-mini")
 
 FALKORDB_HOST = os.environ.get("FALKORDB_HOST", "127.0.0.1")
 FALKORDB_PORT = int(os.environ.get("FALKORDB_PORT", "6380"))
+
+CYPHER_INSTRUCTION = CYPHER_GEN_SYSTEM + (
+    "\n\nCRITICAL RULES — violations will cause query failure:\n"
+    "- Generate exactly ONE Cypher statement.\n"
+    "- NEVER use semicolons.\n"
+    "- NEVER output multiple queries or UNION clauses.\n"
+    "- Return a single MATCH...RETURN block.\n"
+    "- Wrap the statement in a single ```cypher``` code fence."
+)
 
 server = Server("knowledge-mcp-server")
 
@@ -89,6 +99,7 @@ def _get_kg(bootstrap_if_missing=False):
                 model_config=model_config,
                 host=FALKORDB_HOST,
                 port=FALKORDB_PORT,
+                cypher_system_instruction=CYPHER_INSTRUCTION,
             )
             return _kg
         except Exception:
@@ -104,6 +115,7 @@ def _get_kg(bootstrap_if_missing=False):
         ontology=ontology,
         host=FALKORDB_HOST,
         port=FALKORDB_PORT,
+        cypher_system_instruction=CYPHER_INSTRUCTION,
     )
     return _kg
 
