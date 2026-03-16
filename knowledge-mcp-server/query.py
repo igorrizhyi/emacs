@@ -7,7 +7,7 @@ Usage:
 
 import sys
 
-from common import get_graph, init_schema, query_knowledge
+from common import get_graph, query_knowledge
 
 
 def _print_result(result: dict):
@@ -20,7 +20,6 @@ def _print_result(result: dict):
 
 def main():
     graph = get_graph()
-    init_schema(graph)
 
     if len(sys.argv) > 1:
         question = " ".join(sys.argv[1:])

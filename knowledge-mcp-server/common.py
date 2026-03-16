@@ -17,7 +17,7 @@ FALKORDB_HOST = os.environ.get("FALKORDB_HOST", "127.0.0.1")
 FALKORDB_PORT = int(os.environ.get("FALKORDB_PORT", "6380"))
 EMBED_MODEL = "text-embedding-3-small"
 EMBED_DIM = 1536
-LLM_MODEL = os.environ.get("GRAPHRAG_MODEL", "gpt-4o")
+LLM_MODEL = os.environ.get("GRAPHRAG_MODEL", "gpt-4o-mini")
 BATCH_SIZE = 100
 
 # ---------------------------------------------------------------------------
@@ -458,23 +458,23 @@ def query_knowledge(graph, question: str, role: str = None, top_k: int = 8) -> d
 
     hit_ids = [h["id"] for h in hits]
 
-    # 4. Graph expansion — 1 hop only to limit context size
+    # 4. Graph expansion — 1 hop only to limit context size (batched)
     expanded_chunks = []
-    for hid in hit_ids:
+    if hit_ids:
         exp = graph.query(
             """
-            MATCH (c1:Chunk {id: $id})-[:RELATED_TO|HAS_TOPIC*1..1]-(c2:Chunk)
-            WHERE c2.id <> $id
+            UNWIND $ids AS hid
+            MATCH (c1:Chunk {id: hid})-[:RELATED_TO|HAS_TOPIC*1..1]-(c2:Chunk)
+            WHERE NOT c2.id IN $ids
             RETURN DISTINCT c2.id AS id, c2.content AS content,
                    c2.source AS source, c2.section AS section
             """,
-            params={"id": hid},
+            params={"ids": hit_ids},
         )
         for row in exp.result_set:
-            if row[0] not in hit_ids:
-                expanded_chunks.append(
-                    {"id": row[0], "content": row[1], "source": row[2], "section": row[3]}
-                )
+            expanded_chunks.append(
+                {"id": row[0], "content": row[1], "source": row[2], "section": row[3]}
+            )
 
     # Deduplicate expanded and cap at MAX_EXPANDED_CHUNKS
     seen = set(hit_ids)
