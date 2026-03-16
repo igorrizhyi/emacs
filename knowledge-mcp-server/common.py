@@ -457,7 +457,7 @@ def query_knowledge(graph, question: str, role: str = None, top_k: int = 8) -> d
         try:
             ft = graph.query(
                 """
-                CALL db.idx.fulltext.queryNodes('Chunk', 'content', $q)
+                CALL db.idx.fulltext.queryNodes('Chunk', $q)
                 YIELD node
                 RETURN node.id AS id, node.content AS content,
                        node.source AS source, node.section AS section,
