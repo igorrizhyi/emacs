@@ -1,145 +1,82 @@
-"""Migrate existing markdown knowledge files into FalkorDB GraphRAG."""
+"""Migrate existing markdown knowledge files into FalkorDB hybrid vector+graph store."""
 
 import argparse
 import os
-import re
 import sys
 
-from graphrag_sdk import Ontology, Source
-
 from common import (
-    get_model,
-    load_ontology,
-    save_ontology,
-    create_kg,
-    write_temp_txt,
+    GRAPH_NAME,
+    get_graph,
+    init_schema,
+    chunk_knowledge_file,
+    ingest_chunks,
+    create_topic_links,
+    create_similarity_edges,
 )
 
 ROLE_MAP = {
-    "dev.md": ["dev"],
-    "researcher.md": ["researcher"],
-    "tester.md": ["tester"],
-    "lead.md": ["lead"],
+    "dev.md": "dev",
+    "researcher.md": "researcher",
+    "tester.md": "tester",
+    "lead.md": "lead",
 }
 
 
-def parse_sections(text: str) -> list[tuple[str, str]]:
-    """Split markdown into (section_title, section_content) pairs by ## headings."""
-    parts = re.split(r"^## ", text, flags=re.MULTILINE)
-    sections = []
-    for part in parts[1:]:  # skip everything before first ##
-        lines = part.split("\n", 1)
-        title = lines[0].strip()
-        content = lines[1].strip() if len(lines) > 1 else ""
-        if title and content:
-            sections.append((title, content))
-    return sections
+def migrate(knowledge_dir: str, clean: bool = False):
+    graph = get_graph()
 
+    if clean:
+        print("Cleaning graph...")
+        graph.delete()
+        # Re-select after delete
+        graph = get_graph()
+        # Remove legacy ontology artifact
+        ontology_path = os.path.join(os.path.dirname(__file__), "ontology.json")
+        if os.path.exists(ontology_path):
+            os.unlink(ontology_path)
+            print("Removed legacy ontology.json")
 
-def build_entry(role: str, section_title: str, section_content: str) -> str:
-    return (
-        f"Knowledge Entry\n"
-        f"Roles: {role}\n"
-        f"Source: migration\n"
-        f"Section: {section_title}\n"
-        f"---\n"
-        f"{section_content}"
-    )
+    print("Initializing schema...")
+    init_schema(graph)
 
+    all_chunks: list[dict] = []
+    file_stats: dict[str, int] = {}
 
-def _generate_ontology(knowledge_dir: str, model):
-    """Auto-generate ontology from all knowledge source files."""
-    print("Generating ontology from knowledge files...")
-    sources = []
-    tmp_paths = []
-
-    for filename in ROLE_MAP:
+    for filename, role in ROLE_MAP.items():
         filepath = os.path.join(knowledge_dir, filename)
         if not os.path.exists(filepath):
-            continue
-        with open(filepath) as f:
-            text = f.read()
-        tmp_path = write_temp_txt(text)
-        tmp_paths.append(tmp_path)
-        sources.append(Source(tmp_path))
-
-    if not sources:
-        raise RuntimeError("No knowledge files found to generate ontology from.")
-
-    try:
-        ontology = Ontology.from_sources(
-            sources,
-            model,
-            boundaries=(
-                "Focus on software engineering team knowledge: patterns, "
-                "conventions, bugs, architecture decisions, roles, and topics"
-            ),
-        )
-    finally:
-        for p in tmp_paths:
-            os.unlink(p)
-
-    print(f"Ontology generated: {len(ontology.entities)} entities, "
-          f"{len(ontology.relations)} relations.")
-    return ontology
-
-
-def migrate(knowledge_dir: str):
-    model = get_model()
-    ontology = load_ontology()
-    if ontology is None:
-        ontology = _generate_ontology(knowledge_dir, model)
-
-    kg = create_kg(ontology=ontology)
-
-    total_sections = 0
-    total_files = 0
-
-    for filename, roles in ROLE_MAP.items():
-        filepath = os.path.join(knowledge_dir, filename)
-        if not os.path.exists(filepath):
-            print(f"Warning: {filepath} not found, skipping.")
+            print(f"  Warning: {filepath} not found, skipping.")
             continue
 
-        with open(filepath) as f:
-            text = f.read()
+        chunks = chunk_knowledge_file(filepath, role)
+        file_stats[filename] = len(chunks)
+        all_chunks.extend(chunks)
+        print(f"  {filename}: {len(chunks)} chunks")
 
-        sections = parse_sections(text)
-        if not sections:
-            print(f"Warning: {filename} has no sections, skipping.")
-            continue
+    if not all_chunks:
+        print("No chunks to ingest.")
+        return
 
-        total_files += 1
-        role_str = ", ".join(roles)
-        print(f"Migrating {filename}...")
+    print(f"\nIngesting {len(all_chunks)} chunks...")
+    ingest_chunks(graph, all_chunks)
 
-        for i, (title, content) in enumerate(sections, 1):
-            entry = build_entry(role_str, title, content)
-            tmp_path = write_temp_txt(entry)
-            try:
-                src = Source(tmp_path)
-                kg.process_sources(
-                    [src],
-                    instructions=(
-                        "Extract knowledge entries with their metadata "
-                        "(roles, source, timestamp). Preserve role tags as "
-                        "attributes on entities."
-                    ),
-                    hide_progress=True,
-                )
-                print(f"  [{i}/{len(sections)}] {title} \u2713")
-                total_sections += 1
-            except Exception as e:
-                print(f"  [{i}/{len(sections)}] {title} \u2717 Error: {e}")
-            finally:
-                os.unlink(tmp_path)
+    print("Creating topic links...")
+    create_topic_links(graph, all_chunks)
 
-    # Save ontology after all ingestion
-    if kg.ontology is not None:
-        save_ontology(kg.ontology)
-        print("Ontology saved.")
+    print("Creating similarity edges...")
+    create_similarity_edges(graph)
 
-    print(f"\nDone. Migrated {total_sections} sections from {total_files} files.")
+    # Print stats
+    topic_count = graph.query("MATCH (t:Topic) RETURN count(t)").result_set[0][0]
+    related_count = graph.query("MATCH ()-[r:RELATED_TO]->() RETURN count(r)").result_set[0][0]
+
+    print(f"\n--- Migration Stats ---")
+    for fname, count in file_stats.items():
+        print(f"  {fname}: {count} chunks")
+    print(f"  Total chunks: {len(all_chunks)}")
+    print(f"  Topics: {topic_count}")
+    print(f"  RELATED_TO edges: {related_count}")
+    print("Done.")
 
 
 def main():
@@ -148,12 +85,17 @@ def main():
     )
 
     parser = argparse.ArgumentParser(
-        description="Migrate markdown knowledge files into FalkorDB GraphRAG"
+        description="Migrate markdown knowledge files into FalkorDB hybrid vector+graph store"
     )
     parser.add_argument(
         "--knowledge-dir",
         default=default_knowledge_dir,
         help=f"Path to knowledge directory (default: {default_knowledge_dir})",
+    )
+    parser.add_argument(
+        "--clean",
+        action="store_true",
+        help="Delete existing graph and re-create from scratch",
     )
     args = parser.parse_args()
 
@@ -161,7 +103,7 @@ def main():
         print(f"Error: Knowledge directory not found: {args.knowledge_dir}")
         sys.exit(1)
 
-    migrate(args.knowledge_dir)
+    migrate(args.knowledge_dir, clean=args.clean)
 
 
 if __name__ == "__main__":
