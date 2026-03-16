@@ -1,155 +1,82 @@
-"""Migrate existing markdown knowledge files into FalkorDB GraphRAG."""
+"""Migrate existing markdown knowledge files into FalkorDB hybrid vector+graph store."""
 
 import argparse
-import json
 import os
 import sys
-import tempfile
 
-import falkordb
-from graphrag_sdk import KnowledgeGraph, KnowledgeGraphModelConfig, Ontology, Source
-from graphrag_sdk.models.litellm import LiteModel
-
-GRAPH_NAME = "team_knowledge"
-MODEL_NAME = os.environ.get("GRAPHRAG_MODEL", "gpt-4o")
-FALKORDB_HOST = os.environ.get("FALKORDB_HOST", "127.0.0.1")
-FALKORDB_PORT = int(os.environ.get("FALKORDB_PORT", "6380"))
+from common import (
+    GRAPH_NAME,
+    get_graph,
+    init_schema,
+    chunk_knowledge_file,
+    ingest_chunks,
+    create_topic_links,
+    create_similarity_edges,
+)
 
 ROLE_MAP = {
-    "dev.md": ["dev"],
-    "researcher.md": ["researcher"],
-    "tester.md": ["tester"],
-    "lead.md": ["lead"],
+    "dev.md": "dev",
+    "researcher.md": "researcher",
+    "tester.md": "tester",
+    "lead.md": "lead",
 }
-
-ONTOLOGY_PATH = os.path.join(os.path.dirname(__file__), "ontology.json")
-
-
-def _save_ontology(ontology):
-    with open(ONTOLOGY_PATH, "w") as f:
-        json.dump(ontology.to_json(), f, indent=2)
-
-
-def _load_ontology():
-    if os.path.exists(ONTOLOGY_PATH):
-        with open(ONTOLOGY_PATH) as f:
-            return Ontology.from_json(json.load(f))
-    return None
-
-
-def _write_temp_txt(content: str) -> str:
-    fd, path = tempfile.mkstemp(suffix=".txt")
-    with os.fdopen(fd, "w") as f:
-        f.write(content)
-    return path
-
-
-def _generate_ontology(knowledge_dir: str, model):
-    """Auto-generate ontology from all knowledge source files."""
-    print("Generating ontology from knowledge files...")
-    sources = []
-    tmp_paths = []
-
-    for filename in ROLE_MAP:
-        filepath = os.path.join(knowledge_dir, filename)
-        if not os.path.exists(filepath):
-            continue
-        with open(filepath) as f:
-            text = f.read()
-        tmp_path = _write_temp_txt(text)
-        tmp_paths.append(tmp_path)
-        sources.append(Source(tmp_path))
-
-    if not sources:
-        raise RuntimeError("No knowledge files found to generate ontology from.")
-
-    try:
-        ontology = Ontology.from_sources(
-            sources,
-            model,
-            boundaries=(
-                "Focus on software engineering team knowledge: patterns, "
-                "conventions, bugs, architecture decisions, roles, and topics"
-            ),
-        )
-    finally:
-        for p in tmp_paths:
-            os.unlink(p)
-
-    print(f"Ontology generated: {len(ontology.entities)} entities, "
-          f"{len(ontology.relations)} relations.")
-    return ontology
-
-
-def _clean_graph():
-    """Delete the existing FalkorDB graph and ontology file."""
-    print(f"Cleaning existing graph '{GRAPH_NAME}'...")
-    try:
-        db = falkordb.FalkorDB(host=FALKORDB_HOST, port=FALKORDB_PORT)
-        graph = db.select_graph(GRAPH_NAME)
-        graph.delete()
-        print("  Graph deleted.")
-    except Exception as e:
-        print(f"  Could not delete graph (may not exist): {e}")
-
-    if os.path.exists(ONTOLOGY_PATH):
-        os.unlink(ONTOLOGY_PATH)
-        print("  Ontology file removed.")
 
 
 def migrate(knowledge_dir: str, clean: bool = False):
+    graph = get_graph()
+
     if clean:
-        _clean_graph()
+        print("Cleaning graph...")
+        graph.delete()
+        # Re-select after delete
+        graph = get_graph()
+        # Remove legacy ontology artifact
+        ontology_path = os.path.join(os.path.dirname(__file__), "ontology.json")
+        if os.path.exists(ontology_path):
+            os.unlink(ontology_path)
+            print("Removed legacy ontology.json")
 
-    model = LiteModel(model_name=MODEL_NAME)
-    model_config = KnowledgeGraphModelConfig.with_model(model)
+    print("Initializing schema...")
+    init_schema(graph)
 
-    ontology = _load_ontology()
-    if ontology is None:
-        ontology = _generate_ontology(knowledge_dir, model)
+    all_chunks: list[dict] = []
+    file_stats: dict[str, int] = {}
 
-    kg = KnowledgeGraph(
-        name=GRAPH_NAME,
-        model_config=model_config,
-        ontology=ontology,
-        host=FALKORDB_HOST,
-        port=FALKORDB_PORT,
-    )
-
-    total_files = 0
-
-    for filename, roles in ROLE_MAP.items():
+    for filename, role in ROLE_MAP.items():
         filepath = os.path.join(knowledge_dir, filename)
         if not os.path.exists(filepath):
-            print(f"Skipping {filename} (not found)")
+            print(f"  Warning: {filepath} not found, skipping.")
             continue
 
-        with open(filepath) as f:
-            content = f.read()
-        if not content.strip():
-            print(f"Skipping {filename} (empty)")
-            continue
+        chunks = chunk_knowledge_file(filepath, role)
+        file_stats[filename] = len(chunks)
+        all_chunks.extend(chunks)
+        print(f"  {filename}: {len(chunks)} chunks")
 
-        role_str = ", ".join(roles)
-        enriched = f"Role: {role_str}\nSource: {filename}\n---\n{content}"
+    if not all_chunks:
+        print("No chunks to ingest.")
+        return
 
-        tmp_path = _write_temp_txt(enriched)
-        try:
-            src = Source(tmp_path)
-            print(f"Processing {filename}...")
-            kg.process_sources([src], hide_progress=False)
-            print(f"  Done.")
-            total_files += 1
-        except Exception as e:
-            print(f"  Error processing {filename}: {e}")
-        finally:
-            os.unlink(tmp_path)
+    print(f"\nIngesting {len(all_chunks)} chunks...")
+    ingest_chunks(graph, all_chunks)
 
-    if kg.ontology is not None:
-        _save_ontology(kg.ontology)
-        print("Ontology saved.")
+    print("Creating topic links...")
+    create_topic_links(graph, all_chunks)
 
-    print(f"\nMigration complete. Processed {total_files} files.")
+    print("Creating similarity edges...")
+    create_similarity_edges(graph)
+
+    # Print stats
+    topic_count = graph.query("MATCH (t:Topic) RETURN count(t)").result_set[0][0]
+    related_count = graph.query("MATCH ()-[r:RELATED_TO]->() RETURN count(r)").result_set[0][0]
+
+    print(f"\n--- Migration Stats ---")
+    for fname, count in file_stats.items():
+        print(f"  {fname}: {count} chunks")
+    print(f"  Total chunks: {len(all_chunks)}")
+    print(f"  Topics: {topic_count}")
+    print(f"  RELATED_TO edges: {related_count}")
+    print("Done.")
 
 
 def main():
@@ -158,7 +85,7 @@ def main():
     )
 
     parser = argparse.ArgumentParser(
-        description="Migrate markdown knowledge files into FalkorDB GraphRAG"
+        description="Migrate markdown knowledge files into FalkorDB hybrid vector+graph store"
     )
     parser.add_argument(
         "--knowledge-dir",
@@ -168,7 +95,7 @@ def main():
     parser.add_argument(
         "--clean",
         action="store_true",
-        help="Delete existing graph and ontology before migrating",
+        help="Delete existing graph and re-create from scratch",
     )
     args = parser.parse_args()
 

@@ -1,15 +1,13 @@
 [tool.poetry]
 name = "knowledge-mcp-server"
-version = "0.1.0"
-description = "FalkorDB GraphRAG knowledge system for agent-shell team sessions"
+version = "0.2.0"
+description = "FalkorDB hybrid vector+graph knowledge system for agent-shell team sessions"
 package-mode = false
 
 [tool.poetry.dependencies]
 python = ">=3.11,<3.14"
 mcp = ">=1.0.0"
-graphrag-sdk = ">=0.6.0"
 litellm = ">=1.0.0"
-ollama = ">=0.4.0"
 falkordb = ">=1.0.0"
 
 [build-system]
