@@ -21,18 +21,20 @@ docker compose up -d
 
 ```bash
 cd knowledge-mcp-server
-python3 -m venv .venv
-.venv/bin/pip install -e .
+poetry install
 ```
 
-3. Add to Claude Code MCP config (`~/.claude/settings.json`):
+3. Add to Claude Code MCP config (`.mcp.json`):
 
 ```json
 {
   "mcpServers": {
     "knowledge": {
-      "command": "python3",
-      "args": ["/path/to/knowledge-mcp-server/server.py"],
+      "command": "poetry",
+      "args": [
+        "-C", "/path/to/knowledge-mcp-server",
+        "run", "python3", "/path/to/knowledge-mcp-server/server.py"
+      ],
       "env": {
         "AGENT_SHELL_TEAM": "1"
       }

@@ -1,11 +1,16 @@
-[project]
+[tool.poetry]
 name = "knowledge-mcp-server"
 version = "0.1.0"
-requires-python = ">=3.11"
-dependencies = [
-    "mcp>=1.0.0",
-    "graphrag-sdk>=0.6.0",
-    "litellm>=1.0.0",
-    "ollama>=0.4.0",
-    "falkordb>=1.0.0",
-]
+description = "FalkorDB GraphRAG knowledge system for agent-shell team sessions"
+
+[tool.poetry.dependencies]
+python = ">=3.11"
+mcp = ">=1.0.0"
+graphrag-sdk = ">=0.6.0"
+litellm = ">=1.0.0"
+ollama = ">=0.4.0"
+falkordb = ">=1.0.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

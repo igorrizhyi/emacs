@@ -9,9 +9,10 @@
     },
     "knowledge": {
       "type": "stdio",
-      "command": "/home/igorrizhyi/.config/doom/knowledge-mcp-server/.venv/bin/python3",
+      "command": "poetry",
       "args": [
-        "/home/igorrizhyi/.config/doom/knowledge-mcp-server/server.py"
+        "-C", "/home/igorrizhyi/.config/doom/knowledge-mcp-server",
+        "run", "python3", "/home/igorrizhyi/.config/doom/knowledge-mcp-server/server.py"
       ],
       "env": {
         "AGENT_SHELL_TEAM": "1"
