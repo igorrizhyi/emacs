@@ -38,10 +38,16 @@ def get_graph():
 
 def init_schema(graph):
     """Create indexes, constraints, and seed Role nodes."""
-    # Unique constraints
-    graph.query("CREATE CONSTRAINT IF NOT EXISTS FOR (c:Chunk) REQUIRE c.id IS UNIQUE")
-    graph.query("CREATE CONSTRAINT IF NOT EXISTS FOR (t:Topic) REQUIRE t.name IS UNIQUE")
-    graph.query("CREATE CONSTRAINT IF NOT EXISTS FOR (r:Role) REQUIRE r.name IS UNIQUE")
+    # Unique constraints (FalkorDB doesn't support IF NOT EXISTS for constraints)
+    for stmt in (
+        "CREATE CONSTRAINT FOR (c:Chunk) REQUIRE c.id IS UNIQUE",
+        "CREATE CONSTRAINT FOR (t:Topic) REQUIRE t.name IS UNIQUE",
+        "CREATE CONSTRAINT FOR (r:Role) REQUIRE r.name IS UNIQUE",
+    ):
+        try:
+            graph.query(stmt)
+        except Exception:
+            pass  # already exists
 
     # Vector index on Chunk.embedding
     try:
@@ -56,14 +62,14 @@ def init_schema(graph):
         pass  # already exists
 
     # Range indexes
-    try:
-        graph.query("CREATE INDEX IF NOT EXISTS FOR (c:Chunk) ON (c.source)")
-    except Exception:
-        pass
-    try:
-        graph.query("CREATE INDEX IF NOT EXISTS FOR (c:Chunk) ON (c.roles)")
-    except Exception:
-        pass
+    for stmt in (
+        "CREATE INDEX FOR (c:Chunk) ON (c.source)",
+        "CREATE INDEX FOR (c:Chunk) ON (c.roles)",
+    ):
+        try:
+            graph.query(stmt)
+        except Exception:
+            pass  # already exists
 
     # Seed roles
     for role in ("dev", "researcher", "tester", "lead"):
@@ -231,18 +237,20 @@ def create_topic_links(graph, chunks: list[dict]):
 # ---------------------------------------------------------------------------
 
 
-def create_similarity_edges(graph, threshold: float = 0.15):
-    """Create RELATED_TO edges between chunk pairs whose vector distance <= threshold.
+def create_similarity_edges(graph, threshold: float = 0.25, cross_role_threshold: float = 0.40):
+    """Create RELATED_TO edges in two passes:
+
+    1. **Threshold pass** — link chunk pairs whose cosine distance <= *threshold*.
+    2. **Cross-role pass** — link dev↔researcher chunks with a relaxed threshold
+       (*cross_role_threshold*). No forced links — if nothing is close enough, skip.
 
     FalkorDB vector search returns *distance* (lower = more similar for cosine).
-    We query each chunk's nearest neighbours and create edges where distance is
-    below the threshold.
     """
-    result = graph.query("MATCH (c:Chunk) RETURN c.id AS id")
-    chunk_ids = [row[0] for row in result.result_set]
+    result = graph.query("MATCH (c:Chunk) RETURN c.id AS id, c.roles AS roles")
+    all_chunks = [(row[0], row[1]) for row in result.result_set]
 
-    for cid in chunk_ids:
-        # Get this chunk's embedding
+    # --- Pass 1: threshold-based similarity edges ---
+    for cid, _ in all_chunks:
         res = graph.query(
             "MATCH (c:Chunk {id: $id}) RETURN c.embedding AS vec",
             params={"id": cid},
@@ -251,7 +259,6 @@ def create_similarity_edges(graph, threshold: float = 0.15):
             continue
         vec = res.result_set[0][0]
 
-        # KNN search
         neighbours = graph.query(
             """
             CALL db.idx.vector.queryNodes('Chunk', 'embedding', $k, vecf32($vec))
@@ -263,11 +270,8 @@ def create_similarity_edges(graph, threshold: float = 0.15):
 
         for row in neighbours.result_set:
             nid, score = row[0], row[1]
-            if nid == cid:
+            if nid == cid or score > threshold:
                 continue
-            if score > threshold:
-                continue
-            # Create edge (avoid duplicates with MERGE)
             graph.query(
                 """
                 MATCH (a:Chunk {id: $a}), (b:Chunk {id: $b})
@@ -276,6 +280,43 @@ def create_similarity_edges(graph, threshold: float = 0.15):
                 """,
                 params={"a": cid, "b": nid, "score": score},
             )
+
+    # --- Pass 2: cross-role edges (dev ↔ researcher) with relaxed threshold ---
+    cross_role_pairs = [("dev", "researcher"), ("researcher", "dev")]
+    for src_role, dst_role in cross_role_pairs:
+        src_ids = [cid for cid, roles in all_chunks if roles == src_role]
+        for cid in src_ids:
+            # Skip if already linked to dst_role from pass 1
+            has = graph.query(
+                'MATCH (c:Chunk {id: $id})-[:RELATED_TO]-(r:Chunk) WHERE r.roles = $role RETURN count(r)',
+                params={"id": cid, "role": dst_role},
+            ).result_set[0][0]
+            if has > 0:
+                continue
+
+            # Find nearest dst_role chunk within relaxed threshold
+            res = graph.query(
+                """
+                MATCH (c:Chunk {id: $id})
+                CALL db.idx.vector.queryNodes('Chunk', 'embedding', 20, c.embedding)
+                YIELD node, score
+                WHERE node.roles = $role AND score <= $max_dist
+                RETURN node.id, score
+                ORDER BY score ASC
+                LIMIT 1
+                """,
+                params={"id": cid, "role": dst_role, "max_dist": cross_role_threshold},
+            )
+            if res.result_set:
+                nid, score = res.result_set[0]
+                graph.query(
+                    """
+                    MATCH (a:Chunk {id: $a}), (b:Chunk {id: $b})
+                    MERGE (a)-[r:RELATED_TO]->(b)
+                    SET r.score = $score
+                    """,
+                    params={"a": cid, "b": nid, "score": score},
+                )
 
 
 # ---------------------------------------------------------------------------
