@@ -36,6 +36,7 @@ TOOLS = [
             "properties": {
                 "query": {"type": "string", "description": "Natural language question"},
                 "role": {"type": "string", "description": "Filter by role: dev, tester, researcher, lead"},
+                "mode": {"type": "string", "enum": ["summary", "technical"], "description": "Response mode: 'summary' for narrative answers, 'technical' for structured technical briefs suitable as dev context"},
             },
             "required": ["query"],
         },
@@ -88,7 +89,9 @@ async def _handle_query(arguments: dict) -> list[types.TextContent]:
     query = arguments["query"]
     role = arguments.get("role")
 
-    result = query_knowledge(graph, query, role=role, top_k=8)
+    mode = arguments.get("mode", "summary")
+
+    result = query_knowledge(graph, query, role=role, top_k=8, mode=mode)
 
     parts = [result["response"]]
     if result.get("sources"):

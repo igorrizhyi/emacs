@@ -2,10 +2,11 @@
 
 Usage:
     python query.py "what is posframe?"
+    python query.py --mode technical "what is posframe?"
     python query.py                      # interactive mode
 """
 
-import sys
+import argparse
 
 from common import get_graph, query_knowledge
 
@@ -19,11 +20,17 @@ def _print_result(result: dict):
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Query the hybrid knowledge graph")
+    parser.add_argument("question", nargs="*", help="Natural language question")
+    parser.add_argument("--mode", choices=["summary", "technical"], default="summary",
+                        help="Response mode: summary (default) or technical")
+    args = parser.parse_args()
+
     graph = get_graph()
 
-    if len(sys.argv) > 1:
-        question = " ".join(sys.argv[1:])
-        result = query_knowledge(graph, question)
+    if args.question:
+        question = " ".join(args.question)
+        result = query_knowledge(graph, question, mode=args.mode)
         _print_result(result)
     else:
         print("Knowledge query (Ctrl+C to exit)\n")
@@ -36,7 +43,7 @@ def main():
             if not question.strip():
                 continue
             try:
-                result = query_knowledge(graph, question)
+                result = query_knowledge(graph, question, mode=args.mode)
                 _print_result(result)
             except Exception as e:
                 print(f"Error: {e}\n")

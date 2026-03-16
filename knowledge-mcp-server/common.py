@@ -416,7 +416,25 @@ def _is_report_chunk(hit: dict) -> bool:
     return (hit.get("source") or "").startswith("report:")
 
 
-def query_knowledge(graph, question: str, role: str = None, top_k: int = 8) -> dict:
+SYSTEM_PROMPTS = {
+    "summary": (
+        "You are a team knowledge assistant. Answer the question based on "
+        "the provided context chunks from the knowledge graph. Be concise "
+        "and cite sources when possible."
+    ),
+    "technical": (
+        "You are a technical knowledge extractor. Given context chunks from the knowledge graph, "
+        "produce a structured technical brief. Include:\n"
+        "- Relevant file paths and line numbers\n"
+        "- Code patterns, constraints, and gotchas\n"
+        "- Architectural decisions and their rationale\n"
+        "Format as bullet points grouped by topic. Do NOT write prose — only structured facts. "
+        "Cite sources in [source] format."
+    ),
+}
+
+
+def query_knowledge(graph, question: str, role: str = None, top_k: int = 8, mode: str = "summary") -> dict:
     """Vector search + graph expansion + LLM answer.
 
     Returns dict with keys: response, chunks, sources, expanded_count.
@@ -527,14 +545,12 @@ def query_knowledge(graph, question: str, role: str = None, top_k: int = 8) -> d
     if len(context_text) > MAX_CONTEXT_CHARS:
         context_text = context_text[:MAX_CONTEXT_CHARS] + "\n... [context truncated]"
 
+    system_prompt = SYSTEM_PROMPTS.get(mode, SYSTEM_PROMPTS["summary"])
+
     messages = [
         {
             "role": "system",
-            "content": (
-                "You are a team knowledge assistant. Answer the question based on "
-                "the provided context chunks from the knowledge graph. Be concise "
-                "and cite sources when possible."
-            ),
+            "content": system_prompt,
         },
         {
             "role": "user",
