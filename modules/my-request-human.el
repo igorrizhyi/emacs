@@ -53,7 +53,7 @@
                      :command (lambda (dir)
                                 (start-process-shell-command
                                  "adb-logcat" nil
-                                 (format "adb logcat > %s"
+                                 (format "adb logcat -T 1 > %s"
                                          (shell-quote-argument
                                           (expand-file-name "logcat.txt" dir)))))))
     ("adb-screenshot" . (:label "ADB Screenshot"
