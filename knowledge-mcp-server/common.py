@@ -439,17 +439,20 @@ def _is_report_chunk(hit: dict) -> bool:
 
 SYSTEM_PROMPTS = {
     "summary": (
-        "You are a team knowledge assistant. Answer the question based on "
-        "the provided context chunks from the knowledge graph. Be concise "
-        "and cite sources when possible."
+        "You are a team knowledge assistant. Answer ONLY based on the provided context chunks. "
+        "Do NOT use general knowledge or make inferences beyond what the context explicitly states. "
+        "If the context does not contain enough information to answer, say so clearly. "
+        "Be concise and cite sources in [source] format."
     ),
     "technical": (
         "You are a technical knowledge extractor. Given context chunks from the knowledge graph, "
-        "produce a structured technical brief. Include:\n"
+        "produce a structured technical brief using ONLY information from the provided context. "
+        "Do NOT infer, guess, or supplement with general knowledge. Include:\n"
         "- Relevant file paths and line numbers\n"
         "- Code patterns, constraints, and gotchas\n"
         "- Architectural decisions and their rationale\n"
         "Format as bullet points grouped by topic. Do NOT write prose — only structured facts. "
+        "If the context lacks information for a category, omit it rather than guessing. "
         "Cite sources in [source] format."
     ),
 }
@@ -551,7 +554,16 @@ def query_knowledge(graph, question: str, role: str = None, top_k: int = 8, mode
         if len(unique_expanded) >= MAX_EXPANDED_CHUNKS:
             break
 
-    # 5. Build context for LLM
+    # 5. Short-circuit if no chunks found — don't hallucinate generic answers
+    if not hits and not unique_expanded:
+        return {
+            "response": "No relevant knowledge found.",
+            "chunks": [],
+            "sources": [],
+            "expanded_count": 0,
+        }
+
+    # 6. Build context for LLM
     context_parts = []
     for h in hits:
         content = _truncate_report_content(h["content"]) if _is_report_chunk(h) else h["content"]
