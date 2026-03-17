@@ -179,14 +179,15 @@
       (insert (propertize "── History ──────────────"
                           'face 'my/team-sidebar-history-header)
               "\n")
-      (let ((first t))
+      (let ((expand-count 0))
         (dolist (entry sessions)
           (let* ((sid (car entry))
                  (tasks (cdr entry))
                  (short-id (if (> (length sid) 8) (substring sid 0 8) sid))
                  (date (my/team-sidebar--session-date tasks))
-                 (expanded (or (and first (not (memq 'initialized
-                                                     my/team-sidebar--expanded-sessions)))
+                 (expanded (or (and (< expand-count 3)
+                                    (not (memq 'initialized
+                                               my/team-sidebar--expanded-sessions)))
                                (member sid my/team-sidebar--expanded-sessions)))
                  (toggle-char (if expanded "▾" "▸"))
                  (inv-sym (intern (format "session-%s" sid)))
@@ -223,11 +224,15 @@
               (if expanded
                   (remove-from-invisibility-spec inv-sym)
                 (add-to-invisibility-spec inv-sym)))
-            ;; After first session, auto-expand logic done
-            (when (and first (not (member sid my/team-sidebar--expanded-sessions)))
-              (push sid my/team-sidebar--expanded-sessions)
-              (push 'initialized my/team-sidebar--expanded-sessions))
-            (setq first nil)))
+            ;; Auto-expand the first 3 sessions on initial render
+            (when (and (< expand-count 3)
+                       (not (memq 'initialized my/team-sidebar--expanded-sessions)))
+              (unless (member sid my/team-sidebar--expanded-sessions)
+                (push sid my/team-sidebar--expanded-sessions))
+              (cl-incf expand-count))))
+        ;; Mark as initialized so auto-expand only happens on first render
+        (unless (memq 'initialized my/team-sidebar--expanded-sessions)
+          (push 'initialized my/team-sidebar--expanded-sessions))
         (insert "\n")))))
 
 ;;; ---- Status Rendering -------------------------------------------------------
