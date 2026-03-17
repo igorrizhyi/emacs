@@ -102,6 +102,9 @@
 (defvar-local my/team-sidebar--expanded-sessions nil
   "List of session IDs whose history sections are expanded.")
 
+(defvar-local my/team-sidebar--manually-collapsed nil
+  "List of session IDs the user has manually collapsed.")
+
 ;;; ---- Utility ----------------------------------------------------------------
 
 (defun my/team-sidebar--lead-buffer-p (buf)
@@ -179,6 +182,12 @@
       (insert (propertize "── History ──────────────"
                           'face 'my/team-sidebar-history-header)
               "\n")
+      ;; Auto-expand top 3 sessions unless manually collapsed
+      (let ((top-3-sids (mapcar #'car (seq-take sessions 3))))
+        (dolist (sid top-3-sids)
+          (when (and (not (member sid my/team-sidebar--expanded-sessions))
+                     (not (member sid my/team-sidebar--manually-collapsed)))
+            (push sid my/team-sidebar--expanded-sessions))))
       (let ((expand-count 0))
         (dolist (entry sessions)
           (let* ((sid (car entry))
@@ -637,7 +646,8 @@
   "Manually refresh the sidebar content (force-refreshes history cache)."
   (interactive)
   (setq my/team-sidebar--history-cache nil
-        my/team-sidebar--history-cache-time 0)
+        my/team-sidebar--history-cache-time 0
+        my/team-sidebar--manually-collapsed nil)
   (my/team-sidebar--render))
 
 (defun my/team-sidebar-toggle-section ()
@@ -651,10 +661,13 @@
         (if currently-hidden
             (progn
               (remove-from-invisibility-spec sym)
-              (cl-pushnew session-id my/team-sidebar--expanded-sessions :test #'equal))
+              (cl-pushnew session-id my/team-sidebar--expanded-sessions :test #'equal)
+              (setq my/team-sidebar--manually-collapsed
+                    (delete session-id my/team-sidebar--manually-collapsed)))
           (add-to-invisibility-spec sym)
           (setq my/team-sidebar--expanded-sessions
-                (delete session-id my/team-sidebar--expanded-sessions)))
+                (delete session-id my/team-sidebar--expanded-sessions))
+          (cl-pushnew session-id my/team-sidebar--manually-collapsed :test #'equal))
         ;; Update the toggle indicator
         (save-excursion
           (beginning-of-line)
