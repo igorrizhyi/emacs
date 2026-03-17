@@ -819,6 +819,8 @@ Immediately after receiving a task, rename your branch before any other work:
 Prefixes: feature/, fix/, refactor/, docs/, test/, chore/
 Slug: 2-4 word kebab-case summary (e.g. feature/dark-mode-toggle, fix/auth-token-expiry).
 Include the new branch name in your taskUpdate so the lead knows what to merge.
+NEVER rename the `main` branch or any branch other than your own worktree branch.
+Only rename the branch you are currently on inside your worktree.
 
 ## Knowledge Base
 - In your report, include a `## Knowledge Discoveries` section at the end.
