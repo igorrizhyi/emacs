@@ -12,6 +12,14 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'json)
+(require 'url)
+
+(defvar url-request-method)
+(defvar url-request-extra-headers)
+(defvar url-request-data)
+(defvar json-object-type)
+(defvar json-key-type)
 
 (declare-function shell-maker-submit "shell-maker")
 (declare-function evil-define-key* "evil-core")
@@ -87,6 +95,201 @@
 (defface my/team-sidebar-history-pending
   '((t :foreground "#cc8800"))
   "Face for pending task indicator.")
+
+(defface my/team-sidebar-quota-ok
+  '((t :foreground "#33ff33"))
+  "Face for quota bar when utilization < 50%.")
+
+(defface my/team-sidebar-quota-warn
+  '((t :foreground "#ffb000"))
+  "Face for quota bar when utilization 50-80%.")
+
+(defface my/team-sidebar-quota-critical
+  '((t :foreground "#ff3333"))
+  "Face for quota bar when utilization > 80%.")
+
+(defface my/team-sidebar-quota-empty
+  '((t :foreground "#555555"))
+  "Face for unfilled portion of quota bar.")
+
+(defface my/team-sidebar-quota-label
+  '((t :foreground "#cc8800"))
+  "Face for quota label text.")
+
+(defface my/team-sidebar-quota-reset
+  '((t :foreground "#806000" :slant italic))
+  "Face for quota reset time text.")
+
+;;; ---- Quota State (Global) --------------------------------------------------
+
+(defvar my/team-sidebar--quota-5h-util nil
+  "Float 0-1 for 5-hour utilization, or nil if unknown.")
+(defvar my/team-sidebar--quota-7d-util nil
+  "Float 0-1 for 7-day utilization, or nil if unknown.")
+(defvar my/team-sidebar--quota-5h-reset nil
+  "Unix timestamp (seconds) for 5-hour reset, or nil.")
+(defvar my/team-sidebar--quota-7d-reset nil
+  "Unix timestamp (seconds) for 7-day reset, or nil.")
+(defvar my/team-sidebar--quota-error nil
+  "String error message if quota fetch failed, or nil.")
+(defvar my/team-sidebar--quota-timer nil
+  "30-second timer for quota refresh.")
+(defvar my/team-sidebar--quota-fetching nil
+  "Non-nil when a quota fetch is in progress.")
+
+;;; ---- Quota API -------------------------------------------------------------
+
+(defun my/team-sidebar--quota-read-token ()
+  "Read OAuth access token from ~/.claude/.credentials.json.
+Returns the token string, or nil if unavailable or expired."
+  (condition-case nil
+      (let* ((cred-file (expand-file-name "~/.claude/.credentials.json"))
+             (json-object-type 'alist)
+             (json-key-type 'symbol)
+             (creds (json-read-file cred-file))
+             (oauth (alist-get 'claudeAiOauth creds))
+             (token (alist-get 'accessToken oauth))
+             (expires-at (alist-get 'expiresAt oauth)))
+        (if (and expires-at (> (float-time) (/ expires-at 1000.0)))
+            (progn
+              (setq my/team-sidebar--quota-error "Token expired")
+              nil)
+          token))
+    (error nil)))
+
+(defun my/team-sidebar--quota-fetch ()
+  "Fetch quota utilization from Anthropic API asynchronously."
+  (when my/team-sidebar--quota-fetching
+    (cl-return-from my/team-sidebar--quota-fetch nil))
+  (condition-case err
+      (let ((token (my/team-sidebar--quota-read-token)))
+        (unless token
+          (cl-return-from my/team-sidebar--quota-fetch nil))
+        (setq my/team-sidebar--quota-fetching t)
+        (let ((url-request-method "POST")
+              (url-request-extra-headers
+               `(("x-api-key" . ,token)
+                 ("anthropic-version" . "2023-06-01")
+                 ("content-type" . "application/json")))
+              (url-request-data
+               (encode-coding-string
+                (json-encode '((model . "claude-haiku-4-5-20251001")
+                               (max_tokens . 1)
+                               (messages . [((role . "user")
+                                             (content . "q"))])))
+                'utf-8)))
+          (url-retrieve
+           "https://api.anthropic.com/v1/messages"
+           #'my/team-sidebar--quota-callback
+           nil t t)))
+    (error
+     (setq my/team-sidebar--quota-fetching nil
+           my/team-sidebar--quota-error (format "%s" err)))))
+
+(defun my/team-sidebar--quota-callback (status)
+  "Handle quota API response. STATUS is the url-retrieve status plist."
+  (setq my/team-sidebar--quota-fetching nil)
+  (condition-case nil
+      (if (plist-get status :error)
+          (setq my/team-sidebar--quota-error "API error")
+        ;; Parse headers — we're in the HTTP response buffer
+        (let ((util-5h (mail-fetch-field "anthropic-ratelimit-unified-5h-utilization"))
+              (util-7d (mail-fetch-field "anthropic-ratelimit-unified-7d-utilization"))
+              (reset-5h (mail-fetch-field "anthropic-ratelimit-unified-5h-reset"))
+              (reset-7d (mail-fetch-field "anthropic-ratelimit-unified-7d-reset")))
+          (when util-5h
+            (setq my/team-sidebar--quota-5h-util (string-to-number util-5h)))
+          (when util-7d
+            (setq my/team-sidebar--quota-7d-util (string-to-number util-7d)))
+          (when reset-5h
+            (setq my/team-sidebar--quota-5h-reset (string-to-number reset-5h)))
+          (when reset-7d
+            (setq my/team-sidebar--quota-7d-reset (string-to-number reset-7d)))
+          (setq my/team-sidebar--quota-error nil)))
+    (error (setq my/team-sidebar--quota-error "Parse error")))
+  (when (buffer-live-p (current-buffer))
+    (kill-buffer (current-buffer)))
+  ;; Trigger sidebar re-render
+  (my/team-sidebar--render))
+
+(defun my/team-sidebar--quota-format-reset (timestamp)
+  "Format TIMESTAMP (unix seconds) as a human-readable reset time."
+  (when timestamp
+    (let* ((reset-time (seconds-to-time timestamp))
+           (now (current-time))
+           (diff (float-time (time-subtract reset-time now))))
+      (if (< diff (* 24 3600))
+          (format-time-string "Resets %-l:%M%P" reset-time)
+        (format-time-string "Resets %b %-d, %-l%P" reset-time)))))
+
+(defun my/team-sidebar--quota-bar-face (util)
+  "Return the appropriate face for UTIL (0-1 float)."
+  (cond
+   ((> util 0.8) 'my/team-sidebar-quota-critical)
+   ((> util 0.5) 'my/team-sidebar-quota-warn)
+   (t 'my/team-sidebar-quota-ok)))
+
+(defun my/team-sidebar--quota-render-bar (label util reset-ts)
+  "Insert a quota progress bar line for LABEL with UTIL and RESET-TS."
+  (let* ((bar-width 20)
+         (filled (round (* util bar-width)))
+         (empty (- bar-width filled))
+         (pct (round (* util 100)))
+         (face (my/team-sidebar--quota-bar-face util))
+         (filled-str (propertize (make-string filled ?█) 'face face))
+         (empty-str (propertize (make-string empty ?░) 'face 'my/team-sidebar-quota-empty))
+         (reset-str (my/team-sidebar--quota-format-reset reset-ts)))
+    (insert (propertize (format "%-3s " label) 'face 'my/team-sidebar-quota-label)
+            filled-str empty-str
+            (propertize (format " %d%%" pct) 'face face)
+            "\n")
+    (when reset-str
+      (insert "    " (propertize reset-str 'face 'my/team-sidebar-quota-reset) "\n"))))
+
+(defun my/team-sidebar--insert-quota ()
+  "Insert quota progress bars at point. Returns non-nil if anything was inserted."
+  (cond
+   ;; Error state
+   (my/team-sidebar--quota-error
+    (insert " " (propertize my/team-sidebar--quota-error
+                             'face 'my/team-sidebar-quota-reset)
+            "\n\n")
+    t)
+   ;; Data available
+   ((and my/team-sidebar--quota-5h-util my/team-sidebar--quota-7d-util)
+    (my/team-sidebar--quota-render-bar
+     "5h" my/team-sidebar--quota-5h-util my/team-sidebar--quota-5h-reset)
+    (my/team-sidebar--quota-render-bar
+     "7d" my/team-sidebar--quota-7d-util my/team-sidebar--quota-7d-reset)
+    (insert "\n")
+    t)
+   ;; Loading
+   (t
+    (insert " " (propertize "Loading quota..." 'face 'my/team-sidebar-quota-reset) "\n\n")
+    t)))
+
+;;; ---- Quota Timer -----------------------------------------------------------
+
+(defun my/team-sidebar--quota-ensure-timer ()
+  "Start the 30-second quota refresh timer if not already running."
+  (unless (and my/team-sidebar--quota-timer
+               (timerp my/team-sidebar--quota-timer)
+               (memq my/team-sidebar--quota-timer timer-list))
+    (my/team-sidebar--quota-fetch)  ; immediate first fetch
+    (setq my/team-sidebar--quota-timer
+          (run-with-timer 30 30 #'my/team-sidebar--quota-timer-tick))))
+
+(defun my/team-sidebar--quota-stop-timer ()
+  "Stop the quota refresh timer."
+  (when (timerp my/team-sidebar--quota-timer)
+    (cancel-timer my/team-sidebar--quota-timer)
+    (setq my/team-sidebar--quota-timer nil)))
+
+(defun my/team-sidebar--quota-timer-tick ()
+  "Timer callback: fetch quota if sidebar buffer exists."
+  (if (get-buffer my/team-sidebar-buffer-name)
+      (my/team-sidebar--quota-fetch)
+    (my/team-sidebar--quota-stop-timer)))
 
 ;;; ---- Sidebar Buffer Local State ---------------------------------------------
 
@@ -284,6 +487,9 @@
 (defun my/team-sidebar--insert-status ()
   "Insert team status content at point."
   (let ((has-content nil))
+    ;; Quota progress bars at the very top
+    (when (my/team-sidebar--insert-quota)
+      (setq has-content t))
     (when (boundp 'agent-shell-team--sessions)
       (maphash
        (lambda (sid agents)
@@ -788,8 +994,9 @@
                     (dedicated . t)))))
         (when win
           (my/team-sidebar--set-window-params win))))
-    ;; Start refresh timer
+    ;; Start refresh timers
     (my/team-sidebar--ensure-timer)
+    (my/team-sidebar--quota-ensure-timer)
     ;; Initial render
     (my/team-sidebar--render)))
 
@@ -798,7 +1005,8 @@
   (let ((win (get-buffer-window my/team-sidebar-buffer-name t)))
     (when win
       (delete-window win)))
-  (my/team-sidebar--stop-timer))
+  (my/team-sidebar--stop-timer)
+  (my/team-sidebar--quota-stop-timer))
 
 (defun my/team-sidebar--set-window-params (win)
   "Set protective window parameters on WIN."
