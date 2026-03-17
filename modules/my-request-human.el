@@ -213,9 +213,7 @@ Return the process or nil."
              (length my-request-human--spinner-frames)))
   (when (and (not my-request-human--done)
              (eq my-request-human--phase 'capture))
-    (my-request-human--render-capture)
-    ;; Update posframe without refocusing
-    (posframe-refresh my-request-human--buffer-name)))
+    (my-request-human--render-capture)))
 
 (defun my-request-human--stop-captures ()
   "Stop all capture processes and finish."
