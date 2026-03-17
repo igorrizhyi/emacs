@@ -23,6 +23,10 @@ import {
   dismissAgentOutputSchema,
 } from "./schemas/dismiss-agent-schema.js";
 import {
+  messagePeerInputSchema,
+  messagePeerOutputSchema,
+} from "./schemas/message-peer-schema.js";
+import {
   getDiagnosticsInputSchema,
   getDiagnosticsOutputSchema,
 } from "./schemas/diagnostic-schema.js";
@@ -66,6 +70,7 @@ import {
   handleTasksPut,
   handleTaskUpdate,
   handleDismissAgent,
+  handleMessagePeer,
   handleExecuteTerminalCommandInEmacs,
   handleGetTerminalContent,
   handleCreateTerminal,
@@ -375,6 +380,28 @@ function registerTools() {
     },
     async (args, _extra) => {
       const result = await handleDismissAgent(bridge, args);
+      return {
+        content: result.content,
+        structuredContent: {
+          success: result.status === 'success',
+          message: result.message || '',
+        },
+        isError: result.isError,
+      };
+    }
+  );
+
+  // messageNamespacePeer tool
+  server.registerTool(
+    "messageNamespacePeer",
+    {
+      description:
+        "Send a message to another team lead in the same namespace. Used for cross-instance coordination when multiple Emacs instances work on related repositories.",
+      inputSchema: messagePeerInputSchema.shape,
+      outputSchema: messagePeerOutputSchema.shape,
+    },
+    async (args, _extra) => {
+      const result = await handleMessagePeer(bridge, args);
       return {
         content: result.content,
         structuredContent: {

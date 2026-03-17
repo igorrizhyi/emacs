@@ -15,6 +15,7 @@ export { handleSendNotification } from './notification-tools.js';
 export { handleTasksPut } from './tasks-tools.js';
 export { handleTaskUpdate } from './task-update-tools.js';
 export { handleDismissAgent } from './dismiss-agent-tools.js';
+export { handleMessagePeer } from './message-peer-tools.js';
 export {
   handleExecuteTerminalCommandInEmacs,
   handleGetTerminalContent,
