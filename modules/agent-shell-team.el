@@ -797,8 +797,12 @@ Your working directory is a git worktree: %s
 Your responsibilities:
 - Implement the assigned task
 - Commit your work when done (git add + git commit)
-- Write a detailed report to the file path specified in your task assignment
-  Include: what was done, files changed, any issues or decisions made
+- Write a concise report to the file path specified in your task assignment
+  Include: what was done, files changed, any issues or decisions made.
+  Do NOT include code snippets unless they illustrate a non-obvious decision
+  (the lead reviews the git diff for code-level details — snippets that just
+  show *what* changed are redundant). Only include a snippet when it explains
+  a *why* that wouldn't be clear from the diff alone.
 - Signal completion by calling the `taskUpdate` MCP tool:
   request_id: The Request ID from your task assignment
   status: \"finished\" (or \"updated\" for progress, \"blocked\" if stuck)
