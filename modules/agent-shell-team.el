@@ -1926,15 +1926,24 @@ Also detects agents stuck in busy state with no ACP output for
 ;;; Cleanup
 
 (defun agent-shell-team--buffer-kill-hook ()
-  "Clean up team registration when buffer is killed."
+  "Clean up team registration when buffer is killed.
+Also removes the git worktree if the agent was in isolated mode."
   (when agent-shell-team--session-id
-    ;; Mark agent idle (remove busy sentinel file) before unregistering
-    (agent-shell-team--mark-agent-idle (buffer-name (current-buffer)))
-    (agent-shell-team--unregister-agent (current-buffer))
-    ;; Clean up any queued messages and activity tracking for this buffer
-    (remhash (current-buffer) agent-shell-team--message-queue)
-    (remhash (current-buffer) agent-shell-team--last-activity)
-    (remhash (current-buffer) agent-shell-team--last-compact-time)))
+    ;; Capture worktree path BEFORE unregister removes the agent from sessions
+    (let ((worktree-path agent-shell-team--worktree-path))
+      ;; Mark agent idle (remove busy sentinel file) before unregistering
+      (agent-shell-team--mark-agent-idle (buffer-name (current-buffer)))
+      (agent-shell-team--unregister-agent (current-buffer))
+      ;; Clean up any queued messages and activity tracking for this buffer
+      (remhash (current-buffer) agent-shell-team--message-queue)
+      (remhash (current-buffer) agent-shell-team--last-activity)
+      (remhash (current-buffer) agent-shell-team--last-compact-time)
+      ;; Remove worktree if it exists
+      (when (and worktree-path (file-directory-p worktree-path))
+        (let ((default-directory (file-name-parent-directory worktree-path)))
+          (shell-command-to-string
+           (format "git worktree remove --force %s 2>&1"
+                   (shell-quote-argument worktree-path))))))))
 
 (add-hook 'kill-buffer-hook #'agent-shell-team--buffer-kill-hook)
 
