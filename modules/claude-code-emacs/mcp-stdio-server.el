@@ -241,6 +241,15 @@ Reads JSON-RPC requests from stdin, processes them, and writes responses to stdo
                                                    (description . "Optional session ID for multi-session routing")))))
                      (required . ["target"]))))
 
+   `((name . "messageNamespacePeer")
+     (description . "Send a message to another team lead in the same namespace. Used for cross-instance coordination when multiple Emacs instances work on related repositories.")
+     (inputSchema . ((type . "object")
+                     (properties . ((target_pid . ((type . "number")
+                                                   (description . "Target Emacs process ID")))
+                                    (message . ((type . "string")
+                                                (description . "Message content for the target lead")))))
+                     (required . ["target_pid" "message"]))))
+
    `((name . "requestHuman")
      (description . "Request human interaction. Shows a popup with the message and optional capture actions (adb-logcat, adb-screenshot). Blocks until human completes interaction. Returns path to collected artifacts.")
      (inputSchema . ((type . "object")

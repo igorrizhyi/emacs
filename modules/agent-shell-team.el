@@ -185,6 +185,16 @@ All Emacs instances for this user share the same directory.")
   "Set of agent-id strings currently marked busy by THIS Emacs instance.
 Used to detect transitions and avoid redundant file ops.")
 
+(defun agent-shell-team--buffer-worktree-name (buffer)
+  "Return worktree-name for BUFFER from session registry."
+  (catch 'found
+    (maphash (lambda (_sid agents)
+               (dolist (a agents)
+                 (when (eq (alist-get 'buffer a) buffer)
+                   (throw 'found (or (alist-get 'worktree-name a) "main")))))
+             agent-shell-team--sessions)
+    "main"))
+
 (defun agent-shell-team--busy-file (agent-id)
   "Return the sentinel file path for AGENT-ID in the busy directory."
   (expand-file-name (format "%d-%s" (emacs-pid) agent-id)
@@ -199,7 +209,12 @@ Used to detect transitions and avoid redundant file ops.")
             (make-directory agent-shell-team--idle-inhibit-busy-dir t)
             (write-region "" nil file nil 'silent)
             (puthash agent-id t agent-shell-team--idle-inhibit-tracked)
-            (agent-shell-team--update-idle-inhibit))
+            (agent-shell-team--update-idle-inhibit)
+            (when (fboundp 'agent-shell-namespace-emit-status)
+              (let ((buf (get-buffer agent-id)))
+                (when buf
+                  (let ((wt-name (agent-shell-team--buffer-worktree-name buf)))
+                    (agent-shell-namespace-emit-status wt-name 'idle 'busy))))))
         (error nil)))))
 
 (defun agent-shell-team--mark-agent-idle (agent-id)
@@ -211,7 +226,12 @@ Used to detect transitions and avoid redundant file ops.")
             (delete-file file))
         (error nil))
       (remhash agent-id agent-shell-team--idle-inhibit-tracked)
-      (agent-shell-team--update-idle-inhibit))))
+      (agent-shell-team--update-idle-inhibit)
+      (when (fboundp 'agent-shell-namespace-emit-status)
+        (let ((buf (get-buffer agent-id)))
+          (when buf
+            (let ((wt-name (agent-shell-team--buffer-worktree-name buf)))
+              (agent-shell-namespace-emit-status wt-name 'busy 'idle))))))))
 
 (defun agent-shell-team--any-agents-busy-p ()
   "Return non-nil if any busy sentinel files exist in the shared directory."
@@ -786,6 +806,11 @@ Your responsibilities:
                                    (insert-file-contents f)
                                    (buffer-string))))))
       (concat lead-base
+              (if (and (fboundp 'agent-shell-namespace-active-p)
+                       (agent-shell-namespace-active-p))
+                  (format "\n\n## Namespace: %s\nYou are part of a multi-repo namespace. Other Emacs instances may be working on related repositories. Their agents appear in the sidebar under 'Namespace Peers'.\nUse the `messageNamespacePeer` MCP tool to send messages to peer leads. Provide `target_pid` (visible in sidebar) and `message` text.\nPeer leads can also message you — their messages appear in your message queue."
+                          (or (and (boundp 'agent-shell-bus--namespace) agent-shell-bus--namespace) ""))
+                "")
               (when (and knowledge-content (not (string-empty-p knowledge-content)))
                 (format "\n\n## Lead Knowledge Base\nThe following is your accumulated project knowledge. Use it to inform your decisions:\n\n%s" knowledge-content))))))
 
@@ -1214,6 +1239,10 @@ Only the lead role may call this.  Returns an alist with success/message."
    (format "[cleanup] Killing agent buffer %s%s"
            (if (buffer-live-p buffer) (buffer-name buffer) "(already dead)")
            (if worktree-path (format ", removing worktree %s" worktree-path) "")))
+  ;; Broadcast dismiss to namespace peers (before cleanup removes registry entry)
+  (when (fboundp 'agent-shell-namespace-emit-dismiss)
+    (agent-shell-namespace-emit-dismiss
+     (agent-shell-team--buffer-worktree-name buffer)))
   ;; Clean up request-to-buffer and request-to-session mappings for this agent
   (let ((removed-request-ids nil))
     (maphash (lambda (k v)
@@ -1964,6 +1993,11 @@ WORKTREE-PATH and WORKTREE-NAME are for isolated mode."
                    (when (fboundp 'doom-modeline-set-modeline)
                      (with-current-buffer buffer
                        (doom-modeline-set-modeline 'agent-shell-team)))
+                   ;; Broadcast spawn to namespace peers
+                   (when (fboundp 'agent-shell-namespace-emit-spawn)
+                     (agent-shell-namespace-emit-spawn
+                      (or role "unknown")
+                      (or worktree-name "main")))
                    (message "agent-shell-team: init-finished complete for %s" buffer)
                    ;; Mark ACP init as done so --agent-status returns 'idle
                    (with-current-buffer buffer
@@ -2066,6 +2100,10 @@ When called from an existing team buffer:
 
     (message "agent-shell-team: start called, session=%s role=%s mode=%s"
              (agent-shell-team--short-session-id session-id) role mode)
+
+    ;; Initialize namespace bus if configured
+    (when (fboundp 'agent-shell-namespace-init)
+      (agent-shell-namespace-init))
 
     ;; Determine working directory
     (pcase mode
@@ -2193,6 +2231,8 @@ When called from an existing team buffer:
 ;; never encounter a nil session-id.
 (unless agent-shell-team--session-id
   (setq agent-shell-team--session-id (agent-shell-team--generate-session-id)))
+
+(require 'agent-shell-namespace nil t)  ;; soft require
 
 (provide 'agent-shell-team)
 ;;; agent-shell-team.el ends here
