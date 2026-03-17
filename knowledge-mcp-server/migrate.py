@@ -156,12 +156,14 @@ def migrate_reports(reports_dir: str):
 
 
 def main():
-    default_knowledge_dir = os.path.normpath(
-        os.path.join(os.path.dirname(__file__), "..", ".agent-shell", "knowledge")
-    )
-    default_reports_dir = os.path.normpath(
-        os.path.join(os.path.dirname(__file__), "..", ".agent-shell", "reports")
-    )
+    project_root = os.environ.get("PROJECT_ROOT")
+    if project_root:
+        base_dir = project_root
+    else:
+        base_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
+
+    default_knowledge_dir = os.path.join(base_dir, ".agent-shell", "knowledge")
+    default_reports_dir = os.path.join(base_dir, ".agent-shell", "reports")
 
     parser = argparse.ArgumentParser(
         description="Migrate markdown knowledge files into FalkorDB hybrid vector+graph store"
@@ -192,8 +194,9 @@ def main():
     )
     args = parser.parse_args()
 
-    if args.project_root:
-        set_graph_name(args.project_root)
+    graph_root = args.project_root or project_root
+    if graph_root:
+        set_graph_name(graph_root)
 
     if args.reports:
         if not os.path.isdir(args.reports_dir):
