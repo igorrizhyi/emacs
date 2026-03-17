@@ -221,8 +221,8 @@
               (put-text-property tasks-start (point) 'invisible inv-sym)
               ;; Set up visibility
               (if expanded
-                  (remove-from-invisibility-spec (cons inv-sym t))
-                (add-to-invisibility-spec (cons inv-sym t))))
+                  (remove-from-invisibility-spec inv-sym)
+                (add-to-invisibility-spec inv-sym)))
             ;; After first session, auto-expand logic done
             (when (and first (not (member sid my/team-sidebar--expanded-sessions)))
               (push sid my/team-sidebar--expanded-sessions)
@@ -642,12 +642,12 @@
     (when session-id
       (let* ((sym (intern (format "session-%s" session-id)))
              (inhibit-read-only t)
-             (currently-hidden (member (cons sym t) buffer-invisibility-spec)))
+             (currently-hidden (memq sym buffer-invisibility-spec)))
         (if currently-hidden
             (progn
-              (remove-from-invisibility-spec (cons sym t))
+              (remove-from-invisibility-spec sym)
               (cl-pushnew session-id my/team-sidebar--expanded-sessions :test #'equal))
-          (add-to-invisibility-spec (cons sym t))
+          (add-to-invisibility-spec sym)
           (setq my/team-sidebar--expanded-sessions
                 (delete session-id my/team-sidebar--expanded-sessions)))
         ;; Update the toggle indicator
