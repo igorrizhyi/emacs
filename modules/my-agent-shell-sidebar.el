@@ -116,6 +116,10 @@
   '((t :foreground "#cc8800"))
   "Face for quota label text.")
 
+(defface my/team-sidebar-foreign-face
+  '((t :foreground "#8888bb" :italic t))
+  "Face for foreign (namespace peer) agent entries.")
+
 (defface my/team-sidebar-quota-reset
   '((t :foreground "#806000" :slant italic))
   "Face for quota reset time text.")
@@ -136,6 +140,15 @@
   "30-second timer for quota refresh.")
 (defvar my/team-sidebar--quota-fetching nil
   "Non-nil when a quota fetch is in progress.")
+
+;;; ---- Foreign Agents State (Namespace) --------------------------------------
+
+(defvar my/team-sidebar--foreign-agents nil
+  "Alist of (peer-pid . agent-list) for namespace peers.
+Each agent-list contains alists with keys: role, worktree-name, status, hostname.")
+
+(defvar my/team-sidebar--namespace-active nil
+  "Non-nil when a namespace is active and foreign agents should be displayed.")
 
 ;;; ---- Quota API -------------------------------------------------------------
 
@@ -458,6 +471,31 @@ Returns the token string, or nil if unavailable or expired."
     ('dead  (propertize "✕" 'face 'my/team-sidebar-status-dead))
     (_      "?")))
 
+(defun my/team-sidebar--insert-foreign-agents ()
+  "Insert namespace peer agents section.
+Returns t if anything was inserted, nil otherwise."
+  (when (and my/team-sidebar--namespace-active
+             my/team-sidebar--foreign-agents)
+    (insert (propertize " Namespace Peers\n" 'face 'my/team-sidebar-session-face))
+    (dolist (peer my/team-sidebar--foreign-agents)
+      (let ((pid (car peer))
+            (agents (cdr peer)))
+        (let ((hostname (or (alist-get 'hostname (car agents)) "unknown")))
+          (insert (propertize (format "  %s (pid %s)\n" hostname pid)
+                              'face 'font-lock-comment-face))
+          (dolist (agent agents)
+            (let* ((role (or (alist-get 'role agent) "?"))
+                   (wt-name (or (alist-get 'worktree-name agent) "main"))
+                   (status (or (alist-get 'status agent) 'idle))
+                   (indicator (my/team-sidebar--status-indicator status))
+                   (line-start (point)))
+              (insert (propertize (format "    %s %-10s  %s\n" indicator role wt-name)
+                                  'face 'my/team-sidebar-foreign-face))
+              (put-text-property line-start (1- (point))
+                                 'my/sidebar-foreign-agent agent))))))
+    (insert "\n")
+    t))
+
 (defun my/team-sidebar--render ()
   "Render team status into the sidebar buffer."
   (let ((buf (get-buffer my/team-sidebar-buffer-name)))
@@ -529,6 +567,9 @@ Returns the token string, or nil if unavailable or expired."
            (insert "\n")
            (setq has-content t)))
        agent-shell-team--sessions))
+    ;; Foreign agents from namespace peers
+    (when (my/team-sidebar--insert-foreign-agents)
+      (setq has-content t))
     ;; Task queue
     (when (and (boundp 'agent-shell-team--task-queue)
                agent-shell-team--task-queue)
@@ -816,6 +857,10 @@ Returns the token string, or nil if unavailable or expired."
                                  (inhibit-same-window . t))))
             (message "Report not readable: %s" report))
         (message "No report for this task."))))
+   ;; Foreign agent line — read-only
+   ((get-text-property (line-beginning-position) 'my/sidebar-foreign-agent)
+    (let ((agent (get-text-property (line-beginning-position) 'my/sidebar-foreign-agent)))
+      (message "Foreign agent on %s — read-only" (alist-get 'hostname agent))))
    ;; Agent line
    ((my/team-sidebar--agent-at-point)
     (let* ((agent (my/team-sidebar--agent-at-point))
