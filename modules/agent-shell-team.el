@@ -37,6 +37,7 @@
 (require 'agent-shell-worktree)
 (require 'agent-shell-emacs-mcp)
 (require 'acp)
+(require 'dbus)
 (require 'transient)
 (require 'my-agent-shell-sidebar)
 
@@ -166,6 +167,167 @@ against both queued and in-flight tasks.")
 (defvar agent-shell-team--request-to-session (make-hash-table :test 'equal)
   "Map request-id to session-id.  Populated at tasksPut time so that
 taskUpdate can resolve the correct session without relying on the global.")
+
+;;; Idle inhibit (hypridle / screensaver)
+
+(defvar agent-shell-team--idle-inhibit-cookie nil
+  "DBus cookie from org.freedesktop.ScreenSaver.Inhibit, or nil if not held.
+Each Emacs instance holds its own cookie.")
+
+(defvar agent-shell-team--idle-inhibit-busy-dir
+  (let ((dir (format "/tmp/agent-shell-busy-%d/" (user-uid))))
+    (make-directory dir t)
+    dir)
+  "Shared directory for busy-agent sentinel files.
+All Emacs instances for this user share the same directory.")
+
+(defvar agent-shell-team--idle-inhibit-tracked (make-hash-table :test 'equal)
+  "Set of agent-id strings currently marked busy by THIS Emacs instance.
+Used to detect transitions and avoid redundant file ops.")
+
+(defun agent-shell-team--busy-file (agent-id)
+  "Return the sentinel file path for AGENT-ID in the busy directory."
+  (expand-file-name (format "%d-%s" (emacs-pid) agent-id)
+                    agent-shell-team--idle-inhibit-busy-dir))
+
+(defun agent-shell-team--mark-agent-busy (agent-id)
+  "Create a sentinel file for AGENT-ID, then update idle inhibit."
+  (unless (gethash agent-id agent-shell-team--idle-inhibit-tracked)
+    (let ((file (agent-shell-team--busy-file agent-id)))
+      (condition-case nil
+          (progn
+            (make-directory agent-shell-team--idle-inhibit-busy-dir t)
+            (write-region "" nil file nil 'silent)
+            (puthash agent-id t agent-shell-team--idle-inhibit-tracked)
+            (agent-shell-team--update-idle-inhibit))
+        (error nil)))))
+
+(defun agent-shell-team--mark-agent-idle (agent-id)
+  "Delete the sentinel file for AGENT-ID, then update idle inhibit."
+  (when (gethash agent-id agent-shell-team--idle-inhibit-tracked)
+    (let ((file (agent-shell-team--busy-file agent-id)))
+      (condition-case nil
+          (when (file-exists-p file)
+            (delete-file file))
+        (error nil))
+      (remhash agent-id agent-shell-team--idle-inhibit-tracked)
+      (agent-shell-team--update-idle-inhibit))))
+
+(defun agent-shell-team--any-agents-busy-p ()
+  "Return non-nil if any busy sentinel files exist in the shared directory."
+  (condition-case nil
+      (let ((files (directory-files agent-shell-team--idle-inhibit-busy-dir nil
+                                   "^[0-9]+-" t)))
+        (> (length files) 0))
+    (error nil)))
+
+(defun agent-shell-team--update-idle-inhibit ()
+  "Acquire or release the DBus screensaver inhibit based on busy agents."
+  (condition-case err
+      (if (agent-shell-team--any-agents-busy-p)
+          ;; Agents busy — acquire inhibit if not held
+          (unless agent-shell-team--idle-inhibit-cookie
+            (let ((cookie (dbus-call-method
+                           :session
+                           "org.freedesktop.ScreenSaver"
+                           "/org/freedesktop/ScreenSaver"
+                           "org.freedesktop.ScreenSaver"
+                           "Inhibit"
+                           "emacs-agent-shell"
+                           "Team agents active")))
+              (setq agent-shell-team--idle-inhibit-cookie cookie)
+              (when agent-shell-team--session-id
+                (agent-shell-team--log agent-shell-team--session-id
+                  (format "[idle-inhibit] Acquired screensaver inhibit (cookie=%s)" cookie)))))
+        ;; No agents busy — release inhibit if held
+        (when agent-shell-team--idle-inhibit-cookie
+          (dbus-call-method
+           :session
+           "org.freedesktop.ScreenSaver"
+           "/org/freedesktop/ScreenSaver"
+           "org.freedesktop.ScreenSaver"
+           "UnInhibit"
+           :uint32 agent-shell-team--idle-inhibit-cookie)
+          (when agent-shell-team--session-id
+            (agent-shell-team--log agent-shell-team--session-id
+              (format "[idle-inhibit] Released screensaver inhibit (cookie=%s)"
+                      agent-shell-team--idle-inhibit-cookie)))
+          (setq agent-shell-team--idle-inhibit-cookie nil)))
+    (dbus-error
+     (when agent-shell-team--session-id
+       (agent-shell-team--log agent-shell-team--session-id
+         (format "[idle-inhibit] DBus error: %s" (error-message-string err)))))))
+
+(defun agent-shell-team--sync-idle-inhibit ()
+  "Scan all registered agents, sync busy files with actual status.
+Called from the drain timer to catch any missed transitions."
+  (let ((changed nil))
+    (maphash
+     (lambda (_session-id agents)
+       (dolist (agent agents)
+         (let* ((buf (alist-get 'buffer agent))
+                (agent-id (and (buffer-live-p buf) (buffer-name buf)))
+                (status (and agent-id (agent-shell-team--agent-status buf))))
+           (when agent-id
+             (pcase status
+               ('busy
+                (unless (gethash agent-id agent-shell-team--idle-inhibit-tracked)
+                  (agent-shell-team--mark-agent-busy agent-id)
+                  (setq changed t)))
+               ((or 'idle 'dead)
+                (when (gethash agent-id agent-shell-team--idle-inhibit-tracked)
+                  (agent-shell-team--mark-agent-idle agent-id)
+                  (setq changed t))))))))
+     agent-shell-team--sessions)
+    ;; If anything changed, update-idle-inhibit was already called by mark-*
+    ;; but do a final reconciliation in case of races
+    (when changed
+      (agent-shell-team--update-idle-inhibit))))
+
+(defun agent-shell-team--cleanup-idle-inhibit ()
+  "Clean up all busy files for this Emacs PID and release DBus cookie.
+Intended for `kill-emacs-hook'."
+  ;; Remove all sentinel files for this PID
+  (condition-case nil
+      (let ((prefix (format "%d-" (emacs-pid))))
+        (dolist (file (directory-files agent-shell-team--idle-inhibit-busy-dir t
+                                       (concat "^" (regexp-quote prefix))))
+          (delete-file file)))
+    (error nil))
+  (clrhash agent-shell-team--idle-inhibit-tracked)
+  ;; Release DBus cookie
+  (when agent-shell-team--idle-inhibit-cookie
+    (condition-case nil
+        (dbus-call-method
+         :session
+         "org.freedesktop.ScreenSaver"
+         "/org/freedesktop/ScreenSaver"
+         "org.freedesktop.ScreenSaver"
+         "UnInhibit"
+         :uint32 agent-shell-team--idle-inhibit-cookie)
+      (error nil))
+    (setq agent-shell-team--idle-inhibit-cookie nil)))
+
+(defun agent-shell-team--cleanup-stale-busy-files ()
+  "Remove busy files whose PID no longer exists.
+Called at startup to handle leftover files from crashed Emacs instances."
+  (condition-case nil
+      (dolist (file (directory-files agent-shell-team--idle-inhibit-busy-dir nil
+                                     "^[0-9]+-"))
+        (when (string-match "^\\([0-9]+\\)-" file)
+          (let ((pid (string-to-number (match-string 1 file))))
+            (unless (= pid (emacs-pid))
+              ;; Check if process is alive
+              (unless (condition-case nil
+                          (progn (signal-process pid 0) t)
+                        (error nil))
+                (delete-file (expand-file-name file agent-shell-team--idle-inhibit-busy-dir)))))))
+    (error nil)))
+
+;; Clean up stale files from crashed instances at load time
+(agent-shell-team--cleanup-stale-busy-files)
+
+(add-hook 'kill-emacs-hook #'agent-shell-team--cleanup-idle-inhibit)
 
 ;;; Session ID generation
 
@@ -1718,6 +1880,8 @@ Also detects agents stuck in busy state with no ACP output for
     (error
      (agent-shell-team--log agent-shell-team--session-id
       (format "[drain] Error in try-assign-tasks: %s" (error-message-string err)))))
+  ;; Sync idle inhibit with actual agent busy states
+  (agent-shell-team--sync-idle-inhibit)
   ;; Stop timer if no more queued messages, pending-for-lead, AND no pending tasks
   (when (and (zerop (hash-table-count agent-shell-team--message-queue))
              (zerop (hash-table-count agent-shell-team--pending-for-lead))
@@ -1729,6 +1893,8 @@ Also detects agents stuck in busy state with no ACP output for
 (defun agent-shell-team--buffer-kill-hook ()
   "Clean up team registration when buffer is killed."
   (when agent-shell-team--session-id
+    ;; Mark agent idle (remove busy sentinel file) before unregistering
+    (agent-shell-team--mark-agent-idle (buffer-name (current-buffer)))
     (agent-shell-team--unregister-agent (current-buffer))
     ;; Clean up any queued messages and activity tracking for this buffer
     (remhash (current-buffer) agent-shell-team--message-queue)
