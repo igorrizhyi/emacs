@@ -1,22 +1,3 @@
 {
-  "mcpServers": {
-    "emacs": {
-      "type": "stdio",
-      "command": "node",
-      "args": [
-        "/home/igorrizhyi/.config/doom/claude-emacs-mcp-server/dist/index.js"
-      ]
-    },
-    "knowledge": {
-      "type": "stdio",
-      "command": "poetry",
-      "args": [
-        "-C", "/home/igorrizhyi/.config/doom/knowledge-mcp-server",
-        "run", "python3", "/home/igorrizhyi/.config/doom/knowledge-mcp-server/server.py"
-      ],
-      "env": {
-        "AGENT_SHELL_TEAM": "1"
-      }
-    }
-  }
+  "mcpServers": {}
 }
