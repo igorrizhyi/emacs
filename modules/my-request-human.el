@@ -98,8 +98,8 @@ Each entry is (ACTION-ID . PLIST) where PLIST has:
         (when my-request-human--actions
           (dolist (action my-request-human--actions)
             (let ((checked (member action my-request-human--selected-actions)))
-              (insert (if checked "[x] " "[ ] ")
-                      (propertize action 'my-request-human-action action)
+              (insert (propertize (concat (if checked "[x] " "[ ] ") action)
+                                  'my-request-human-action action)
                       "\n")))
           (insert "\n"))
         (insert (propertize "[SPC] toggle  [RET] confirm  [q/ESC] cancel"
@@ -215,14 +215,7 @@ Return the process or nil."
              (eq my-request-human--phase 'capture))
     (my-request-human--render-capture)
     ;; Update posframe without refocusing
-    (posframe-show my-request-human--buffer-name
-                   :accept-focus t
-                   :background-color "#1a1400"
-                   :border-color "#ffb000"
-                   :border-width 2
-                   :internal-border-width 12
-                   :min-width 60
-                   :poshandler #'posframe-poshandler-frame-center)))
+    (posframe-refresh my-request-human--buffer-name)))
 
 (defun my-request-human--stop-captures ()
   "Stop all capture processes and finish."
