@@ -458,6 +458,32 @@ SYSTEM_PROMPTS = {
 }
 
 
+_STOPWORDS = {
+    'a', 'an', 'the', 'is', 'are', 'was', 'were', 'be', 'been',
+    'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will',
+    'would', 'could', 'should', 'may', 'might', 'can', 'shall',
+    'to', 'of', 'in', 'for', 'on', 'with', 'at', 'by', 'from',
+    'it', 'this', 'that', 'these', 'those', 'i', 'we', 'you',
+    'he', 'she', 'they', 'me', 'him', 'her', 'us', 'them',
+    'my', 'your', 'his', 'its', 'our', 'their', 'what', 'which',
+    'who', 'whom', 'when', 'where', 'why', 'how', 'not', 'no',
+    'if', 'or', 'and', 'but', 'so', 'as', 'than', 'too', 'very',
+}
+
+
+def _build_fulltext_query(question: str) -> str:
+    """Transform a natural language question into a RediSearch fuzzy+AND query.
+
+    Single word:  'sidebar'                  → '%sidebar%'
+    Multi word:   'sidebar autostart require' → '%sidebar% %autostart% %require%'
+    """
+    words = re.findall(r'\w+', question.lower())
+    words = [w for w in words if w not in _STOPWORDS and len(w) > 1]
+    if not words:
+        return question
+    return ' '.join(f'%{w}%' for w in words)
+
+
 def query_knowledge(graph, question: str, role: str = None, top_k: int = 8, mode: str = "summary") -> dict:
     """Vector search + graph expansion + LLM answer.
 
@@ -506,7 +532,7 @@ def query_knowledge(graph, question: str, role: str = None, top_k: int = 8, mode
                        node.roles AS roles
                 LIMIT $k
                 """,
-                params={"q": question, "k": top_k},
+                params={"q": _build_fulltext_query(question), "k": top_k},
             )
             for row in ft.result_set:
                 hits.append({
@@ -519,10 +545,6 @@ def query_knowledge(graph, question: str, role: str = None, top_k: int = 8, mode
                 })
         except Exception:
             pass  # fulltext index may not exist or query may fail
-
-    # 3. Optional role filter (post-retrieval)
-    if role:
-        hits = [h for h in hits if role in (h.get("roles") or "").split(",")]
 
     hit_ids = [h["id"] for h in hits]
 
