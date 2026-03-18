@@ -42,6 +42,7 @@
 (require 'my-agent-shell-sidebar)
 
 (declare-function my/team-sidebar--show "my-agent-shell-sidebar")
+(declare-function agent-shell-namespace--format-peers-for-prompt "agent-shell-namespace")
 
 ;;; Customization
 
@@ -808,8 +809,11 @@ Your responsibilities:
       (concat lead-base
               (if (and (fboundp 'agent-shell-namespace-active-p)
                        (agent-shell-namespace-active-p))
-                  (format "\n\n## Namespace: %s\nYou are part of a multi-repo namespace. Other Emacs instances may be working on related repositories. Their agents appear in the sidebar under 'Namespace Peers'.\nUse the `messageNamespacePeer` MCP tool to send messages to peer leads. Provide `target_pid` (visible in sidebar) and `message` text.\nPeer leads can also message you — their messages appear in your message queue."
-                          (or (and (boundp 'agent-shell-bus--namespace) agent-shell-bus--namespace) ""))
+                  (let ((peer-list (and (fboundp 'agent-shell-namespace--format-peers-for-prompt)
+                                        (agent-shell-namespace--format-peers-for-prompt))))
+                    (format "\n\n## Namespace: %s\nYou are part of a multi-repo namespace. Other Emacs instances may be working on related repositories.\nUse the `messageNamespacePeer` MCP tool to send messages to peer leads.\nPeer leads can also message you — their messages appear in your message queue.\n\n### Active Peers\n%s"
+                            (or (and (boundp 'agent-shell-bus--namespace) agent-shell-bus--namespace) "")
+                            (or peer-list "No peers currently connected.")))
                 "")
               (when (and knowledge-content (not (string-empty-p knowledge-content)))
                 (format "\n\n## Lead Knowledge Base\nThe following is your accumulated project knowledge. Use it to inform your decisions:\n\n%s" knowledge-content))))))
