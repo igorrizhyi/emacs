@@ -87,6 +87,7 @@ def init_schema(graph):
         "CREATE INDEX FOR (c:Chunk) ON (c.source)",
         "CREATE INDEX FOR (c:Chunk) ON (c.roles)",
         "CREATE INDEX FOR (c:Chunk) ON (c.type)",
+        "CREATE INDEX FOR (c:Chunk) ON (c.namespace)",
     ):
         try:
             graph.query(stmt)
@@ -125,7 +126,7 @@ def chunk_id(source: str, content: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def chunk_report(report_text: str, request_id: str, role: str) -> list[dict]:
+def chunk_report(report_text: str, request_id: str, role: str, namespace: str = None) -> list[dict]:
     """Split a task report into per-section chunks."""
     source = f"report:{request_id}"
     chunks = []
@@ -145,6 +146,7 @@ def chunk_report(report_text: str, request_id: str, role: str) -> list[dict]:
                         "section": current_section,
                         "roles": role,
                         "type": "report",
+                        "namespace": namespace,
                     })
             current_section = line[3:].strip()
             current_lines = []
@@ -164,11 +166,12 @@ def chunk_report(report_text: str, request_id: str, role: str) -> list[dict]:
                 "section": current_section,
                 "roles": role,
                 "type": "report",
+                "namespace": namespace,
             })
     return chunks
 
 
-def chunk_knowledge_file(filepath: str, role: str) -> list[dict]:
+def chunk_knowledge_file(filepath: str, role: str, namespace: str = None) -> list[dict]:
     """Parse a markdown knowledge file into per-bullet chunks.
 
     Tracks ``## `` headers as current_section. Each top-level ``- `` bullet
@@ -194,6 +197,7 @@ def chunk_knowledge_file(filepath: str, role: str) -> list[dict]:
                     "section": current_section,
                     "roles": role,
                     "type": "knowledge",
+                    "namespace": namespace,
                 }
             )
             current_bullet.clear()
@@ -232,7 +236,7 @@ def chunk_knowledge_file(filepath: str, role: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
-def ingest_chunks(graph, chunks: list[dict]):
+def ingest_chunks(graph, chunks: list[dict], namespace: str = None):
     """Embed chunks and MERGE them into the graph with FOR_ROLE edges."""
     if not chunks:
         return
@@ -242,28 +246,47 @@ def ingest_chunks(graph, chunks: list[dict]):
     now = datetime.now(timezone.utc).isoformat()
 
     for chunk, vec in zip(chunks, vectors):
-        graph.query(
-            """
-            MERGE (c:Chunk {id: $id})
-            SET c.content   = $content,
-                c.embedding = vecf32($vec),
-                c.source    = $source,
-                c.section   = $section,
-                c.roles     = $roles,
-                c.type      = $type,
-                c.created_at = $ts
-            """,
-            params={
-                "id": chunk["id"],
-                "content": chunk["content"],
-                "vec": vec,
-                "source": chunk["source"],
-                "section": chunk["section"],
-                "roles": chunk["roles"],
-                "type": chunk.get("type", "knowledge"),
-                "ts": now,
-            },
-        )
+        # Use per-chunk namespace if set, otherwise fall back to function param
+        ns = chunk.get("namespace") or namespace
+        params = {
+            "id": chunk["id"],
+            "content": chunk["content"],
+            "vec": vec,
+            "source": chunk["source"],
+            "section": chunk["section"],
+            "roles": chunk["roles"],
+            "type": chunk.get("type", "knowledge"),
+            "ts": now,
+        }
+        if ns is not None:
+            graph.query(
+                """
+                MERGE (c:Chunk {id: $id})
+                SET c.content    = $content,
+                    c.embedding  = vecf32($vec),
+                    c.source     = $source,
+                    c.section    = $section,
+                    c.roles      = $roles,
+                    c.type       = $type,
+                    c.created_at = $ts,
+                    c.namespace  = $namespace
+                """,
+                params={**params, "namespace": ns},
+            )
+        else:
+            graph.query(
+                """
+                MERGE (c:Chunk {id: $id})
+                SET c.content    = $content,
+                    c.embedding  = vecf32($vec),
+                    c.source     = $source,
+                    c.section    = $section,
+                    c.roles      = $roles,
+                    c.type       = $type,
+                    c.created_at = $ts
+                """,
+                params=params,
+            )
 
         # FOR_ROLE edges (one per role token)
         for role in chunk["roles"].split(","):
@@ -484,7 +507,7 @@ def _build_fulltext_query(question: str) -> str:
     return ' '.join(f'%{w}%' for w in words)
 
 
-def query_knowledge(graph, question: str, role: str = None, top_k: int = 8, mode: str = "summary") -> dict:
+def query_knowledge(graph, question: str, role: str = None, top_k: int = 8, mode: str = "summary", namespace: str = None) -> dict:
     """Vector search + graph expansion + LLM answer.
 
     Returns dict with keys: response, chunks, sources, expanded_count.
@@ -492,23 +515,28 @@ def query_knowledge(graph, question: str, role: str = None, top_k: int = 8, mode
     # 1. Embed question
     q_vec = embed_texts([question])[0]
 
-    # 2. Vector KNN search
+    # 2. Vector KNN search — fetch extra candidates when filtering by namespace
+    fetch_k = top_k * 3 if namespace else top_k
     knn = graph.query(
         """
         CALL db.idx.vector.queryNodes('Chunk', 'embedding', $k, vecf32($vec))
         YIELD node, score
         RETURN node.id AS id, node.content AS content,
                node.source AS source, node.section AS section,
-               node.roles AS roles, score
+               node.roles AS roles, score, node.namespace AS namespace
         """,
-        params={"k": top_k, "vec": q_vec},
+        params={"k": fetch_k, "vec": q_vec},
     )
 
     hits = []
     for row in knn.result_set:
         score = row[5]
+        node_ns = row[6]
         # Filter out low-relevance hits (cosine distance > threshold)
         if score > SCORE_THRESHOLD:
+            continue
+        # Filter by namespace if requested
+        if namespace and node_ns != namespace:
             continue
         hit = {
             "id": row[0],
@@ -519,20 +547,24 @@ def query_knowledge(graph, question: str, role: str = None, top_k: int = 8, mode
             "score": score,
         }
         hits.append(hit)
+        if len(hits) >= top_k:
+            break
 
     # 2b. Fulltext fallback when vector search finds nothing
     if not hits:
         try:
+            ns_filter = "WHERE node.namespace = $namespace" if namespace else ""
             ft = graph.query(
-                """
+                f"""
                 CALL db.idx.fulltext.queryNodes('Chunk', $q)
                 YIELD node
+                {ns_filter}
                 RETURN node.id AS id, node.content AS content,
                        node.source AS source, node.section AS section,
                        node.roles AS roles
                 LIMIT $k
                 """,
-                params={"q": _build_fulltext_query(question), "k": top_k},
+                params={"q": _build_fulltext_query(question), "k": top_k, **({"namespace": namespace} if namespace else {})},
             )
             for row in ft.result_set:
                 hits.append({

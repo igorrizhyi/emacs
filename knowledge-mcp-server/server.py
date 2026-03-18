@@ -41,6 +41,7 @@ TOOLS = [
                 "query": {"type": "string", "description": "Natural language question"},
                 "role": {"type": "string", "description": "Filter by role: dev, tester, researcher, lead"},
                 "mode": {"type": "string", "enum": ["summary", "technical"], "description": "Response mode: 'summary' for narrative answers, 'technical' for structured technical briefs suitable as dev context"},
+                "namespace": {"type": "string", "description": "Filter by namespace (omit to search all namespaces)"},
             },
             "required": ["query"],
         },
@@ -58,6 +59,7 @@ TOOLS = [
                     "description": "Target roles: dev, tester, researcher, lead",
                 },
                 "source": {"type": "string", "description": "Source identifier (e.g. 'dev.md', 'session-notes')"},
+                "namespace": {"type": "string", "description": "Namespace tag for the stored knowledge (auto-detected from .agent-shell/namespace.json if omitted)"},
             },
             "required": ["content", "roles"],
         },
@@ -92,10 +94,10 @@ async def _handle_query(arguments: dict) -> list[types.TextContent]:
     graph = _ensure_graph()
     query = arguments["query"]
     role = arguments.get("role")
-
     mode = arguments.get("mode", "summary")
+    namespace = arguments.get("namespace")
 
-    result = query_knowledge(graph, query, role=role, top_k=8, mode=mode)
+    result = query_knowledge(graph, query, role=role, top_k=8, mode=mode, namespace=namespace)
 
     parts = [result["response"]]
     if result.get("sources"):
@@ -106,34 +108,55 @@ async def _handle_query(arguments: dict) -> list[types.TextContent]:
     return [types.TextContent(type="text", text="\n".join(parts))]
 
 
+def _resolve_namespace(arguments: dict) -> str | None:
+    """Resolve namespace: explicit argument > namespace.json > None."""
+    ns = arguments.get("namespace")
+    if ns:
+        return ns
+    # Fall back to .agent-shell/namespace.json
+    if PROJECT_ROOT:
+        ns_file = os.path.join(PROJECT_ROOT, ".agent-shell", "namespace.json")
+        try:
+            with open(ns_file) as f:
+                data = json.load(f)
+            return data.get("namespace") or None
+        except (FileNotFoundError, json.JSONDecodeError, KeyError):
+            pass
+    return None
+
+
 async def _handle_store(arguments: dict) -> list[types.TextContent]:
     graph = _ensure_graph()
     content = arguments["content"]
     roles = arguments["roles"]
     source = arguments.get("source", "mcp")
     roles_str = ",".join(roles)
+    namespace = _resolve_namespace(arguments)
 
     if source.startswith("report:"):
         request_id = source.split(":", 1)[1]
-        chunks = chunk_report(content, request_id, roles_str)
+        chunks = chunk_report(content, request_id, roles_str, namespace=namespace)
     elif content.startswith("- "):
         chunks = [{"id": chunk_id(source, content[2:].strip()),
                    "content": content[2:].strip(), "section": "General",
-                   "source": source, "roles": roles_str, "type": "knowledge"}]
+                   "source": source, "roles": roles_str, "type": "knowledge",
+                   "namespace": namespace}]
     else:
         raw = [l.strip() for l in content.split("\n") if l.strip() and not l.strip().startswith("#")]
         chunks = [{"id": chunk_id(source, t), "content": t, "section": "General",
-                   "source": source, "roles": roles_str, "type": "knowledge"} for t in raw]
+                   "source": source, "roles": roles_str, "type": "knowledge",
+                   "namespace": namespace} for t in raw]
 
     if not chunks:
         return [types.TextContent(type="text", text="No content to store")]
 
-    ingest_chunks(graph, chunks)
+    ingest_chunks(graph, chunks, namespace=namespace)
     create_topic_links(graph, chunks)
     new_ids = [c["id"] for c in chunks]
     create_similarity_edges_for_chunks(graph, new_ids)
 
-    return [types.TextContent(type="text", text=f"Stored {len(chunks)} chunk(s). Source: {source}")]
+    ns_info = f" namespace={namespace}" if namespace else ""
+    return [types.TextContent(type="text", text=f"Stored {len(chunks)} chunk(s). Source: {source}{ns_info}")]
 
 
 async def main():
