@@ -1252,13 +1252,14 @@ Stores approval request and shows the approval UI window."
            (list :request-id request-id
                  :title title
                  :description (or description "")
-                 :type (intern type-str)
+                 :type type-str
                  :items (mapcar
                          (lambda (item)
                            (list :id (cdr (assoc 'id item))
                                  :label (cdr (assoc 'label item))
                                  :description (or (cdr (assoc 'description item)) "")
-                                 :selected (eq (cdr (assoc 'default_selected item)) t)))
+                                 (if (equal type-str "checklist") :checked :selected)
+                                 (eq (cdr (assoc 'default_selected item)) t)))
                          (append items nil))
                  :notes ""
                  :timestamp (float-time)))
