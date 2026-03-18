@@ -1306,6 +1306,7 @@ Only the lead role may call this.  Returns an alist with success/message."
   (remhash buffer agent-shell-team--last-activity)
   (remhash buffer agent-shell-team--last-compact-time)
   (when (buffer-live-p buffer)
+    (agent-shell-team--mark-agent-idle (buffer-name buffer))
     (agent-shell-team--unregister-agent buffer)
     (kill-buffer buffer))
   ;; Remove worktree if it exists
@@ -1981,7 +1982,8 @@ Also detects agents stuck in busy state with no ACP output for
   ;; Stop timer if no more queued messages, pending-for-lead, AND no pending tasks
   (when (and (zerop (hash-table-count agent-shell-team--message-queue))
              (zerop (hash-table-count agent-shell-team--pending-for-lead))
-             (null agent-shell-team--task-queue))
+             (null agent-shell-team--task-queue)
+             (zerop (hash-table-count agent-shell-team--idle-inhibit-tracked)))
     (agent-shell-team--stop-drain-timer)))
 
 ;;; Cleanup
