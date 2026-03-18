@@ -323,7 +323,11 @@ start heartbeat timer, add `kill-emacs-hook'."
                                          (symbol-value 'agent-shell-team--session-id)
                                        (number-to-string (emacs-pid)))
                          :hostname (system-name)
-                         :joined_at (float-time)))))
+                         :joined_at (float-time)
+                         :project_root (if (boundp 'agent-shell-namespace--project-root)
+                                           (or (symbol-value 'agent-shell-namespace--project-root)
+                                               default-directory)
+                                         default-directory)))))
     (agent-shell-bus--write-file (agent-shell-bus--our-presence-file)
                                   (concat presence "\n")))
   ;; Create empty event log

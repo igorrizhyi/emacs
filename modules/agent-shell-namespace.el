@@ -35,6 +35,9 @@
 (defvar agent-shell-namespace--project-root nil
   "Project root directory where .agent-shell/namespace.json was found.")
 
+(defvar agent-shell-namespace--peer-projects (make-hash-table :test 'equal)
+  "Hash-table mapping peer PID (number) to project root path string.")
+
 ;;; --- Config reading ---
 
 (defun agent-shell-namespace--read-config ()
@@ -106,6 +109,8 @@ DATA is a plist with :pid, :worktree-name."
 (defun agent-shell-namespace--on-peer-join (data sender-pid)
   "Handle peer-join event.
 DATA is the peer's presence info plist."
+  (when-let ((project (plist-get data :project_root)))
+    (puthash sender-pid project agent-shell-namespace--peer-projects))
   (message "agent-shell-namespace: peer joined (pid=%s, host=%s)"
            sender-pid (or (plist-get data :hostname) "?")))
 
@@ -113,6 +118,7 @@ DATA is the peer's presence info plist."
   "Handle peer-leave event.  Remove all foreign agents for that peer."
   (setq my/team-sidebar--foreign-agents
         (assq-delete-all sender-pid my/team-sidebar--foreign-agents))
+  (remhash sender-pid agent-shell-namespace--peer-projects)
   (message "agent-shell-namespace: peer left (pid=%s)" sender-pid)
   (agent-shell-namespace--maybe-refresh-sidebar))
 
@@ -172,6 +178,12 @@ set sidebar vars.  Called from `agent-shell-team' init."
         ;; Set sidebar state
         (setq my/team-sidebar--namespace-active t)
         (setq my/team-sidebar--foreign-agents nil)
+        ;; Populate project roots for peers already present at startup
+        (when (boundp 'agent-shell-bus--peers)
+          (maphash (lambda (pid info)
+                     (when-let ((project (plist-get info :project_root)))
+                       (puthash pid project agent-shell-namespace--peer-projects)))
+                   agent-shell-bus--peers))
         (message "agent-shell-namespace: initialized for namespace '%s'" ns)))))
 
 (defun agent-shell-namespace-teardown ()
@@ -180,6 +192,7 @@ set sidebar vars.  Called from `agent-shell-team' init."
     (agent-shell-bus-stop)
     (setq agent-shell-namespace--config nil)
     (setq agent-shell-namespace--project-root nil)
+    (clrhash agent-shell-namespace--peer-projects)
     (setq my/team-sidebar--namespace-active nil)
     (setq my/team-sidebar--foreign-agents nil)
     (agent-shell-namespace--maybe-refresh-sidebar)
