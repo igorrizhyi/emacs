@@ -840,8 +840,12 @@ Returns t if anything was inserted, nil otherwise."
         (when (buffer-live-p buf)
           (let ((window-buffer-change-functions nil)
                 (window-selection-change-functions nil))
-            (display-buffer buf '(display-buffer-use-some-window
-                                  (inhibit-same-window . t)))))))))
+            (display-buffer buf '((display-buffer-reuse-window
+                                   display-buffer-in-side-window)
+                                  (side . bottom)
+                                  (slot . 0)
+                                  (window-height . 0.4)
+                                  (preserve-size . (nil . t))))))))))
 
 (defun my/team-sidebar--task-at-point ()
   "Return the task plist at point, or nil."
@@ -921,8 +925,12 @@ Returns t if anything was inserted, nil otherwise."
         (when buf
           (let ((window-buffer-change-functions nil)
                 (window-selection-change-functions nil))
-            (display-buffer buf '(display-buffer-use-some-window
-                                  (inhibit-same-window . t)))))))))
+            (display-buffer buf '((display-buffer-reuse-window
+                                   display-buffer-in-side-window)
+                                  (side . bottom)
+                                  (slot . 0)
+                                  (window-height . 0.4)
+                                  (preserve-size . (nil . t))))))))))
 
 (defun my/team-sidebar--preview-current ()
   "Preview either agent buffer or task report at point."
@@ -994,8 +1002,12 @@ Returns t if anything was inserted, nil otherwise."
           (if (file-readable-p report)
               (select-window
                (display-buffer (find-file-noselect report)
-                               '(display-buffer-use-some-window
-                                 (inhibit-same-window . t))))
+                               '((display-buffer-reuse-window
+                                  display-buffer-in-side-window)
+                                 (side . bottom)
+                                 (slot . 0)
+                                 (window-height . 0.4)
+                                 (preserve-size . (nil . t)))))
             (message "Report not readable: %s" report))
         (message "No report for this task."))))
    ;; Foreign agent line — read-only
@@ -1009,8 +1021,12 @@ Returns t if anything was inserted, nil otherwise."
       (if (buffer-live-p buf)
           (select-window
            (or (get-buffer-window buf)
-               (display-buffer buf '(display-buffer-use-some-window
-                                     (inhibit-same-window . t)))))
+               (display-buffer buf '((display-buffer-reuse-window
+                                      display-buffer-in-side-window)
+                                     (side . bottom)
+                                     (slot . 0)
+                                     (window-height . 0.4)
+                                     (preserve-size . (nil . t))))))
         (message "Agent buffer is dead."))))
    (t (message "Nothing on this line."))))
 
