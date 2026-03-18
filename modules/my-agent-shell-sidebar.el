@@ -148,6 +148,14 @@
 (defvar my/team-sidebar--quota-fetching nil
   "Non-nil when a quota fetch is in progress.")
 
+(defconst my/team-sidebar--quota-cache-file
+  (expand-file-name "~/.claude/.quota-cache.json")
+  "Shared cache file for quota data across Emacs instances.")
+
+(defconst my/team-sidebar--quota-cache-ttl 25
+  "Cache TTL in seconds. Slightly less than the 30s timer interval
+to avoid edge cases where cache expires between check and next tick.")
+
 ;;; ---- Foreign Agents State (Namespace) --------------------------------------
 
 (defvar my/team-sidebar--foreign-agents nil
@@ -156,6 +164,51 @@ Each agent-list contains alists with keys: role, worktree-name, status, hostname
 
 (defvar my/team-sidebar--namespace-active nil
   "Non-nil when a namespace is active and foreign agents should be displayed.")
+
+;;; ---- Quota Cache -----------------------------------------------------------
+
+(defun my/team-sidebar--quota-cache-read ()
+  "Read quota cache file. Return alist if fresh, nil if stale/missing."
+  (condition-case nil
+      (when (file-exists-p my/team-sidebar--quota-cache-file)
+        (let* ((json-object-type 'alist)
+               (json-key-type 'symbol)
+               (data (json-read-file my/team-sidebar--quota-cache-file))
+               (fetched-at (alist-get 'fetched_at data)))
+          (when (and fetched-at
+                     (< (- (float-time) fetched-at)
+                        my/team-sidebar--quota-cache-ttl))
+            data)))
+    (error nil)))
+
+(defun my/team-sidebar--quota-cache-write (util-5h util-7d reset-5h reset-7d)
+  "Write quota data to shared cache file atomically.
+UTIL-5H, UTIL-7D are floats; RESET-5H, RESET-7D are unix timestamps."
+  (condition-case nil
+      (let* ((data (json-encode
+                    `((fetched_at . ,(float-time))
+                      (util_5h . ,util-5h)
+                      (util_7d . ,util-7d)
+                      (reset_5h . ,reset-5h)
+                      (reset_7d . ,reset-7d))))
+             (tmp-file (concat my/team-sidebar--quota-cache-file ".tmp")))
+        (with-temp-file tmp-file
+          (insert data))
+        (rename-file tmp-file my/team-sidebar--quota-cache-file t))
+    (error nil)))
+
+(defun my/team-sidebar--quota-apply-cache (data)
+  "Apply cached quota DATA (alist) to buffer-local state and re-render."
+  (let ((u5 (alist-get 'util_5h data))
+        (u7 (alist-get 'util_7d data))
+        (r5 (alist-get 'reset_5h data))
+        (r7 (alist-get 'reset_7d data)))
+    (when u5 (setq my/team-sidebar--quota-5h-util u5))
+    (when u7 (setq my/team-sidebar--quota-7d-util u7))
+    (when r5 (setq my/team-sidebar--quota-5h-reset r5))
+    (when r7 (setq my/team-sidebar--quota-7d-reset r7))
+    (setq my/team-sidebar--quota-error nil))
+  (my/team-sidebar--render))
 
 ;;; ---- Quota API -------------------------------------------------------------
 
@@ -178,9 +231,17 @@ Returns the token string, or nil if unavailable or expired."
     (error nil)))
 
 (defun my/team-sidebar--quota-fetch ()
-  "Fetch quota utilization from Anthropic API asynchronously."
+  "Fetch quota utilization, using shared file cache when fresh.
+Only makes an API call if the cache is stale or missing, so multiple
+Emacs instances share a single fetch per cycle."
   (when my/team-sidebar--quota-fetching
     (cl-return-from my/team-sidebar--quota-fetch nil))
+  ;; Check shared cache first
+  (let ((cached (my/team-sidebar--quota-cache-read)))
+    (when cached
+      (my/team-sidebar--quota-apply-cache cached)
+      (cl-return-from my/team-sidebar--quota-fetch nil)))
+  ;; Cache miss — do the actual API call
   (condition-case err
       (let ((token (my/team-sidebar--quota-read-token)))
         (unless token
@@ -225,7 +286,11 @@ Returns the token string, or nil if unavailable or expired."
             (setq my/team-sidebar--quota-5h-reset (string-to-number reset-5h)))
           (when reset-7d
             (setq my/team-sidebar--quota-7d-reset (string-to-number reset-7d)))
-          (setq my/team-sidebar--quota-error nil)))
+          (setq my/team-sidebar--quota-error nil)
+          ;; Write to shared cache so other instances can skip the API call
+          (my/team-sidebar--quota-cache-write
+           my/team-sidebar--quota-5h-util my/team-sidebar--quota-7d-util
+           my/team-sidebar--quota-5h-reset my/team-sidebar--quota-7d-reset)))
     (error (setq my/team-sidebar--quota-error "Parse error")))
   (when (buffer-live-p (current-buffer))
     (kill-buffer (current-buffer)))
