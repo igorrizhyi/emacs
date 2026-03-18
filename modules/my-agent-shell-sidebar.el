@@ -618,8 +618,10 @@ Returns t if anything was inserted, nil otherwise."
                                 (agent-shell-team--agent-status buffer)
                               'dead))
                     (status (if (and (equal role "lead")
-                                     (boundp 'my-agent-shell-sprite--current-state)
-                                     (eq my-agent-shell-sprite--current-state 'pending))
+                                     buffer
+                                     (get-buffer buffer)
+                                     (with-current-buffer buffer
+                                       (my-agent-shell-sprite--pending-p)))
                                 'pending
                               status))
                     (indicator (my/team-sidebar--status-indicator status)))
