@@ -5,8 +5,6 @@
 ;; Auto-discovered via (intern (format "claude-code-mcp-handle-%s" tool-name))
 ;; in mcp-stdio-server.el
 
-(require 'posframe)
-
 ;;; --- State Variables ---
 
 (defvar my-request-human--done nil
@@ -44,7 +42,7 @@
   "Braille spinner animation frames.")
 
 (defconst my-request-human--buffer-name " *request-human*"
-  "Buffer name for the posframe popup.")
+  "Buffer name for the request-human side window.")
 
 ;;; --- Action Registry ---
 
@@ -68,7 +66,7 @@ Each entry is (ACTION-ID . PLIST) where PLIST has:
   :label   - Human-readable label for display
   :command - Function taking a directory, returning a process or nil.")
 
-;;; --- Keymap & Minor Mode ---
+;;; --- Keymap & Major Mode ---
 
 (defvar my-request-human-mode-map
   (let ((map (make-sparse-keymap)))
@@ -77,18 +75,87 @@ Each entry is (ACTION-ID . PLIST) where PLIST has:
     (define-key map (kbd "<escape>") #'my-request-human--cancel)
     (define-key map (kbd "q") #'my-request-human--cancel)
     map)
-  "Keymap for request-human popup.")
+  "Keymap for `my-request-human-mode'.")
 
-(define-minor-mode my-request-human-mode
-  "Minor mode for request-human popup interaction."
-  :lighter " ReqHuman"
-  :keymap my-request-human-mode-map)
+(define-derived-mode my-request-human-mode special-mode "ReqHuman"
+  "Major mode for the request-human capture UI."
+  :interactive nil
+  (setq cursor-type 'bar
+        truncate-lines t
+        buffer-read-only t
+        mode-line-format nil
+        header-line-format (propertize " Request Human" 'face 'bold)))
+
+(when (fboundp 'evil-define-key*)
+  (evil-set-initial-state 'my-request-human-mode 'normal)
+  (evil-define-key* 'normal my-request-human-mode-map
+    "j" #'my-request-human--next-item
+    "k" #'my-request-human--prev-item
+    " " #'my-request-human--toggle-checkbox
+    (kbd "RET") #'my-request-human--confirm
+    "q" #'my-request-human--cancel
+    (kbd "ESC") #'my-request-human--cancel))
+
+;;; --- Navigation ---
+
+(defun my-request-human--next-item ()
+  "Move to the next action item."
+  (interactive)
+  (forward-line 1)
+  (while (and (not (eobp))
+              (not (get-text-property (line-beginning-position) 'my-request-human-action)))
+    (forward-line 1))
+  (when (eobp)
+    (forward-line -1)
+    (while (and (not (bobp))
+                (not (get-text-property (line-beginning-position) 'my-request-human-action)))
+      (forward-line -1))))
+
+(defun my-request-human--prev-item ()
+  "Move to the previous action item."
+  (interactive)
+  (forward-line -1)
+  (while (and (not (bobp))
+              (not (get-text-property (line-beginning-position) 'my-request-human-action)))
+    (forward-line -1)))
+
+;;; --- Side Window Display ---
+
+(defun my-request-human--get-or-create-buffer ()
+  "Get or create the request-human buffer with the proper major mode."
+  (or (get-buffer my-request-human--buffer-name)
+      (with-current-buffer (get-buffer-create my-request-human--buffer-name)
+        (my-request-human-mode)
+        (current-buffer))))
+
+(defun my-request-human--show ()
+  "Display the request-human buffer in a bottom side window and select it."
+  (let* ((buf (my-request-human--get-or-create-buffer))
+         (win (or (get-buffer-window buf t)
+                  (display-buffer-in-side-window
+                   buf
+                   '((side . bottom)
+                     (slot . 0)
+                     (window-height . 12)
+                     (dedicated . t))))))
+    (when win
+      (set-window-parameter win 'no-delete-other-windows t)
+      (set-window-parameter win 'no-other-window t)
+      (select-window win))))
+
+(defun my-request-human--cleanup ()
+  "Delete the side window and kill the buffer."
+  (let ((win (get-buffer-window my-request-human--buffer-name t)))
+    (when (window-live-p win)
+      (delete-window win)))
+  (when-let ((buf (get-buffer my-request-human--buffer-name)))
+    (kill-buffer buf)))
 
 ;;; --- Phase 1: Action Selection ---
 
 (defun my-request-human--render-selection ()
-  "Render the action selection phase in the posframe buffer."
-  (let ((buf (get-buffer-create my-request-human--buffer-name)))
+  "Render the action selection phase in the buffer."
+  (let ((buf (my-request-human--get-or-create-buffer)))
     (with-current-buffer buf
       (let ((inhibit-read-only t))
         (erase-buffer)
@@ -108,34 +175,16 @@ Each entry is (ACTION-ID . PLIST) where PLIST has:
 (defun my-request-human--toggle-checkbox ()
   "Toggle the checkbox at point."
   (interactive)
-  (let ((action (get-text-property (line-beginning-position) 'my-request-human-action)))
+  (let ((action (get-text-property (line-beginning-position) 'my-request-human-action))
+        (cur-line (line-number-at-pos)))
     (when action
       (if (member action my-request-human--selected-actions)
           (setq my-request-human--selected-actions
                 (delete action my-request-human--selected-actions))
         (push action my-request-human--selected-actions))
       (my-request-human--render-selection)
-      ;; Re-show posframe with updated content
-      (my-request-human--show-posframe))))
-
-(defun my-request-human--show-posframe ()
-  "Show or update the posframe with current buffer content."
-  (posframe-show my-request-human--buffer-name
-                 :accept-focus t
-                 :background-color "#1a1400"
-                 :border-color "#ffb000"
-                 :border-width 2
-                 :internal-border-width 12
-                 :min-width 60
-                 :poshandler #'posframe-poshandler-frame-center)
-  ;; Transfer focus
-  (let ((frame (buffer-local-value 'posframe--frame
-                                   (get-buffer my-request-human--buffer-name))))
-    (when frame
-      (select-frame-set-input-focus frame)
-      (select-window (frame-selected-window frame))
-      (when (fboundp 'evil-emacs-state)
-        (evil-emacs-state)))))
+      (goto-char (point-min))
+      (forward-line (1- cur-line)))))
 
 (defun my-request-human--confirm ()
   "Confirm selection and transition to capture phase or finish."
@@ -170,7 +219,6 @@ Each entry is (ACTION-ID . PLIST) where PLIST has:
   ;; Start spinner
   (setq my-request-human--spinner-index 0)
   (my-request-human--render-capture)
-  (my-request-human--show-posframe)
   (setq my-request-human--spinner-timer
         (run-with-timer 0 0.1 #'my-request-human--update-spinner)))
 
@@ -185,26 +233,27 @@ Return the process or nil."
 
 (defun my-request-human--render-capture ()
   "Render the capture phase UI."
-  (let ((buf (get-buffer-create my-request-human--buffer-name)))
-    (with-current-buffer buf
-      (let ((inhibit-read-only t))
-        (erase-buffer)
-        (insert (propertize my-request-human--message
-                            'face '(:foreground "#ffb000" :height 1.1))
-                "\n\n")
-        (insert (propertize (nth my-request-human--spinner-index
-                                 my-request-human--spinner-frames)
-                            'face '(:foreground "#ffb000"))
-                " "
-                (propertize "Capturing... press RET when done"
-                            'face '(:foreground "#ffb000"))
-                "\n\n")
-        (insert (propertize "Active: " 'face '(:foreground "#666666"))
-                (propertize (string-join my-request-human--selected-actions ", ")
-                            'face '(:foreground "#888888"))
-                "\n\n")
-        (insert (propertize "[RET] stop & finish  [q/ESC] cancel"
-                            'face '(:foreground "#666666")))))))
+  (let ((buf (get-buffer my-request-human--buffer-name)))
+    (when buf
+      (with-current-buffer buf
+        (let ((inhibit-read-only t))
+          (erase-buffer)
+          (insert (propertize my-request-human--message
+                              'face '(:foreground "#ffb000" :height 1.1))
+                  "\n\n")
+          (insert (propertize (nth my-request-human--spinner-index
+                                   my-request-human--spinner-frames)
+                              'face '(:foreground "#ffb000"))
+                  " "
+                  (propertize "Capturing... press RET when done"
+                              'face '(:foreground "#ffb000"))
+                  "\n\n")
+          (insert (propertize "Active: " 'face '(:foreground "#666666"))
+                  (propertize (string-join my-request-human--selected-actions ", ")
+                              'face '(:foreground "#888888"))
+                  "\n\n")
+          (insert (propertize "[RET] stop & finish  [q/ESC] cancel"
+                              'face '(:foreground "#666666"))))))))
 
 (defun my-request-human--update-spinner ()
   "Update spinner animation frame."
@@ -245,7 +294,7 @@ Returns an alist with keys `success', `artifacts_dir', and `files'."
   (let* ((message (or message "Select capture actions"))
          (actions (or actions (mapcar #'car my-request-human-action-registry)))
          (temp-dir (make-temp-file "request-human-" t))
-         (parent-frame (selected-frame)))
+         (prev-window (selected-window)))
     ;; Reset state
     (setq my-request-human--done nil
           my-request-human--cancelled nil
@@ -259,10 +308,7 @@ Returns an alist with keys `success', `artifacts_dir', and `files'."
           my-request-human--message message)
     ;; Render and show
     (my-request-human--render-selection)
-    (my-request-human--show-posframe)
-    ;; Enable minor mode in posframe buffer
-    (with-current-buffer my-request-human--buffer-name
-      (my-request-human-mode 1))
+    (my-request-human--show)
     ;; Block with recursive-edit so keymaps dispatch properly
     (unwind-protect
         (condition-case nil
@@ -276,11 +322,10 @@ Returns an alist with keys `success', `artifacts_dir', and `files'."
       (dolist (proc my-request-human--processes)
         (when (process-live-p proc)
           (kill-process proc)))
-      (posframe-delete my-request-human--buffer-name)
-      ;; Restore focus to parent frame
-      (when (frame-live-p parent-frame)
-        (select-frame-set-input-focus parent-frame)
-        (select-window (frame-selected-window parent-frame))))
+      (my-request-human--cleanup)
+      ;; Restore focus to previous window
+      (when (window-live-p prev-window)
+        (select-window prev-window)))
     ;; Return result
     (if my-request-human--cancelled
         '((success . nil) (message . "User cancelled"))
