@@ -151,6 +151,8 @@
   "30-second timer for quota refresh.")
 (defvar my/team-sidebar--quota-fetching nil
   "Non-nil when a quota fetch is in progress.")
+(defvar my/team-sidebar--quota-fetch-started nil
+  "Timestamp when current fetch began, for timeout detection.")
 
 (defconst my/team-sidebar--quota-cache-file
   (expand-file-name "~/.claude/.quota-cache.json")
@@ -238,6 +240,13 @@ Returns the token string, or nil if unavailable or expired."
   "Fetch quota utilization, using shared file cache when fresh.
 Only makes an API call if the cache is stale or missing, so multiple
 Emacs instances share a single fetch per cycle."
+  ;; Timeout recovery: if a fetch has been running > 15s, force-clear the guard
+  (when (and my/team-sidebar--quota-fetching
+             my/team-sidebar--quota-fetch-started
+             (> (- (float-time) my/team-sidebar--quota-fetch-started) 15))
+    (setq my/team-sidebar--quota-fetching nil
+          my/team-sidebar--quota-fetch-started nil
+          my/team-sidebar--quota-error "Fetch timeout"))
   (when my/team-sidebar--quota-fetching
     (cl-return-from my/team-sidebar--quota-fetch nil))
   ;; Check shared cache first
@@ -250,7 +259,8 @@ Emacs instances share a single fetch per cycle."
       (let ((token (my/team-sidebar--quota-read-token)))
         (unless token
           (cl-return-from my/team-sidebar--quota-fetch nil))
-        (setq my/team-sidebar--quota-fetching t)
+        (setq my/team-sidebar--quota-fetching t
+              my/team-sidebar--quota-fetch-started (float-time))
         (let ((url-request-method "POST")
               (url-request-extra-headers
                `(("x-api-key" . ,token)
@@ -269,11 +279,13 @@ Emacs instances share a single fetch per cycle."
            nil t t)))
     (error
      (setq my/team-sidebar--quota-fetching nil
+           my/team-sidebar--quota-fetch-started nil
            my/team-sidebar--quota-error (format "%s" err)))))
 
 (defun my/team-sidebar--quota-callback (status)
   "Handle quota API response. STATUS is the url-retrieve status plist."
-  (setq my/team-sidebar--quota-fetching nil)
+  (setq my/team-sidebar--quota-fetching nil
+        my/team-sidebar--quota-fetch-started nil)
   (condition-case nil
       (if (plist-get status :error)
           (setq my/team-sidebar--quota-error "API error")
@@ -1220,8 +1232,7 @@ Returns t if anything was inserted, nil otherwise."
   (let ((win (get-buffer-window my/team-sidebar-buffer-name t)))
     (when win
       (delete-window win)))
-  (my/team-sidebar--stop-timer)
-  (my/team-sidebar--quota-stop-timer))
+  (my/team-sidebar--stop-timer))
 
 (defun my/team-sidebar--set-window-params (win)
   "Set protective window parameters on WIN."
