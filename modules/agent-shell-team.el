@@ -1701,18 +1701,40 @@ SESSION-ID identifies the team.  GROUP contains the completed request IDs."
 
 ;;; Message delivery
 
+(defun agent-shell-team--user-has-pending-input-p (buffer)
+  "Return non-nil if BUFFER has user-typed text at the prompt."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (let ((proc (get-buffer-process buffer)))
+        (and proc
+             (not shell-maker--busy)
+             (let ((pm (marker-position (process-mark proc))))
+               (and pm
+                    (> (point-max) pm)
+                    (not (string-empty-p
+                          (string-trim (buffer-substring-no-properties pm (point-max))))))))))))
+
 (defun agent-shell-team--prompt-agent (buffer message)
   "Deliver MESSAGE to BUFFER's agent via shell-maker-submit.
 This goes through shell-maker's normal prompt flow so that:
 - The message appears in the shell buffer
 - shell-maker--busy is set correctly
-- ACP notifications render in-buffer instead of as stale minibuffer messages."
+- ACP notifications render in-buffer instead of as stale minibuffer messages.
+If the user has uncommitted text at the prompt, defer delivery by re-queuing."
   (when (buffer-live-p buffer)
-    (message "agent-shell-team: prompt-agent to %s (process=%s, status=%s)"
-             (buffer-name buffer) (get-buffer-process buffer)
-             (agent-shell-team--agent-status buffer))
-    (with-current-buffer buffer
-      (shell-maker-submit :input (format "«TEAM»\n%s\n«/TEAM»" message)))))
+    (if (agent-shell-team--user-has-pending-input-p buffer)
+        ;; User is typing — defer by re-queuing
+        (progn
+          (agent-shell-team--queue-message
+           nil buffer
+           (list :from "system" :title "Deferred" :message message))
+          (agent-shell-team--start-drain-timer))
+      ;; Safe to deliver
+      (message "agent-shell-team: prompt-agent to %s (process=%s, status=%s)"
+               (buffer-name buffer) (get-buffer-process buffer)
+               (agent-shell-team--agent-status buffer))
+      (with-current-buffer buffer
+        (shell-maker-submit :input (format "«TEAM»\n%s\n«/TEAM»" message))))))
 
 (defun agent-shell-team--prompt-agent-silent (buffer message)
   "Deliver MESSAGE to BUFFER's agent via raw ACP request.
@@ -1835,7 +1857,8 @@ Called after usage_update notification arrives.  Only acts when:
           (run-at-time 0 nil
             (lambda ()
               (when (and (buffer-live-p buf)
-                         (not (with-current-buffer buf shell-maker--busy)))
+                         (not (with-current-buffer buf shell-maker--busy))
+                         (not (agent-shell-team--user-has-pending-input-p buf)))
                 (with-current-buffer buf
                   (shell-maker-submit :input "/compact"))))))))))
 
