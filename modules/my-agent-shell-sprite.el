@@ -3,7 +3,8 @@
 ;; Replace the default AI logo with animated sprite frames in the lead
 ;; buffer's graphical header.  Idle and busy states each have their own
 ;; sprite strip.  Frames are pre-read at load time; the existing 10 Hz
-;; heartbeat drives the animation — no extra timers.
+;; heartbeat drives busy animation, a lightweight idle timer handles
+;; idle animation.
 
 ;;; Code:
 
@@ -14,6 +15,10 @@
 (defvar my-agent-shell-sprite-dir
   (expand-file-name ".agent-shell/sprites/" doom-user-dir)
   "Directory containing sprite sub-directories (lead-idle/, lead-busy/).")
+
+(defvar my-agent-shell-sprite-frame-divisor 3
+  "How many heartbeat ticks to hold each busy frame.
+With the 10 Hz heartbeat, divisor=3 means each frame shows for 300ms.")
 
 ;;;; Frame cache (populated once at load time)
 
@@ -35,6 +40,35 @@ Returns a vector of absolute file paths sorted by name."
       (my-agent-shell-sprite--load-frames "lead-idle"))
 (setq my-agent-shell-sprite--busy-frames
       (my-agent-shell-sprite--load-frames "lead-busy"))
+
+;;;; Idle animation timer
+
+(defvar my-agent-shell-sprite--idle-counter 0
+  "Frame counter incremented by the idle animation timer.")
+
+(defvar my-agent-shell-sprite--idle-timer nil
+  "Repeating timer that drives idle sprite animation.")
+
+(defun my-agent-shell-sprite--idle-tick ()
+  "Increment idle counter and refresh header for lead buffers."
+  (cl-incf my-agent-shell-sprite--idle-counter)
+  (dolist (buf (buffer-list))
+    (when (buffer-live-p buf)
+      (with-current-buffer buf
+        (when (my-agent-shell-sprite--lead-buffer-p)
+          (force-mode-line-update))))))
+
+(defun my-agent-shell-sprite--ensure-idle-timer ()
+  "Start the idle timer if not already running."
+  (unless my-agent-shell-sprite--idle-timer
+    (setq my-agent-shell-sprite--idle-timer
+          (run-with-timer 0.3 0.3 #'my-agent-shell-sprite--idle-tick))))
+
+(defun my-agent-shell-sprite--stop-idle-timer ()
+  "Stop the idle timer if running."
+  (when my-agent-shell-sprite--idle-timer
+    (cancel-timer my-agent-shell-sprite--idle-timer)
+    (setq my-agent-shell-sprite--idle-timer nil)))
 
 ;;;; Helpers
 
@@ -58,12 +92,21 @@ Returns a vector of absolute file paths sorted by name."
 (defun my-agent-shell-sprite--current-frame-path ()
   "Return the file path of the current sprite frame for a lead buffer, or nil."
   (when (my-agent-shell-sprite--lead-buffer-p)
-    (let* ((frames (if (my-agent-shell-sprite--busy-p)
+    (let* ((busy (my-agent-shell-sprite--busy-p))
+           (frames (if busy
                        my-agent-shell-sprite--busy-frames
                      my-agent-shell-sprite--idle-frames))
            (n (length frames)))
+      ;; Manage idle timer: run when idle, stop when busy
+      (if busy
+          (my-agent-shell-sprite--stop-idle-timer)
+        (my-agent-shell-sprite--ensure-idle-timer))
       (when (> n 0)
-        (aref frames (mod (my-agent-shell-sprite--heartbeat-value) n))))))
+        (let ((idx (if busy
+                       (/ (my-agent-shell-sprite--heartbeat-value)
+                          my-agent-shell-sprite-frame-divisor)
+                     my-agent-shell-sprite--idle-counter)))
+          (aref frames (mod idx n)))))))
 
 ;;;; Advice: replace icon for lead buffers
 
@@ -91,8 +134,12 @@ Appends a :sprite-frame entry to the model for lead buffers so the
 header cache key changes on each animation frame."
   (let ((model (apply orig-fn args)))
     (when (my-agent-shell-sprite--lead-buffer-p)
-      (setq model (append model
-                          `((:sprite-frame . ,(my-agent-shell-sprite--heartbeat-value))))))
+      (let ((frame-idx (if (my-agent-shell-sprite--busy-p)
+                           (/ (my-agent-shell-sprite--heartbeat-value)
+                              my-agent-shell-sprite-frame-divisor)
+                         my-agent-shell-sprite--idle-counter)))
+        (setq model (append model
+                            `((:sprite-frame . ,frame-idx))))))
     model))
 
 (advice-add 'agent-shell--make-header-model
