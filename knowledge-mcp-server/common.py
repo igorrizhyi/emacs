@@ -498,7 +498,9 @@ SYSTEM_PROMPTS = {
         "You are a team knowledge assistant. Answer ONLY based on the provided context chunks. "
         "Do NOT use general knowledge or make inferences beyond what the context explicitly states. "
         "If the context does not contain enough information to answer, say so clearly. "
-        "Be concise and cite sources in [source] format."
+        "Be concise and cite sources in [source] format. "
+        "When chunks come from different projects, prefix your information with the project name "
+        "so the reader knows which project each fact applies to."
     ),
     "technical": (
         "You are a technical knowledge extractor. Given context chunks from the knowledge graph, "
@@ -509,7 +511,9 @@ SYSTEM_PROMPTS = {
         "- Architectural decisions and their rationale\n"
         "Format as bullet points grouped by topic. Do NOT write prose — only structured facts. "
         "If the context lacks information for a category, omit it rather than guessing. "
-        "Cite sources in [source] format."
+        "Cite sources in [source] format. "
+        "When chunks come from different projects, prefix each fact with the project name "
+        "so the reader knows which project it applies to."
     ),
 }
 
@@ -578,6 +582,7 @@ def query_knowledge(graph, question: str, role: str = None, top_k: int = 8, mode
             "section": row[3],
             "roles": row[4],
             "score": score,
+            "project": node_project,
         }
         hits.append(hit)
         if len(hits) >= top_k:
@@ -594,7 +599,7 @@ def query_knowledge(graph, question: str, role: str = None, top_k: int = 8, mode
                 {proj_filter}
                 RETURN node.id AS id, node.content AS content,
                        node.source AS source, node.section AS section,
-                       node.roles AS roles
+                       node.roles AS roles, node.project AS project
                 LIMIT $k
                 """,
                 params={"q": _build_fulltext_query(question), "k": top_k, **({"project": project} if project else {})},
@@ -607,6 +612,7 @@ def query_knowledge(graph, question: str, role: str = None, top_k: int = 8, mode
                     "section": row[3],
                     "roles": row[4],
                     "score": 0.99,  # synthetic score — fulltext hits have no vector score
+                    "project": row[5],
                 })
         except Exception:
             pass  # fulltext index may not exist or query may fail
@@ -616,19 +622,21 @@ def query_knowledge(graph, question: str, role: str = None, top_k: int = 8, mode
     # 4. Graph expansion — 1 hop only to limit context size (batched)
     expanded_chunks = []
     if hit_ids:
+        proj_filter = "AND c2.project = $project" if project else ""
         exp = graph.query(
-            """
+            f"""
             UNWIND $ids AS hid
-            MATCH (c1:Chunk {id: hid})-[:RELATED_TO|HAS_TOPIC*1..1]-(c2:Chunk)
-            WHERE NOT c2.id IN $ids
+            MATCH (c1:Chunk {{id: hid}})-[:RELATED_TO|HAS_TOPIC*1..1]-(c2:Chunk)
+            WHERE NOT c2.id IN $ids {proj_filter}
             RETURN DISTINCT c2.id AS id, c2.content AS content,
-                   c2.source AS source, c2.section AS section
+                   c2.source AS source, c2.section AS section,
+                   c2.project AS project
             """,
-            params={"ids": hit_ids},
+            params={"ids": hit_ids, **({"project": project} if project else {})},
         )
         for row in exp.result_set:
             expanded_chunks.append(
-                {"id": row[0], "content": row[1], "source": row[2], "section": row[3]}
+                {"id": row[0], "content": row[1], "source": row[2], "section": row[3], "project": row[4]}
             )
 
     # Deduplicate expanded and cap at MAX_EXPANDED_CHUNKS
@@ -654,10 +662,12 @@ def query_knowledge(graph, question: str, role: str = None, top_k: int = 8, mode
     context_parts = []
     for h in hits:
         content = _truncate_report_content(h["content"]) if _is_report_chunk(h) else h["content"]
-        context_parts.append(f"[{h['source']} / {h['section']}] {content}")
+        proj_label = f"from {h['project']}: " if h.get("project") else ""
+        context_parts.append(f"[{proj_label}{h['source']} / {h['section']}] {content}")
     for ec in unique_expanded:
         content = _truncate_report_content(ec["content"]) if _is_report_chunk(ec) else ec["content"]
-        context_parts.append(f"[expanded: {ec['source']} / {ec['section']}] {content}")
+        proj_label = f"from {ec['project']}: " if ec.get("project") else ""
+        context_parts.append(f"[expanded: {proj_label}{ec['source']} / {ec['section']}] {content}")
 
     context_text = "\n\n".join(context_parts)
 
