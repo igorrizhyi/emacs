@@ -2023,6 +2023,10 @@ ROLE is \"lead\", \"dev\", \"tester\", or \"researcher\".
 MODE is \"isolated\" or \"neighbor\".
 DIRECTORY is the working directory.
 WORKTREE-PATH and WORKTREE-NAME are for isolated mode."
+  ;; Ensure namespace is initialized (idempotent, uses directory for locate-dominating-file)
+  (let ((default-directory (or directory default-directory)))
+    (when (fboundp 'agent-shell-namespace-init)
+      (agent-shell-namespace-init)))
   (message "agent-shell-team: start-agent called for role=%s mode=%s" role mode)
   (let* ((buf-name (agent-shell-team--buffer-name session-id role worktree-name))
          (default-directory (or directory default-directory))
@@ -2176,10 +2180,6 @@ When called from an existing team buffer:
 
     (message "agent-shell-team: start called, session=%s role=%s mode=%s"
              (agent-shell-team--short-session-id session-id) role mode)
-
-    ;; Initialize namespace bus if configured
-    (when (fboundp 'agent-shell-namespace-init)
-      (agent-shell-namespace-init))
 
     ;; Determine working directory
     (pcase mode
