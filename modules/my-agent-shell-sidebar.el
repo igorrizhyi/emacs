@@ -553,8 +553,15 @@ Returns t if anything was inserted, nil otherwise."
     (dolist (peer my/team-sidebar--foreign-agents)
       (let ((pid (car peer))
             (agents (cdr peer)))
-        (let ((hostname (or (alist-get 'hostname (car agents)) "unknown")))
-          (insert (propertize (format "  %s (pid %s)\n" hostname pid)
+        (let* ((hostname (or (alist-get 'hostname (car agents)) "unknown"))
+               (project-root (and (boundp 'agent-shell-namespace--peer-projects)
+                                  (gethash pid agent-shell-namespace--peer-projects)))
+               (project-name (when project-root
+                               (file-name-nondirectory (directory-file-name project-root))))
+               (header (if project-name
+                           (format "  %s · %s" project-name hostname)
+                         (format "  %s (pid %s)" hostname pid))))
+          (insert (propertize (concat header "\n")
                               'face 'font-lock-comment-face))
           (dolist (agent agents)
             (let* ((role (or (alist-get 'role agent) "?"))
