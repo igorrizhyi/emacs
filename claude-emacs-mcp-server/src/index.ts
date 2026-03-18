@@ -27,6 +27,10 @@ import {
   messagePeerOutputSchema,
 } from "./schemas/message-peer-schema.js";
 import {
+  presentOptionsInputSchema,
+  presentOptionsOutputSchema,
+} from "./schemas/approval-schema.js";
+import {
   getDiagnosticsInputSchema,
   getDiagnosticsOutputSchema,
 } from "./schemas/diagnostic-schema.js";
@@ -71,6 +75,7 @@ import {
   handleTaskUpdate,
   handleDismissAgent,
   handleMessagePeer,
+  handlePresentOptions,
   handleExecuteTerminalCommandInEmacs,
   handleGetTerminalContent,
   handleCreateTerminal,
@@ -402,6 +407,28 @@ function registerTools() {
     },
     async (args, _extra) => {
       const result = await handleMessagePeer(bridge, args);
+      return {
+        content: result.content,
+        structuredContent: {
+          success: result.status === 'success',
+          message: result.message || '',
+        },
+        isError: result.isError,
+      };
+    }
+  );
+
+  // presentOptions tool
+  server.registerTool(
+    "presentOptions",
+    {
+      description:
+        "Present a list of options to the user for approval or selection. Supports checklist (multi-select) and choice (single-select) modes.",
+      inputSchema: presentOptionsInputSchema.shape,
+      outputSchema: presentOptionsOutputSchema.shape,
+    },
+    async (args, _extra) => {
+      const result = await handlePresentOptions(bridge, args);
       return {
         content: result.content,
         structuredContent: {
