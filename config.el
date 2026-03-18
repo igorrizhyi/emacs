@@ -1204,6 +1204,8 @@
 (autoload 'agent-shell-team-status "agent-shell-team" "Team dashboard." t)
 
 (after! agent-shell
+  ;; Disable the header entirely (set to nil); use 'graphical to restore later
+  (setq agent-shell-header-style nil)
   ;; Require MCP tools for the stdio server
   (require 'claude-code-mcp-tools nil t)
   ;; Custom output styling for agent-shell body sections
