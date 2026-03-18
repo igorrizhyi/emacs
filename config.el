@@ -1219,6 +1219,8 @@
   (require 'my-agent-shell-stuck-busy-fixes)
   ;; Animated sprite icon for lead buffer header
   (require 'my-agent-shell-sprite)
+  ;; Approval queue UI for lead agent options
+  (require 'my-approval-ui)
   ;; Keybinding for quick access
   (map! :leader
         :desc "Claude (Emacs MCP)" "c c" #'agent-shell-emacs-mcp

@@ -126,8 +126,8 @@ Choice :items are plists (:id :label :selected).")
         mode-line-format nil
         header-line-format (propertize " Approval Queue" 'face 'bold)))
 
-;; Evil-mode integration
-(with-eval-after-load 'evil
+;; Evil-mode integration: bind keys in normal state so they take priority
+(when (fboundp 'evil-define-key*)
   (evil-set-initial-state 'my/approval-mode 'normal)
   (evil-define-key* 'normal my/approval-mode-map
     (kbd "<up>") #'my/approval-prev-request
