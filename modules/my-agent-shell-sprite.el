@@ -53,8 +53,11 @@ Returns a vector of absolute file paths sorted by name."
   "Current sprite state: idle, busy, or pending.")
 
 (defun my-agent-shell-sprite--detect-state ()
-  "Return current state: busy, pending, or idle."
+  "Return current state: busy, pending, or idle.
+During initialization, always return idle to avoid showing busy frames
+before the agent is ready."
   (cond
+   ((not (bound-and-true-p agent-shell-team--init-finished-p)) 'idle)
    ((my-agent-shell-sprite--busy-p) 'busy)
    ((my-agent-shell-sprite--pending-p) 'pending)
    (t 'idle)))
@@ -62,7 +65,7 @@ Returns a vector of absolute file paths sorted by name."
 (defun my-agent-shell-sprite--tick ()
   "Main animation tick.  Runs every 300ms.
 Iterates lead buffers, updates state, increments frame counter,
-and refreshes mode lines.  Auto-stops when no lead buffer exists."
+and refreshes the header.  Auto-stops when no lead buffer exists."
   (let ((found-lead nil))
     (dolist (buf (buffer-list))
       (when (buffer-live-p buf)
@@ -72,7 +75,10 @@ and refreshes mode lines.  Auto-stops when no lead buffer exists."
             (setq my-agent-shell-sprite--current-state
                   (my-agent-shell-sprite--detect-state))
             (cl-incf my-agent-shell-sprite--frame-counter)
-            (force-mode-line-update)))))
+            (condition-case err
+                (agent-shell--update-header-and-mode-line)
+              (error
+               (message "sprite tick: header update error: %S" err)))))))
     (unless found-lead
       (my-agent-shell-sprite--stop-timer))))
 
