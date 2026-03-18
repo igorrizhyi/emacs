@@ -2,19 +2,21 @@
 
 import os
 import sys
-import json
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 import mcp.types as types
 
 from common import (
-    GRAPH_NAME, PROJECT_ROOT,
+    GRAPH_NAME, NAMESPACE, PROJECT_ROOT,
     get_graph, init_schema, ingest_chunks, query_knowledge, chunk_id,
     chunk_report, create_topic_links, create_similarity_edges_for_chunks,
+    _resolve_project,
 )
 
-print(f"Knowledge graph: {GRAPH_NAME} (project: {PROJECT_ROOT or 'default'})", file=sys.stderr)
+_project = _resolve_project()
+_ns_info = f", namespace={NAMESPACE}" if NAMESPACE else ""
+print(f"Knowledge graph: {GRAPH_NAME} (project: {_project}{_ns_info})", file=sys.stderr)
 
 server = Server("knowledge")
 
@@ -41,7 +43,7 @@ TOOLS = [
                 "query": {"type": "string", "description": "Natural language question"},
                 "role": {"type": "string", "description": "Filter by role: dev, tester, researcher, lead"},
                 "mode": {"type": "string", "enum": ["summary", "technical"], "description": "Response mode: 'summary' for narrative answers, 'technical' for structured technical briefs suitable as dev context"},
-                "namespace": {"type": "string", "description": "Filter by namespace (omit to search all namespaces)"},
+                "project": {"type": "string", "description": "Filter by project (omit to search all projects in the namespace)"},
             },
             "required": ["query"],
         },
@@ -95,9 +97,9 @@ async def _handle_query(arguments: dict) -> list[types.TextContent]:
     query = arguments["query"]
     role = arguments.get("role")
     mode = arguments.get("mode", "summary")
-    namespace = arguments.get("namespace")
+    project = arguments.get("project")
 
-    result = query_knowledge(graph, query, role=role, top_k=8, mode=mode, namespace=namespace)
+    result = query_knowledge(graph, query, role=role, top_k=8, mode=mode, project=project)
 
     parts = [result["response"]]
     if result.get("sources"):
@@ -108,55 +110,40 @@ async def _handle_query(arguments: dict) -> list[types.TextContent]:
     return [types.TextContent(type="text", text="\n".join(parts))]
 
 
-def _resolve_namespace(arguments: dict) -> str | None:
-    """Resolve namespace: explicit argument > namespace.json > None."""
-    ns = arguments.get("namespace")
-    if ns:
-        return ns
-    # Fall back to .agent-shell/namespace.json
-    if PROJECT_ROOT:
-        ns_file = os.path.join(PROJECT_ROOT, ".agent-shell", "namespace.json")
-        try:
-            with open(ns_file) as f:
-                data = json.load(f)
-            return data.get("namespace") or None
-        except (FileNotFoundError, json.JSONDecodeError, KeyError):
-            pass
-    return None
-
-
 async def _handle_store(arguments: dict) -> list[types.TextContent]:
     graph = _ensure_graph()
     content = arguments["content"]
     roles = arguments["roles"]
     source = arguments.get("source", "mcp")
     roles_str = ",".join(roles)
-    namespace = _resolve_namespace(arguments)
+
+    # Resolve project from PROJECT_ROOT — required when namespace is active
+    project = _resolve_project() if NAMESPACE else None
 
     if source.startswith("report:"):
         request_id = source.split(":", 1)[1]
-        chunks = chunk_report(content, request_id, roles_str, namespace=namespace)
+        chunks = chunk_report(content, request_id, roles_str, project=project)
     elif content.startswith("- "):
         chunks = [{"id": chunk_id(source, content[2:].strip()),
                    "content": content[2:].strip(), "section": "General",
                    "source": source, "roles": roles_str, "type": "knowledge",
-                   "namespace": namespace}]
+                   "project": project}]
     else:
         raw = [l.strip() for l in content.split("\n") if l.strip() and not l.strip().startswith("#")]
         chunks = [{"id": chunk_id(source, t), "content": t, "section": "General",
                    "source": source, "roles": roles_str, "type": "knowledge",
-                   "namespace": namespace} for t in raw]
+                   "project": project} for t in raw]
 
     if not chunks:
         return [types.TextContent(type="text", text="No content to store")]
 
-    ingest_chunks(graph, chunks, namespace=namespace)
+    ingest_chunks(graph, chunks, project=project)
     create_topic_links(graph, chunks)
     new_ids = [c["id"] for c in chunks]
     create_similarity_edges_for_chunks(graph, new_ids)
 
-    ns_info = f" namespace={namespace}" if namespace else ""
-    return [types.TextContent(type="text", text=f"Stored {len(chunks)} chunk(s). Source: {source}{ns_info}")]
+    proj_info = f" project={project}" if project else ""
+    return [types.TextContent(type="text", text=f"Stored {len(chunks)} chunk(s). Source: {source}{proj_info}")]
 
 
 async def main():

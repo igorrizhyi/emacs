@@ -1,6 +1,7 @@
 """Shared constants, schema helpers, and ingestion pipeline for hybrid vector+graph knowledge system."""
 
 import hashlib
+import json
 import os
 import re
 from datetime import datetime, timezone
@@ -15,8 +16,38 @@ from litellm import completion, embedding
 PROJECT_ROOT = os.environ.get("PROJECT_ROOT", "")
 
 
-def _derive_graph_name(project_root: str) -> str:
-    """Derive a FalkorDB graph name from project root path."""
+def _resolve_namespace() -> str | None:
+    """Resolve namespace: NAMESPACE env var > .agent-shell/namespace.json > None."""
+    ns = os.environ.get("NAMESPACE")
+    if ns:
+        return ns
+    if PROJECT_ROOT:
+        ns_file = os.path.join(PROJECT_ROOT, ".agent-shell", "namespace.json")
+        try:
+            with open(ns_file) as f:
+                data = json.load(f)
+            return data.get("namespace") or None
+        except (FileNotFoundError, json.JSONDecodeError, KeyError):
+            pass
+    return None
+
+
+def _resolve_project() -> str:
+    """Derive project name from PROJECT_ROOT (basename of the path)."""
+    if not PROJECT_ROOT:
+        return "default"
+    return os.path.basename(PROJECT_ROOT.rstrip("/")) or "default"
+
+
+def _derive_graph_name(project_root: str, namespace: str = None) -> str:
+    """Derive a FalkorDB graph name.
+
+    If *namespace* is set, all projects in the namespace share one graph:
+    ``knowledge_{namespace}``.  Otherwise, fall back to per-project naming.
+    """
+    if namespace:
+        safe_ns = re.sub(r'[^a-zA-Z0-9]', '_', namespace).strip('_').lower()
+        return f"knowledge_{safe_ns}"
     if not project_root:
         return "team_knowledge"  # backward compat fallback
     basename = os.path.basename(project_root.rstrip("/")) or "default"
@@ -25,14 +56,16 @@ def _derive_graph_name(project_root: str) -> str:
     return f"knowledge_{safe_base}_{short_hash}"
 
 
-GRAPH_NAME = _derive_graph_name(PROJECT_ROOT)
+NAMESPACE = _resolve_namespace()
+GRAPH_NAME = _derive_graph_name(PROJECT_ROOT, NAMESPACE)
 
 
-def set_graph_name(project_root: str):
+def set_graph_name(project_root: str, namespace: str = None):
     """Recalculate and set the module-level GRAPH_NAME from a project root path."""
-    global GRAPH_NAME, PROJECT_ROOT
+    global GRAPH_NAME, PROJECT_ROOT, NAMESPACE
     PROJECT_ROOT = project_root
-    GRAPH_NAME = _derive_graph_name(project_root)
+    NAMESPACE = namespace or _resolve_namespace()
+    GRAPH_NAME = _derive_graph_name(project_root, NAMESPACE)
 
 FALKORDB_HOST = os.environ.get("FALKORDB_HOST", "127.0.0.1")
 FALKORDB_PORT = int(os.environ.get("FALKORDB_PORT", "6380"))
@@ -87,7 +120,7 @@ def init_schema(graph):
         "CREATE INDEX FOR (c:Chunk) ON (c.source)",
         "CREATE INDEX FOR (c:Chunk) ON (c.roles)",
         "CREATE INDEX FOR (c:Chunk) ON (c.type)",
-        "CREATE INDEX FOR (c:Chunk) ON (c.namespace)",
+        "CREATE INDEX FOR (c:Chunk) ON (c.project)",
     ):
         try:
             graph.query(stmt)
@@ -126,7 +159,7 @@ def chunk_id(source: str, content: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def chunk_report(report_text: str, request_id: str, role: str, namespace: str = None) -> list[dict]:
+def chunk_report(report_text: str, request_id: str, role: str, project: str = None) -> list[dict]:
     """Split a task report into per-section chunks."""
     source = f"report:{request_id}"
     chunks = []
@@ -146,7 +179,7 @@ def chunk_report(report_text: str, request_id: str, role: str, namespace: str = 
                         "section": current_section,
                         "roles": role,
                         "type": "report",
-                        "namespace": namespace,
+                        "project": project,
                     })
             current_section = line[3:].strip()
             current_lines = []
@@ -166,12 +199,12 @@ def chunk_report(report_text: str, request_id: str, role: str, namespace: str = 
                 "section": current_section,
                 "roles": role,
                 "type": "report",
-                "namespace": namespace,
+                "project": project,
             })
     return chunks
 
 
-def chunk_knowledge_file(filepath: str, role: str, namespace: str = None) -> list[dict]:
+def chunk_knowledge_file(filepath: str, role: str, project: str = None) -> list[dict]:
     """Parse a markdown knowledge file into per-bullet chunks.
 
     Tracks ``## `` headers as current_section. Each top-level ``- `` bullet
@@ -197,7 +230,7 @@ def chunk_knowledge_file(filepath: str, role: str, namespace: str = None) -> lis
                     "section": current_section,
                     "roles": role,
                     "type": "knowledge",
-                    "namespace": namespace,
+                    "project": project,
                 }
             )
             current_bullet.clear()
@@ -236,7 +269,7 @@ def chunk_knowledge_file(filepath: str, role: str, namespace: str = None) -> lis
 # ---------------------------------------------------------------------------
 
 
-def ingest_chunks(graph, chunks: list[dict], namespace: str = None):
+def ingest_chunks(graph, chunks: list[dict], project: str = None):
     """Embed chunks and MERGE them into the graph with FOR_ROLE edges."""
     if not chunks:
         return
@@ -246,8 +279,8 @@ def ingest_chunks(graph, chunks: list[dict], namespace: str = None):
     now = datetime.now(timezone.utc).isoformat()
 
     for chunk, vec in zip(chunks, vectors):
-        # Use per-chunk namespace if set, otherwise fall back to function param
-        ns = chunk.get("namespace") or namespace
+        # Use per-chunk project if set, otherwise fall back to function param
+        proj = chunk.get("project") or project
         params = {
             "id": chunk["id"],
             "content": chunk["content"],
@@ -258,7 +291,7 @@ def ingest_chunks(graph, chunks: list[dict], namespace: str = None):
             "type": chunk.get("type", "knowledge"),
             "ts": now,
         }
-        if ns is not None:
+        if proj is not None:
             graph.query(
                 """
                 MERGE (c:Chunk {id: $id})
@@ -269,9 +302,9 @@ def ingest_chunks(graph, chunks: list[dict], namespace: str = None):
                     c.roles      = $roles,
                     c.type       = $type,
                     c.created_at = $ts,
-                    c.namespace  = $namespace
+                    c.project    = $project
                 """,
-                params={**params, "namespace": ns},
+                params={**params, "project": proj},
             )
         else:
             graph.query(
@@ -507,7 +540,7 @@ def _build_fulltext_query(question: str) -> str:
     return ' '.join(f'%{w}%' for w in words)
 
 
-def query_knowledge(graph, question: str, role: str = None, top_k: int = 8, mode: str = "summary", namespace: str = None) -> dict:
+def query_knowledge(graph, question: str, role: str = None, top_k: int = 8, mode: str = "summary", project: str = None) -> dict:
     """Vector search + graph expansion + LLM answer.
 
     Returns dict with keys: response, chunks, sources, expanded_count.
@@ -515,15 +548,15 @@ def query_knowledge(graph, question: str, role: str = None, top_k: int = 8, mode
     # 1. Embed question
     q_vec = embed_texts([question])[0]
 
-    # 2. Vector KNN search — fetch extra candidates when filtering by namespace
-    fetch_k = top_k * 3 if namespace else top_k
+    # 2. Vector KNN search — fetch extra candidates when filtering by project
+    fetch_k = top_k * 3 if project else top_k
     knn = graph.query(
         """
         CALL db.idx.vector.queryNodes('Chunk', 'embedding', $k, vecf32($vec))
         YIELD node, score
         RETURN node.id AS id, node.content AS content,
                node.source AS source, node.section AS section,
-               node.roles AS roles, score, node.namespace AS namespace
+               node.roles AS roles, score, node.project AS project
         """,
         params={"k": fetch_k, "vec": q_vec},
     )
@@ -531,12 +564,12 @@ def query_knowledge(graph, question: str, role: str = None, top_k: int = 8, mode
     hits = []
     for row in knn.result_set:
         score = row[5]
-        node_ns = row[6]
+        node_project = row[6]
         # Filter out low-relevance hits (cosine distance > threshold)
         if score > SCORE_THRESHOLD:
             continue
-        # Filter by namespace if requested
-        if namespace and node_ns != namespace:
+        # Filter by project if requested
+        if project and node_project != project:
             continue
         hit = {
             "id": row[0],
@@ -553,18 +586,18 @@ def query_knowledge(graph, question: str, role: str = None, top_k: int = 8, mode
     # 2b. Fulltext fallback when vector search finds nothing
     if not hits:
         try:
-            ns_filter = "WHERE node.namespace = $namespace" if namespace else ""
+            proj_filter = "WHERE node.project = $project" if project else ""
             ft = graph.query(
                 f"""
                 CALL db.idx.fulltext.queryNodes('Chunk', $q)
                 YIELD node
-                {ns_filter}
+                {proj_filter}
                 RETURN node.id AS id, node.content AS content,
                        node.source AS source, node.section AS section,
                        node.roles AS roles
                 LIMIT $k
                 """,
-                params={"q": _build_fulltext_query(question), "k": top_k, **({"namespace": namespace} if namespace else {})},
+                params={"q": _build_fulltext_query(question), "k": top_k, **({"project": project} if project else {})},
             )
             for row in ft.result_set:
                 hits.append({
