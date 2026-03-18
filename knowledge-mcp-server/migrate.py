@@ -24,7 +24,7 @@ ROLE_MAP = {
 }
 
 
-def migrate(knowledge_dir: str, clean: bool = False):
+def migrate(knowledge_dir: str, clean: bool = False, project: str = None):
     graph = get_graph()
 
     if clean:
@@ -53,7 +53,7 @@ def migrate(knowledge_dir: str, clean: bool = False):
             print(f"  Warning: {filepath} not found, skipping.")
             continue
 
-        chunks = chunk_knowledge_file(filepath, role)
+        chunks = chunk_knowledge_file(filepath, role, project=project)
         file_stats[filename] = len(chunks)
         all_chunks.extend(chunks)
         print(f"  {filename}: {len(chunks)} chunks")
@@ -63,7 +63,7 @@ def migrate(knowledge_dir: str, clean: bool = False):
         return
 
     print(f"\nIngesting {len(all_chunks)} chunks...")
-    ingest_chunks(graph, all_chunks)
+    ingest_chunks(graph, all_chunks, project=project)
 
     print("Creating topic links...")
     create_topic_links(graph, all_chunks)
@@ -93,7 +93,7 @@ def _infer_role(content: str) -> str:
     return "dev"
 
 
-def migrate_reports(reports_dir: str):
+def migrate_reports(reports_dir: str, project: str = None):
     """Import historical task reports from .agent-shell/reports/."""
     graph = get_graph()
     init_schema(graph)
@@ -126,7 +126,7 @@ def migrate_reports(reports_dir: str):
 
             request_id = filename[:-3]  # strip .md
             role = _infer_role(content)
-            chunks = chunk_report(content, request_id, role)
+            chunks = chunk_report(content, request_id, role, project=project)
             if not chunks:
                 print(f"  WARNING: {filename} produced 0 chunks (content too short?)")
                 continue
@@ -141,7 +141,7 @@ def migrate_reports(reports_dir: str):
         return
 
     print(f"\nIngesting {len(all_chunks)} chunks from {report_count} reports...")
-    ingest_chunks(graph, all_chunks)
+    ingest_chunks(graph, all_chunks, project=project)
 
     print("Creating topic links...")
     create_topic_links(graph, all_chunks)
@@ -192,24 +192,41 @@ def main():
         "--project-root",
         help="Project root for graph name derivation (overrides PROJECT_ROOT env var)",
     )
+    parser.add_argument(
+        "--namespace",
+        help="Namespace for shared graph. When set, targets the namespace graph "
+             "(knowledge_<namespace>) and tags all chunks with a project derived "
+             "from --project-root.",
+    )
     args = parser.parse_args()
 
     graph_root = args.project_root or project_root
     if graph_root:
-        set_graph_name(graph_root)
+        set_graph_name(graph_root, namespace=args.namespace)
+    elif args.namespace:
+        set_graph_name("", namespace=args.namespace)
+
+    # Derive project tag when migrating into a namespace graph
+    project = None
+    if args.namespace:
+        if graph_root:
+            project = os.path.basename(graph_root.rstrip("/")) or "default"
+        else:
+            project = "default"
+        print(f"Namespace mode: graph={GRAPH_NAME}, project={project}")
 
     if args.reports:
         if not os.path.isdir(args.reports_dir):
             print(f"Error: Reports directory not found: {args.reports_dir}")
             sys.exit(1)
-        migrate_reports(args.reports_dir)
+        migrate_reports(args.reports_dir, project=project)
         return
 
     if not os.path.isdir(args.knowledge_dir):
         print(f"Error: Knowledge directory not found: {args.knowledge_dir}")
         sys.exit(1)
 
-    migrate(args.knowledge_dir, clean=args.clean)
+    migrate(args.knowledge_dir, clean=args.clean, project=project)
 
 
 if __name__ == "__main__":
