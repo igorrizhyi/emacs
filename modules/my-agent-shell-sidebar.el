@@ -37,6 +37,9 @@
 (defvar agent-shell-team--request-to-group)
 (declare-function agent-shell-team--load-all-sessions "agent-shell-team")
 (declare-function agent-shell-team--load-tasks "agent-shell-team")
+(declare-function agent-shell-team--get-lead "agent-shell-team")
+(declare-function agent-shell-team--queue-message "agent-shell-team")
+(declare-function agent-shell-team--start-drain-timer "agent-shell-team")
 
 ;;; ---- Constants & Buffer Name ------------------------------------------------
 
@@ -575,11 +578,16 @@ Returns t if anything was inserted, nil otherwise."
                agent-shell-team--task-queue)
       (insert (propertize " Pending Tasks" 'face 'my/team-sidebar-session-face) "\n")
       (dolist (task agent-shell-team--task-queue)
-        (insert (format "  ⏳ %s: %s\n"
-                        (propertize (or (plist-get task :role) "?")
-                                    'face 'my/team-sidebar-role-face)
-                        (truncate-string-to-width
-                         (or (plist-get task :message) "") 30 nil nil "…"))))
+        (let ((task-line-start (point)))
+          (insert (format "  ⏳ %s: %s\n"
+                          (propertize (or (plist-get task :role) "?")
+                                      'face 'my/team-sidebar-role-face)
+                          (truncate-string-to-width
+                           (or (plist-get task :message) "") 30 nil nil "…")))
+          (put-text-property task-line-start (1- (point))
+                             'task-request-id (plist-get task :request-id))
+          (put-text-property task-line-start (1- (point))
+                             'my/sidebar-pending-task task)))
       (insert "\n")
       (setq has-content t))
     ;; Message queue for lead
@@ -716,7 +724,8 @@ Returns t if anything was inserted, nil otherwise."
   (let ((pos (line-beginning-position)))
     (or (get-text-property pos 'my/sidebar-agent)
         (get-text-property pos 'my/sidebar-task)
-        (get-text-property pos 'my/sidebar-session))))
+        (get-text-property pos 'my/sidebar-session)
+        (get-text-property pos 'my/sidebar-pending-task))))
 
 (defun my/team-sidebar--render-task-preview (task)
   "Render TASK plist into a formatted preview buffer."
@@ -874,17 +883,46 @@ Returns t if anything was inserted, nil otherwise."
    (t (message "Nothing on this line."))))
 
 (defun my/team-sidebar-kill-agent ()
-  "Kill/dismiss the agent under cursor."
+  "Kill/dismiss the agent at point, or cancel the pending task at point."
   (interactive)
-  (let ((agent (my/team-sidebar--agent-at-point)))
-    (if agent
-        (let ((buf (alist-get 'buffer agent))
-              (role (alist-get 'role agent)))
-          (when (yes-or-no-p (format "Kill %s agent? " role))
-            (when (buffer-live-p buf)
-              (kill-buffer buf))
-            (my/team-sidebar-refresh)))
-      (message "No agent on this line."))))
+  (cond
+   ;; Pending task line — cancel it
+   ((get-text-property (line-beginning-position) 'my/sidebar-pending-task)
+    (my/team-sidebar-cancel-pending-task))
+   ;; Agent line — kill it
+   ((my/team-sidebar--agent-at-point)
+    (let* ((agent (my/team-sidebar--agent-at-point))
+           (buf (alist-get 'buffer agent))
+           (role (alist-get 'role agent)))
+      (when (yes-or-no-p (format "Kill %s agent? " role))
+        (when (buffer-live-p buf)
+          (kill-buffer buf))
+        (my/team-sidebar-refresh))))
+   (t (message "No agent or pending task on this line."))))
+
+(defun my/team-sidebar-cancel-pending-task ()
+  "Cancel the pending task at point and notify the lead."
+  (interactive)
+  (let ((request-id (get-text-property (line-beginning-position) 'task-request-id)))
+    (if (not request-id)
+        (message "No pending task on this line.")
+      (when (yes-or-no-p (format "Cancel pending task %s? " request-id))
+        ;; Remove from task queue
+        (setq agent-shell-team--task-queue
+              (cl-remove-if (lambda (task)
+                              (equal (plist-get task :request-id) request-id))
+                            agent-shell-team--task-queue))
+        ;; Notify lead
+        (when-let ((lead-buf (agent-shell-team--get-lead agent-shell-team--session-id)))
+          (agent-shell-team--queue-message
+           nil lead-buf
+           (list :from "elevator-operator"
+                 :title "Task Cancelled"
+                 :message (format "Task %s was cancelled by the elevator-operator." request-id)))
+          (agent-shell-team--start-drain-timer))
+        ;; Refresh sidebar
+        (my/team-sidebar-refresh)
+        (message "Task %s cancelled" request-id)))))
 
 (defun my/team-sidebar-quit ()
   "Hide the sidebar without killing the buffer."
