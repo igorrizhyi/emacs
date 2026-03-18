@@ -1215,6 +1215,8 @@
   (require 'my-agent-shell-keybindings)
   ;; Stuck-busy prevention fixes (watchdog, force-reset, interrupt cleanup)
   (require 'my-agent-shell-stuck-busy-fixes)
+  ;; Animated sprite icon for lead buffer header
+  (require 'my-agent-shell-sprite)
   ;; Keybinding for quick access
   (map! :leader
         :desc "Claude (Emacs MCP)" "c c" #'agent-shell-emacs-mcp
