@@ -66,10 +66,9 @@ before the agent is ready."
                  (t 'idle))))
     ;; Log state transitions only
     (unless (eq state my-agent-shell-sprite--current-state)
-      (message "sprite-state: %s -> %s (pending-queue=%s)"
+      (message "sprite-state: %s -> %s (user-typing=%s)"
                my-agent-shell-sprite--current-state state
-               (and (bound-and-true-p agent-shell-team--message-queue)
-                    (hash-table-count agent-shell-team--message-queue))))
+               (eq state 'pending)))
     state))
 
 (defun my-agent-shell-sprite--tick ()
@@ -118,9 +117,16 @@ and refreshes the header.  Auto-stops when no lead buffer exists."
     (error nil)))
 
 (defun my-agent-shell-sprite--pending-p ()
-  "Return non-nil if the current buffer has deferred messages waiting."
-  (and (bound-and-true-p agent-shell-team--message-queue)
-       (gethash (current-buffer) agent-shell-team--message-queue)))
+  "Return non-nil if the user has typed text at the prompt (composing input)."
+  (and (bound-and-true-p agent-shell-team--init-finished-p)
+       (let ((proc (get-buffer-process (current-buffer))))
+         (and proc
+              (not shell-maker--busy)
+              (let ((pm (marker-position (process-mark proc))))
+                (and pm
+                     (> (point-max) pm)
+                     (not (string-empty-p
+                           (string-trim (buffer-substring-no-properties pm (point-max)))))))))))
 
 (defun my-agent-shell-sprite--current-frame-path ()
   "Return the file path of the current sprite frame for a lead buffer, or nil."
