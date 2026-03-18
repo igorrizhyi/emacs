@@ -28,6 +28,9 @@ With the 10 Hz heartbeat, divisor=3 means each frame shows for 300ms.")
 (defvar my-agent-shell-sprite--busy-frames nil
   "Vector of file paths for lead-busy frames.")
 
+(defvar my-agent-shell-sprite--pending-frames nil
+  "Vector of file paths for lead-pending frames.")
+
 (defun my-agent-shell-sprite--load-frames (subdir)
   "Load all frame-*.png paths from SUBDIR under `my-agent-shell-sprite-dir'.
 Returns a vector of absolute file paths sorted by name."
@@ -40,6 +43,8 @@ Returns a vector of absolute file paths sorted by name."
       (my-agent-shell-sprite--load-frames "lead-idle"))
 (setq my-agent-shell-sprite--busy-frames
       (my-agent-shell-sprite--load-frames "lead-busy"))
+(setq my-agent-shell-sprite--pending-frames
+      (my-agent-shell-sprite--load-frames "lead-pending"))
 
 ;;;; Idle animation timer
 
@@ -89,15 +94,22 @@ Returns a vector of absolute file paths sorted by name."
       (eq 'busy (map-nested-elt (agent-shell--state) '(:heartbeat :status)))
     (error nil)))
 
+(defun my-agent-shell-sprite--pending-p ()
+  "Return non-nil if the current buffer has deferred messages waiting."
+  (and (bound-and-true-p agent-shell-team--message-queue)
+       (gethash (current-buffer) agent-shell-team--message-queue)))
+
 (defun my-agent-shell-sprite--current-frame-path ()
   "Return the file path of the current sprite frame for a lead buffer, or nil."
   (when (my-agent-shell-sprite--lead-buffer-p)
     (let* ((busy (my-agent-shell-sprite--busy-p))
-           (frames (if busy
-                       my-agent-shell-sprite--busy-frames
-                     my-agent-shell-sprite--idle-frames))
+           (frames (cond (busy my-agent-shell-sprite--busy-frames)
+                         ((my-agent-shell-sprite--pending-p)
+                          my-agent-shell-sprite--pending-frames)
+                         (t my-agent-shell-sprite--idle-frames)))
            (n (length frames)))
-      ;; Manage idle timer: run when idle, stop when busy
+      ;; Manage idle timer: run when not busy (covers both pending and idle),
+      ;; stop when busy (heartbeat takes over)
       (if busy
           (my-agent-shell-sprite--stop-idle-timer)
         (my-agent-shell-sprite--ensure-idle-timer))
@@ -134,12 +146,15 @@ Appends a :sprite-frame entry to the model for lead buffers so the
 header cache key changes on each animation frame."
   (let ((model (apply orig-fn args)))
     (when (my-agent-shell-sprite--lead-buffer-p)
-      (let ((frame-idx (if (my-agent-shell-sprite--busy-p)
-                           (/ (my-agent-shell-sprite--heartbeat-value)
-                              my-agent-shell-sprite-frame-divisor)
-                         my-agent-shell-sprite--idle-counter)))
+      (let* ((busy (my-agent-shell-sprite--busy-p))
+             (pending (my-agent-shell-sprite--pending-p))
+             (frame-idx (if busy
+                            (/ (my-agent-shell-sprite--heartbeat-value)
+                               my-agent-shell-sprite-frame-divisor)
+                          my-agent-shell-sprite--idle-counter)))
         (setq model (append model
-                            `((:sprite-frame . ,frame-idx))))))
+                            `((:sprite-frame . ,frame-idx)
+                              (:sprite-pending . ,pending))))))
     model))
 
 (advice-add 'agent-shell--make-header-model
