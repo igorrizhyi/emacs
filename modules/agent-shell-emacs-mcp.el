@@ -90,6 +90,10 @@ Returns a Claude Code config that includes our Emacs MCP server."
   (let ((agent-shell-anthropic-claude-environment
          (append (list (format "EMACS_INSTANCE_ID=%d" (emacs-pid))
                        (format "PROJECT_ROOT=%s" (directory-file-name default-directory)))
+                 (when-let* ((ns (and (boundp 'agent-shell-namespace--config)
+                                      agent-shell-namespace--config
+                                      (plist-get agent-shell-namespace--config :namespace))))
+                   (list (format "NAMESPACE=%s" ns)))
                  agent-shell-anthropic-claude-environment)))
     (agent-shell-anthropic-make-claude-client :buffer buffer)))
 
