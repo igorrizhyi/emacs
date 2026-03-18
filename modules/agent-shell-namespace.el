@@ -262,5 +262,20 @@ Sends a targeted lead-message to the specified peer via the event bus."
        `((success . nil)
          (message . ,(format "Failed to send: %s" (error-message-string err))))))))
 
+(defun agent-shell-namespace--format-peers-for-prompt ()
+  "Format current namespace peers as a string for system prompts."
+  (let ((lines nil)
+        (local-pid (emacs-pid)))
+    (maphash (lambda (pid info)
+               (unless (equal pid local-pid)
+                 (push (format "- PID %d: %s (project: %s)"
+                               pid
+                               (or (plist-get info :hostname) "unknown")
+                               (or (plist-get info :project_root) "unknown"))
+                       lines)))
+             agent-shell-bus--peers)
+    (when lines
+      (string-join (nreverse lines) "\n"))))
+
 (provide 'agent-shell-namespace)
 ;;; agent-shell-namespace.el ends here
