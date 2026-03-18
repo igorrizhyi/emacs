@@ -655,6 +655,7 @@ Returns t if anything was inserted, nil otherwise."
       (setq has-content t))
     (when (my/team-sidebar--insert-context-bar)
       (setq has-content t))
+    (when has-content (insert "\n"))
     (when (boundp 'agent-shell-team--sessions)
       (maphash
        (lambda (sid agents)
