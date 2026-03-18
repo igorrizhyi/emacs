@@ -328,6 +328,8 @@ If already in the lead buffer, toggle back to the previous buffer."
      ;; No lead session — start one
      (t
       (require 'agent-shell-team)
+      (when (fboundp 'agent-shell-namespace-init)
+        (agent-shell-namespace-init))
       (let* ((context-buffer (current-buffer))
              (session-id agent-shell-team--session-id)
              (buf (agent-shell-team--start-agent session-id "lead" "neighbor" default-directory nil nil)))
