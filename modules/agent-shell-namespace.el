@@ -266,6 +266,27 @@ Sends a targeted lead-message to the specified peer via the event bus."
        `((success . nil)
          (message . ,(format "Failed to send: %s" (error-message-string err))))))))
 
+(defun claude-code-mcp-handle-listNamespacePeers (_params)
+  "Return current namespace peers as an alist."
+  (if (and (fboundp 'agent-shell-namespace-active-p)
+           (agent-shell-namespace-active-p))
+      (let ((peers nil)
+            (local-pid (emacs-pid)))
+        (maphash (lambda (pid info)
+                   (unless (equal pid local-pid)
+                     (push `((pid . ,pid)
+                             (hostname . ,(or (plist-get info :hostname) "unknown"))
+                             (project_root . ,(or (plist-get info :project_root) "unknown")))
+                           peers)))
+                 agent-shell-bus--peers)
+        `((success . t)
+          (peers . ,(vconcat (nreverse peers)))
+          (count . ,(length peers))))
+    `((success . t)
+      (peers . [])
+      (count . 0)
+      (message . "No active namespace"))))
+
 (defun agent-shell-namespace--format-peers-for-prompt ()
   "Format current namespace peers as a string for system prompts."
   (let ((lines nil)

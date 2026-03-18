@@ -27,6 +27,10 @@ import {
   messagePeerOutputSchema,
 } from "./schemas/message-peer-schema.js";
 import {
+  listNamespacePeersInputSchema,
+  listNamespacePeersOutputSchema,
+} from "./schemas/namespace-schema.js";
+import {
   presentOptionsInputSchema,
   presentOptionsOutputSchema,
 } from "./schemas/approval-schema.js";
@@ -75,6 +79,7 @@ import {
   handleTaskUpdate,
   handleDismissAgent,
   handleMessagePeer,
+  handleListNamespacePeers,
   handlePresentOptions,
   handleExecuteTerminalCommandInEmacs,
   handleGetTerminalContent,
@@ -412,6 +417,30 @@ function registerTools() {
         structuredContent: {
           success: result.status === 'success',
           message: result.message || '',
+        },
+        isError: result.isError,
+      };
+    }
+  );
+
+  // listNamespacePeers tool
+  server.registerTool(
+    "listNamespacePeers",
+    {
+      description:
+        "List currently connected namespace peers with their PIDs, hostnames, and project roots. Use this to discover peers before sending messages with messageNamespacePeer.",
+      inputSchema: listNamespacePeersInputSchema.shape,
+      outputSchema: listNamespacePeersOutputSchema.shape,
+    },
+    async (args, _extra) => {
+      const result = await handleListNamespacePeers(bridge, args);
+      return {
+        content: result.content,
+        structuredContent: {
+          success: result.success ?? (result.status === 'success'),
+          message: result.message || '',
+          peers: result.peers || [],
+          count: result.count ?? 0,
         },
         isError: result.isError,
       };
