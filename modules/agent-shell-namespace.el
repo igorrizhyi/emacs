@@ -64,16 +64,18 @@ Return a plist with :namespace and :description, or nil."
 (defun agent-shell-namespace--on-agent-spawn (data _sender-pid)
   "Handle agent-spawn event from a peer.
 DATA is a plist with :role, :worktree-name, :hostname, :pid."
-  (let* ((peer-pid (plist-get data :pid))
-         (agent `((role . ,(plist-get data :role))
-                  (worktree-name . ,(or (plist-get data :worktree-name) "unknown"))
-                  (status . busy)
-                  (hostname . ,(or (plist-get data :hostname) "unknown"))))
-         (existing (assoc peer-pid my/team-sidebar--foreign-agents)))
-    (if existing
-        (setcdr existing (cons agent (cdr existing)))
-      (push (cons peer-pid (list agent)) my/team-sidebar--foreign-agents))
-    (agent-shell-namespace--maybe-refresh-sidebar)))
+  (let ((peer-pid (plist-get data :pid)))
+    ;; Skip events from our own Emacs instance
+    (unless (equal peer-pid (emacs-pid))
+      (let* ((agent `((role . ,(plist-get data :role))
+                      (worktree-name . ,(or (plist-get data :worktree-name) "unknown"))
+                      (status . busy)
+                      (hostname . ,(or (plist-get data :hostname) "unknown"))))
+             (existing (assoc peer-pid my/team-sidebar--foreign-agents)))
+        (if existing
+            (setcdr existing (cons agent (cdr existing)))
+          (push (cons peer-pid (list agent)) my/team-sidebar--foreign-agents))
+        (agent-shell-namespace--maybe-refresh-sidebar)))))
 
 (defun agent-shell-namespace--on-agent-status-change (data _sender-pid)
   "Handle agent-status-change event from a peer.
@@ -109,10 +111,12 @@ DATA is a plist with :pid, :worktree-name."
 (defun agent-shell-namespace--on-peer-join (data sender-pid)
   "Handle peer-join event.
 DATA is the peer's presence info plist."
-  (when-let ((project (plist-get data :project_root)))
-    (puthash sender-pid project agent-shell-namespace--peer-projects))
-  (message "agent-shell-namespace: peer joined (pid=%s, host=%s)"
-           sender-pid (or (plist-get data :hostname) "?")))
+  ;; Skip our own Emacs instance
+  (unless (equal sender-pid (emacs-pid))
+    (when-let ((project (plist-get data :project_root)))
+      (puthash sender-pid project agent-shell-namespace--peer-projects))
+    (message "agent-shell-namespace: peer joined (pid=%s, host=%s)"
+             sender-pid (or (plist-get data :hostname) "?"))))
 
 (defun agent-shell-namespace--on-peer-leave (_data sender-pid)
   "Handle peer-leave event.  Remove all foreign agents for that peer."
@@ -180,10 +184,12 @@ set sidebar vars.  Called from `agent-shell-team' init."
         (setq my/team-sidebar--foreign-agents nil)
         ;; Populate project roots for peers already present at startup
         (when (boundp 'agent-shell-bus--peers)
-          (maphash (lambda (pid info)
-                     (when-let ((project (plist-get info :project_root)))
-                       (puthash pid project agent-shell-namespace--peer-projects)))
-                   agent-shell-bus--peers))
+          (let ((local-pid (emacs-pid)))
+            (maphash (lambda (pid info)
+                       (unless (equal pid local-pid)
+                         (when-let ((project (plist-get info :project_root)))
+                           (puthash pid project agent-shell-namespace--peer-projects))))
+                     agent-shell-bus--peers)))
         (message "agent-shell-namespace: initialized for namespace '%s'" ns)))))
 
 (defun agent-shell-namespace-teardown ()
