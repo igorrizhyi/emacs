@@ -71,6 +71,10 @@
   '((t :foreground "#cc8800"))
   "Face for initializing status.")
 
+(defface my/team-sidebar-status-pending
+  '((t :foreground "#88aaff"))
+  "Face for pending (user typing) status.")
+
 (defface my/team-sidebar-status-dead
   '((t :foreground "#ff3333"))
   "Face for dead status.")
@@ -470,6 +474,7 @@ Returns the token string, or nil if unavailable or expired."
   (pcase status
     ('idle  (propertize "●" 'face 'my/team-sidebar-status-idle))
     ('busy  (propertize "◉" 'face 'my/team-sidebar-status-busy))
+    ('pending (propertize "◎" 'face 'my/team-sidebar-status-pending))
     ('initializing (propertize "○" 'face 'my/team-sidebar-status-init))
     ('dead  (propertize "✕" 'face 'my/team-sidebar-status-dead))
     (_      "?")))
@@ -547,6 +552,11 @@ Returns t if anything was inserted, nil otherwise."
                     (status (if (fboundp 'agent-shell-team--agent-status)
                                 (agent-shell-team--agent-status buffer)
                               'dead))
+                    (status (if (and (equal role "lead")
+                                     (boundp 'my-agent-shell-sprite--current-state)
+                                     (eq my-agent-shell-sprite--current-state 'pending))
+                                'pending
+                              status))
                     (indicator (my/team-sidebar--status-indicator status)))
                (insert (format "  %s %-10s %s  %s\n"
                                indicator
