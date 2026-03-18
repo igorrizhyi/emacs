@@ -460,8 +460,9 @@ Appends a JSON line to our events/{pid}.jsonl."
   "Register HANDLER for events of TYPE (a symbol).
 HANDLER is called as (funcall handler data sender-pid)."
   (let ((handlers (gethash type agent-shell-bus--event-handlers)))
-    (puthash type (cons handler handlers)
-             agent-shell-bus--event-handlers)))
+    (unless (memq handler handlers)
+      (puthash type (cons handler handlers)
+               agent-shell-bus--event-handlers))))
 
 (provide 'agent-shell-bus)
 ;;; agent-shell-bus.el ends here

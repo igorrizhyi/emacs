@@ -67,13 +67,17 @@ DATA is a plist with :role, :worktree-name, :hostname, :pid."
   (let ((peer-pid (plist-get data :pid)))
     ;; Skip events from our own Emacs instance
     (unless (equal peer-pid (emacs-pid))
-      (let* ((agent `((role . ,(plist-get data :role))
-                      (worktree-name . ,(or (plist-get data :worktree-name) "unknown"))
+      (let* ((wt-name (or (plist-get data :worktree-name) "unknown"))
+             (agent `((role . ,(plist-get data :role))
+                      (worktree-name . ,wt-name)
                       (status . busy)
                       (hostname . ,(or (plist-get data :hostname) "unknown"))))
              (existing (assoc peer-pid my/team-sidebar--foreign-agents)))
         (if existing
-            (setcdr existing (cons agent (cdr existing)))
+            (unless (cl-find wt-name (cdr existing)
+                             :key (lambda (a) (alist-get 'worktree-name a))
+                             :test #'equal)
+              (setcdr existing (cons agent (cdr existing))))
           (push (cons peer-pid (list agent)) my/team-sidebar--foreign-agents))
         (agent-shell-namespace--maybe-refresh-sidebar)))))
 
