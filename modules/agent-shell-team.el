@@ -1156,6 +1156,35 @@ TITLE and MESSAGE are the notification content."
 
 ;;; Agent dismiss — cleanup after lead approves work
 
+(defun agent-shell-team--pending-tasks-for-agent (session-id target)
+  "Count pending tasks in queue targeted at the agent identified by TARGET.
+Returns the count of matching tasks (0 if none)."
+  (let ((matched-agent
+         (cl-find-if
+          (lambda (a)
+            (let ((wt-name (alist-get 'worktree-name a))
+                  (buf (alist-get 'buffer a)))
+              (and (not (equal (alist-get 'role a) "lead"))
+                   (or (and wt-name (string-match-p (regexp-quote target) wt-name))
+                       (and (buffer-live-p buf)
+                            (string-match-p (regexp-quote target) (buffer-name buf)))
+                       (and (buffer-live-p buf)
+                            (eq buf (gethash target agent-shell-team--request-to-buffer)))))))
+          (agent-shell-team--get-session-agents session-id)))
+        (count 0))
+    (when matched-agent
+      (let ((agent-buf (alist-get 'buffer matched-agent))
+            (agent-wt (alist-get 'worktree-name matched-agent)))
+        (dolist (task agent-shell-team--task-queue)
+          (let ((task-target (plist-get task :target)))
+            (when (and task-target
+                       (or (and (buffer-live-p agent-buf)
+                                (string-match-p (regexp-quote task-target) (buffer-name agent-buf)))
+                           (and agent-wt
+                                (string-match-p (regexp-quote task-target) agent-wt))))
+              (cl-incf count))))))
+    count))
+
 (defun agent-shell-team--handle-dismiss-agent (raw-input)
   "Handle dismissAgent MCP tool call with RAW-INPUT.
 Find the agent matching `target' and clean it up immediately.
@@ -1172,6 +1201,13 @@ Only the lead role may call this.  Returns an alist with success/message."
      ((not session-id)
       `((success . nil)
         (message . "No session ID available")))
+     ;; Guard: pending tasks in queue targeted at this agent
+     ((and (not force)
+           (> (agent-shell-team--pending-tasks-for-agent session-id target) 0))
+      (let ((pending-count (agent-shell-team--pending-tasks-for-agent session-id target)))
+        `((success . nil)
+          (message . ,(format "Cannot dismiss: %d pending task(s) targeted at this agent. Cancel or reassign them first."
+                              pending-count)))))
      ;; Find and dismiss the matching agent
      (t
       (let ((all-agents (agent-shell-team--get-session-agents session-id))
