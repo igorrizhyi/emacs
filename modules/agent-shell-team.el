@@ -1741,14 +1741,17 @@ SESSION-ID identifies the team.  GROUP contains the completed request IDs."
   "Return non-nil if BUFFER has user-typed text at the prompt."
   (when (buffer-live-p buffer)
     (with-current-buffer buffer
-      (let ((proc (get-buffer-process buffer)))
-        (and proc
-             (not shell-maker--busy)
-             (let ((pm (marker-position (process-mark proc))))
-               (and pm
-                    (> (point-max) pm)
-                    (not (string-empty-p
-                          (string-trim (buffer-substring-no-properties pm (point-max))))))))))))
+      (let* ((proc (get-buffer-process buffer))
+             (busy shell-maker--busy)
+             (pm (and proc (marker-position (process-mark proc))))
+             (pmax (point-max))
+             (text (when (and pm (> pmax pm))
+                     (string-trim (buffer-substring-no-properties pm pmax))))
+             (result (and proc (not busy) pm (> pmax pm)
+                         text (not (string-empty-p text)))))
+        (message "pending-input-check: proc=%s busy=%s pm=%s pmax=%s text-len=%s result=%s"
+                 (not (null proc)) busy pm pmax (and text (length text)) result)
+        result))))
 
 (defun agent-shell-team--prompt-agent (buffer message)
   "Deliver MESSAGE to BUFFER's agent via shell-maker-submit.
@@ -1758,19 +1761,18 @@ This goes through shell-maker's normal prompt flow so that:
 - ACP notifications render in-buffer instead of as stale minibuffer messages.
 If the user has uncommitted text at the prompt, defer delivery by re-queuing."
   (when (buffer-live-p buffer)
-    (if (agent-shell-team--user-has-pending-input-p buffer)
-        ;; User is typing — defer by re-queuing
-        (progn
-          (agent-shell-team--queue-message
-           nil buffer
-           (list :from "system" :title "Deferred" :message message))
-          (agent-shell-team--start-drain-timer))
-      ;; Safe to deliver
-      (message "agent-shell-team: prompt-agent to %s (process=%s, status=%s)"
-               (buffer-name buffer) (get-buffer-process buffer)
-               (agent-shell-team--agent-status buffer))
-      (with-current-buffer buffer
-        (shell-maker-submit :input (format "«TEAM»\n%s\n«/TEAM»" message))))))
+    (let ((has-input (agent-shell-team--user-has-pending-input-p buffer)))
+      (message "prompt-guard: buffer=%s has-pending-input=%s" (buffer-name buffer) has-input)
+      (if has-input
+          (progn
+            (message "prompt-guard: DEFERRING message to %s" (buffer-name buffer))
+            (agent-shell-team--queue-message
+             nil buffer
+             (list :from "system" :title "Deferred" :message message))
+            (agent-shell-team--start-drain-timer))
+        (message "prompt-guard: DELIVERING to %s" (buffer-name buffer))
+        (with-current-buffer buffer
+          (shell-maker-submit :input (format "«TEAM»\n%s\n«/TEAM»" message)))))))
 
 (defun agent-shell-team--prompt-agent-silent (buffer message)
   "Deliver MESSAGE to BUFFER's agent via raw ACP request.

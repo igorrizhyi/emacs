@@ -56,11 +56,21 @@ Returns a vector of absolute file paths sorted by name."
   "Return current state: busy, pending, or idle.
 During initialization, always return idle to avoid showing busy frames
 before the agent is ready."
-  (cond
-   ((not (bound-and-true-p agent-shell-team--init-finished-p)) 'idle)
-   ((my-agent-shell-sprite--busy-p) 'busy)
-   ((my-agent-shell-sprite--pending-p) 'pending)
-   (t 'idle)))
+  (let* ((init-done (bound-and-true-p agent-shell-team--init-finished-p))
+         (busy (and init-done (my-agent-shell-sprite--busy-p)))
+         (pending (and init-done (not busy) (my-agent-shell-sprite--pending-p)))
+         (state (cond
+                 ((not init-done) 'idle)
+                 (busy 'busy)
+                 (pending 'pending)
+                 (t 'idle))))
+    ;; Log state transitions only
+    (unless (eq state my-agent-shell-sprite--current-state)
+      (message "sprite-state: %s -> %s (pending-queue=%s)"
+               my-agent-shell-sprite--current-state state
+               (and (bound-and-true-p agent-shell-team--message-queue)
+                    (hash-table-count agent-shell-team--message-queue))))
+    state))
 
 (defun my-agent-shell-sprite--tick ()
   "Main animation tick.  Runs every 300ms.
