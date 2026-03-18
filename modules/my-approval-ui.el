@@ -58,13 +58,17 @@
   '((t :background "#2a2a00"))
   "Face for the currently highlighted item.")
 
-(defface my/approval-choice-face
-  '((t :box (:line-width 1 :style released-button)))
-  "Face for choice tab buttons.")
+(defface my/approval-radio-selected-face
+  '((t :foreground "#33ff33"))
+  "Face for selected radio buttons.")
 
-(defface my/approval-choice-selected-face
-  '((t :inverse-video t :box (:line-width 1 :style pressed-button)))
-  "Face for the selected choice tab.")
+(defface my/approval-radio-unselected-face
+  '((t :foreground "#888888"))
+  "Face for unselected radio buttons.")
+
+(defface my/approval-item-description-face
+  '((t :foreground "#777777" :slant italic))
+  "Face for item descriptions shown below labels.")
 
 (defface my/approval-notes-face
   '((t :foreground "#aaaaaa" :slant italic))
@@ -246,18 +250,24 @@ Choice :items are plists (:id :label :selected).")
             (push text lines))
           (cl-incf idx))))
      ((equal req-type "choice")
-      (let ((tab-line "")
-            (idx 0))
+      (let ((idx 0))
         (dolist (item items)
-          (let* ((label (or (plist-get item :label) "?"))
-                 (selected (plist-get item :selected))
-                 (face (if selected
-                           'my/approval-choice-selected-face
-                         'my/approval-choice-face))
-                 (tab (propertize (concat " " label " ") 'face face)))
-            (setq tab-line (concat tab-line (if (> idx 0) " " "") tab)))
-          (cl-incf idx))
-        (push tab-line lines))))
+          (let* ((selected (plist-get item :selected))
+                 (label (or (plist-get item :label) "?"))
+                 (desc (plist-get item :description))
+                 (radio (if selected
+                            (propertize "◉" 'face 'my/approval-radio-selected-face)
+                          (propertize "○" 'face 'my/approval-radio-unselected-face)))
+                 (highlighted (and (eq my/approval--focus 'center)
+                                   (= idx my/approval--item-index)))
+                 (text (concat " " radio " " label)))
+            (when highlighted
+              (setq text (propertize text 'face 'my/approval-item-highlight-face)))
+            (push text lines)
+            (when (and desc (not (string-empty-p desc)))
+              (let ((desc-text (concat "   " desc)))
+                (push (propertize desc-text 'face 'my/approval-item-description-face) lines))))
+          (cl-incf idx)))))
     ;; Notes
     (when (and notes (not (string-empty-p notes)))
       (push "" lines)
@@ -289,27 +299,40 @@ Choice :items are plists (:id :label :selected).")
   "Move to the previous item in the current request."
   (interactive)
   (when-let ((req (my/approval--current-request)))
+    (setq my/approval--focus 'center)
     (when (> my/approval--item-index 0)
-      (cl-decf my/approval--item-index)
-      (my/approval--render))))
+      (cl-decf my/approval--item-index))
+    (my/approval--render)))
 
 (defun my/approval-next-item ()
   "Move to the next item in the current request."
   (interactive)
   (when-let ((req (my/approval--current-request)))
+    (setq my/approval--focus 'center)
     (when (< my/approval--item-index (1- (length (plist-get req :items))))
-      (cl-incf my/approval--item-index)
-      (my/approval--render))))
+      (cl-incf my/approval--item-index))
+    (my/approval--render)))
 
 (defun my/approval-toggle-item ()
-  "Toggle the checkbox of the current checklist item."
+  "Toggle the current item.
+For checklist: toggle checkbox on/off.
+For choice: radio-select current item (deselect all others)."
   (interactive)
   (when-let ((req (my/approval--current-request)))
-    (when (equal (plist-get req :type) "checklist")
-      (let ((item (nth my/approval--item-index (plist-get req :items))))
-        (when item
-          (plist-put item :checked (not (plist-get item :checked)))
-          (my/approval--render))))))
+    (let ((items (plist-get req :items))
+          (req-type (plist-get req :type)))
+      (cond
+       ((equal req-type "checklist")
+        (let ((item (nth my/approval--item-index items)))
+          (when item
+            (plist-put item :checked (not (plist-get item :checked))))))
+       ((equal req-type "choice")
+        (let ((item (nth my/approval--item-index items)))
+          (when item
+            (dolist (it items)
+              (plist-put it :selected nil))
+            (plist-put item :selected t)))))
+      (my/approval--render))))
 
 (defun my/approval-prev-choice ()
   "Select the previous choice in choice mode."
