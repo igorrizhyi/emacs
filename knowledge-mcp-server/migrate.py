@@ -4,7 +4,11 @@ import argparse
 import os
 import sys
 
+from falkordb import FalkorDB
+
 from common import (
+    FALKORDB_HOST,
+    FALKORDB_PORT,
     GRAPH_NAME,
     get_graph,
     init_schema,
@@ -155,6 +159,146 @@ def migrate_reports(reports_dir: str, project: str = None):
     print("Done.")
 
 
+def migrate_from_graph(source_graph_name: str, project: str):
+    """Copy all Chunk nodes from a source graph into the current namespace graph.
+
+    Preserves embeddings, Topic nodes, and all relationships (HAS_TOPIC,
+    FOR_ROLE, RELATED_TO).  Uses MERGE on chunk/topic IDs for idempotency.
+    """
+    db = FalkorDB(host=FALKORDB_HOST, port=FALKORDB_PORT)
+    src = db.select_graph(source_graph_name)
+    dst = get_graph()
+
+    print(f"Source graph: {source_graph_name}")
+    print(f"Target graph: {GRAPH_NAME}")
+    print(f"Project tag:  {project}")
+
+    init_schema(dst)
+
+    # --- 1. Copy Chunk nodes ---
+    print("\nReading chunks from source graph...")
+    res = src.query(
+        "MATCH (c:Chunk) "
+        "RETURN c.id, c.content, c.embedding, c.source, c.section, "
+        "       c.roles, c.type, c.created_at, c.project"
+    )
+    chunks = res.result_set
+    print(f"  Found {len(chunks)} chunks")
+
+    for i, row in enumerate(chunks):
+        cid, content, emb, source, section, roles, ctype, created_at, _proj = row
+        params = {
+            "id": cid,
+            "content": content,
+            "source": source or "",
+            "section": section or "",
+            "roles": roles or "",
+            "type": ctype or "knowledge",
+            "ts": created_at or "",
+            "project": project,
+        }
+        if emb is not None:
+            dst.query(
+                """
+                MERGE (c:Chunk {id: $id})
+                SET c.content    = $content,
+                    c.embedding  = vecf32($vec),
+                    c.source     = $source,
+                    c.section    = $section,
+                    c.roles      = $roles,
+                    c.type       = $type,
+                    c.created_at = $ts,
+                    c.project    = $project
+                """,
+                params={**params, "vec": list(emb)},
+            )
+        else:
+            dst.query(
+                """
+                MERGE (c:Chunk {id: $id})
+                SET c.content    = $content,
+                    c.source     = $source,
+                    c.section    = $section,
+                    c.roles      = $roles,
+                    c.type       = $type,
+                    c.created_at = $ts,
+                    c.project    = $project
+                """,
+                params=params,
+            )
+        if (i + 1) % 50 == 0:
+            print(f"  Copied {i + 1}/{len(chunks)} chunks...")
+
+    print(f"  Copied {len(chunks)} chunks")
+
+    # --- 2. Copy Topic nodes and HAS_TOPIC relationships ---
+    print("Copying topics and HAS_TOPIC edges...")
+    topic_res = src.query(
+        "MATCH (c:Chunk)-[:HAS_TOPIC]->(t:Topic) "
+        "RETURN c.id, t.name"
+    )
+    topic_edges = topic_res.result_set
+    for cid, tname in topic_edges:
+        dst.query(
+            """
+            MATCH (c:Chunk {id: $id})
+            MERGE (t:Topic {name: $topic})
+            MERGE (c)-[:HAS_TOPIC]->(t)
+            """,
+            params={"id": cid, "topic": tname},
+        )
+    print(f"  Copied {len(topic_edges)} HAS_TOPIC edges")
+
+    # --- 3. Copy FOR_ROLE relationships ---
+    print("Copying FOR_ROLE edges...")
+    role_res = src.query(
+        "MATCH (c:Chunk)-[:FOR_ROLE]->(r:Role) "
+        "RETURN c.id, r.name"
+    )
+    role_edges = role_res.result_set
+    for cid, rname in role_edges:
+        dst.query(
+            """
+            MATCH (c:Chunk {id: $id})
+            MERGE (r:Role {name: $role})
+            MERGE (c)-[:FOR_ROLE]->(r)
+            """,
+            params={"id": cid, "role": rname},
+        )
+    print(f"  Copied {len(role_edges)} FOR_ROLE edges")
+
+    # --- 4. Copy RELATED_TO relationships ---
+    print("Copying RELATED_TO edges...")
+    rel_res = src.query(
+        "MATCH (a:Chunk)-[r:RELATED_TO]->(b:Chunk) "
+        "RETURN a.id, b.id, r.score"
+    )
+    rel_edges = rel_res.result_set
+    for aid, bid, score in rel_edges:
+        dst.query(
+            """
+            MATCH (a:Chunk {id: $a}), (b:Chunk {id: $b})
+            MERGE (a)-[r:RELATED_TO]->(b)
+            SET r.score = $score
+            """,
+            params={"a": aid, "b": bid, "score": score},
+        )
+    print(f"  Copied {len(rel_edges)} RELATED_TO edges")
+
+    # --- Stats ---
+    dst_chunks = dst.query("MATCH (c:Chunk) RETURN count(c)").result_set[0][0]
+    dst_topics = dst.query("MATCH (t:Topic) RETURN count(t)").result_set[0][0]
+    dst_related = dst.query("MATCH ()-[r:RELATED_TO]->() RETURN count(r)").result_set[0][0]
+
+    print(f"\n--- Graph-to-Graph Migration Stats ---")
+    print(f"  Source chunks copied: {len(chunks)}")
+    print(f"  HAS_TOPIC edges:     {len(topic_edges)}")
+    print(f"  FOR_ROLE edges:      {len(role_edges)}")
+    print(f"  RELATED_TO edges:    {len(rel_edges)}")
+    print(f"  Target graph totals: {dst_chunks} chunks, {dst_topics} topics, {dst_related} RELATED_TO")
+    print("Done.")
+
+
 def main():
     project_root = os.environ.get("PROJECT_ROOT")
     if project_root:
@@ -198,6 +342,11 @@ def main():
              "(knowledge_<namespace>) and tags all chunks with a project derived "
              "from --project-root.",
     )
+    parser.add_argument(
+        "--from-graph",
+        help="Source graph name for graph-to-graph migration (e.g. knowledge_doom_abc123). "
+             "Copies all Chunk nodes into the namespace graph. Requires --namespace.",
+    )
     args = parser.parse_args()
 
     graph_root = args.project_root or project_root
@@ -214,6 +363,13 @@ def main():
         else:
             project = "default"
         print(f"Namespace mode: graph={GRAPH_NAME}, project={project}")
+
+    if args.from_graph:
+        if not args.namespace:
+            print("Error: --from-graph requires --namespace")
+            sys.exit(1)
+        migrate_from_graph(args.from_graph, project=project)
+        return
 
     if args.reports:
         if not os.path.isdir(args.reports_dir):
