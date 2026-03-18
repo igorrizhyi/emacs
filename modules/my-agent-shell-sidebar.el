@@ -40,6 +40,10 @@
 (declare-function agent-shell-team--get-lead "agent-shell-team")
 (declare-function agent-shell-team--queue-message "agent-shell-team")
 (declare-function agent-shell-team--start-drain-timer "agent-shell-team")
+(defvar agent-shell--state)
+(defvar agent-shell-team--role)
+(declare-function agent-shell--format-number-compact "agent-shell-usage")
+(declare-function agent-shell--update-usage-from-notification "agent-shell-usage")
 
 ;;; ---- Constants & Buffer Name ------------------------------------------------
 
@@ -353,6 +357,47 @@ Emacs instances share a single fetch per cycle."
     (insert " " (propertize "Loading quota..." 'face 'my/team-sidebar-quota-reset) "\n\n")
     t)))
 
+;;; ---- Context Usage Bar -----------------------------------------------------
+
+(defun my/team-sidebar--lead-context-usage ()
+  "Return (USED . SIZE) for the lead agent's context, or nil."
+  (when-let* ((session-id (and (boundp 'agent-shell-team--session-id)
+                               agent-shell-team--session-id))
+              (lead-buf (my/team-sidebar--find-lead-buffer session-id))
+              ((buffer-live-p (get-buffer lead-buf))))
+    (with-current-buffer lead-buf
+      (when (and (boundp 'agent-shell--state) agent-shell--state)
+        (let* ((usage (map-elt agent-shell--state :usage))
+               (used (or (map-elt usage :context-used) 0))
+               (size (or (map-elt usage :context-size) 0)))
+          (when (> size 0)
+            (cons used size)))))))
+
+(defun my/team-sidebar--insert-context-bar ()
+  "Insert context usage bar. Returns non-nil if inserted."
+  (when-let* ((ctx (my/team-sidebar--lead-context-usage))
+              (used (car ctx))
+              (size (cdr ctx)))
+    (let* ((util (/ (float used) size))
+           (bar-width 20)
+           (filled (round (* util bar-width)))
+           (empty (- bar-width filled))
+           (pct (round (* util 100)))
+           (face (cond ((>= pct 85) 'my/team-sidebar-quota-critical)
+                       ((>= pct 60) 'my/team-sidebar-quota-warn)
+                       (t 'my/team-sidebar-quota-ok)))
+           (filled-str (propertize (make-string filled ?█) 'face face))
+           (empty-str (propertize (make-string empty ?░) 'face 'my/team-sidebar-quota-empty))
+           (label (format "%s/%s"
+                          (agent-shell--format-number-compact used)
+                          (agent-shell--format-number-compact size))))
+      (insert (propertize "ctx " 'face 'my/team-sidebar-quota-label)
+              filled-str empty-str
+              (propertize (format " %d%%" pct) 'face face)
+              "  " (propertize label 'face 'font-lock-comment-face)
+              "\n")
+      t)))
+
 ;;; ---- Quota Timer -----------------------------------------------------------
 
 (defun my/team-sidebar--quota-ensure-timer ()
@@ -607,6 +652,8 @@ Returns t if anything was inserted, nil otherwise."
   (let ((has-content nil))
     ;; Quota progress bars at the very top
     (when (my/team-sidebar--insert-quota)
+      (setq has-content t))
+    (when (my/team-sidebar--insert-context-bar)
       (setq has-content t))
     (when (boundp 'agent-shell-team--sessions)
       (maphash
@@ -1261,6 +1308,16 @@ Registered on `window-buffer-change-functions' and
 
 (with-eval-after-load 'agent-shell-team
   (my/team-sidebar--setup-hooks))
+
+;;; ---- Context bar refresh on usage update -----------------------------------
+
+(with-eval-after-load 'agent-shell-usage
+  (advice-add 'agent-shell--update-usage-from-notification :after
+    (lambda (&rest _)
+      (when (and (boundp 'agent-shell-team--role)
+                 (equal agent-shell-team--role "lead"))
+        (when (fboundp 'my/team-sidebar-refresh)
+          (my/team-sidebar-refresh))))))
 
 (provide 'my-agent-shell-sidebar)
 ;;; my-agent-shell-sidebar.el ends here
