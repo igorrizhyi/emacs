@@ -904,28 +904,33 @@ REQUEST keys: :request-id :title :description :type
           (setf (nth pos my/approval--requests) request))
       ;; New request — push to front
       (push request my/approval--requests)))
-  ;; Always expand on new request (exit collapsed mode)
-  (when-let ((buf (get-buffer my/approval-buffer-name)))
-    (with-current-buffer buf
-      (setq my/approval--collapsed nil
-            header-line-format (propertize " Approval Queue" 'face 'bold))))
-  ;; Show window at full height and render
-  (my/approval--display-window my/approval-window-height)
-  ;; Select the newly added request (it's at index 0 after push)
-  (when-let ((buf (get-buffer my/approval-buffer-name)))
-    (with-current-buffer buf
-      (setq my/approval--request-index 0
-            my/approval--item-index 0
-            my/approval--focus 'left)))
-  (my/approval--render)
-  ;; Auto-focus the approval window
-  (when-let ((win (get-buffer-window my/approval-buffer-name t)))
-    (select-window win))
-  ;; Desktop notification
-  (notifications-notify
-   :title "Approval Request"
-   :body (format "Approval needed: %s" (plist-get request :title))
-   :urgency 'critical))
+  ;; Defer all UI work out of the websocket process filter so that
+  ;; D-Bus calls and redisplay don't block user input.
+  (let ((req-title (plist-get request :title)))
+    (run-at-time 0 nil
+                 (lambda ()
+                   ;; Expand on new request (exit collapsed mode)
+                   (when-let ((buf (get-buffer my/approval-buffer-name)))
+                     (with-current-buffer buf
+                       (setq my/approval--collapsed nil
+                             header-line-format (propertize " Approval Queue" 'face 'bold))))
+                   ;; Show window at full height and render
+                   (my/approval--display-window my/approval-window-height)
+                   ;; Select the newly added request (it's at index 0 after push)
+                   (when-let ((buf (get-buffer my/approval-buffer-name)))
+                     (with-current-buffer buf
+                       (setq my/approval--request-index 0
+                             my/approval--item-index 0
+                             my/approval--focus 'left)))
+                   (my/approval--render)
+                   ;; Auto-focus the approval window
+                   (when-let ((win (get-buffer-window my/approval-buffer-name t)))
+                     (select-window win))
+                   ;; Desktop notification
+                   (notifications-notify
+                    :title "Approval Request"
+                    :body (format "Approval needed: %s" req-title)
+                    :urgency 'critical)))))
 
 ;;; ---- Auto-refresh on window focus -------------------------------------------
 
