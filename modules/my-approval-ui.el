@@ -116,6 +116,7 @@ Choice :items are plists (:id :label :selected).
     (define-key map "j" #'my/approval-next-item)
     (define-key map "k" #'my/approval-prev-item)
     (define-key map (kbd "RET") #'my/approval-toggle-item)
+    (define-key map (kbd "<return>") #'my/approval-toggle-item)
     (define-key map (kbd "<left>") #'my/approval-prev-choice)
     (define-key map (kbd "<right>") #'my/approval-next-choice)
     (define-key map "a" #'my/approval-add-item)
@@ -127,7 +128,7 @@ Choice :items are plists (:id :label :selected).
     (define-key map "g" #'my/approval-refresh)
     (define-key map "l" #'my/approval-focus-center)
     (define-key map (kbd "ESC") #'my/approval-focus-left)
-    (define-key map (kbd "C-k") #'my/approval-toggle-collapse)
+    (define-key map (kbd "s-k") #'my/approval-toggle-collapse)
     (define-key map "o" #'my/approval-open-review-file)
     map)
   "Keymap for `my/approval-mode'.")
@@ -152,6 +153,7 @@ Choice :items are plists (:id :label :selected).
     "j" #'my/approval-next-item
     "k" #'my/approval-prev-item
     (kbd "RET") #'my/approval-toggle-item
+    (kbd "<return>") #'my/approval-toggle-item
     (kbd "<left>") #'my/approval-prev-choice
     (kbd "<right>") #'my/approval-next-choice
     "a" #'my/approval-add-item
@@ -163,7 +165,7 @@ Choice :items are plists (:id :label :selected).
     "g" #'my/approval-refresh
     "l" #'my/approval-focus-center
     (kbd "ESC") #'my/approval-focus-left
-    (kbd "C-k") #'my/approval-toggle-collapse
+    (kbd "s-k") #'my/approval-toggle-collapse
     "o" #'my/approval-open-review-file))
 
 ;;; ---- Helpers ----------------------------------------------------------------
@@ -487,7 +489,7 @@ Full rewrite — files are small (5-30 lines)."
       (push (propertize (concat "Notes: " notes) 'face 'my/approval-notes-face) lines))
     ;; Submit hint
     (push "" lines)
-    (push (propertize "[RET toggle] [C-Ret submit] [q dismiss] [Q hide] [o open] [r refine] [C-k collapse]" 'face 'my/approval-hint-face) lines)
+    (push (propertize "[RET toggle] [C-Ret submit] [q dismiss] [Q hide] [o open] [r refine] [s-k collapse]" 'face 'my/approval-hint-face) lines)
     (nreverse lines)))
 
 (defun my/approval--render-collapsed ()
@@ -499,11 +501,11 @@ Full rewrite — files are small (5-30 lines)."
                    ((zerop count)
                     "▶ No pending approvals")
                    (latest-title
-                    (format "▶ %d pending approval%s — latest: \"%s\"  [C-k expand]"
+                    (format "▶ %d pending approval%s — latest: \"%s\"  [s-k expand]"
                             count (if (= count 1) "" "s")
                             (truncate-string-to-width latest-title 50)))
                    (t
-                    (format "▶ %d pending approval%s  [C-k expand]"
+                    (format "▶ %d pending approval%s  [s-k expand]"
                             count (if (= count 1) "" "s"))))))
     (insert (propertize summary 'face 'my/approval-collapsed-face))))
 
