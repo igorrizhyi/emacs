@@ -1502,13 +1502,16 @@ Route the status update directly to the lead agent's queue."
                        (cl-loop for agent in (agent-shell-team--get-session-agents session-id)
                                 when (eq (alist-get 'buffer agent) agent-buf)
                                 return (alist-get 'worktree-name agent))))
-           (message-text (format "Task Update [%s] — %s\nRequest ID: %s%s%s%s\n\n%s"
+           (agent-role (when (and agent-buf (buffer-live-p agent-buf))
+                         (buffer-local-value 'agent-shell-team--role agent-buf)))
+           (message-text (format "Task Update [%s] — %s\nRequest ID: %s%s%s%s%s\n\n%s"
                                  status
                                  request-id
                                  request-id
                                  (if commit (format "\nCommit: %s" commit) "")
                                  (if report-path (format "\nReport: %s" report-path) "")
                                  (if agent-wt (format "\nAgent: %s" agent-wt) "")
+                                 (if agent-role (format "\nRole: %s" agent-role) "")
                                  content))
            ;; Check report for Knowledge Discoveries on finished tasks
            (message-text

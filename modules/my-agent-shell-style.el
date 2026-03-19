@@ -209,7 +209,15 @@ Skips regions already styled.  Safe to call repeatedly."
         :inherit nil
         :background "#2a1a37"
         :extend t)
-  "Face for team-injected messages in agent-shell buffers.")
+  "Face for team-injected messages in agent-shell buffers (default/researcher).")
+
+(defvar my/agent-shell-team-message-dev-face
+  (list :font (font-spec :family "SF Mono" :weight 'semibold)
+        :height 0.75
+        :inherit nil
+        :background "#371a2a"
+        :extend t)
+  "Face for dev role team messages in agent-shell buffers.")
 
 (defvar my/agent-shell--team-msg-marker-start "«TEAM»"
   "Start marker for team messages in shell history.")
@@ -217,16 +225,17 @@ Skips regions already styled.  Safe to call repeatedly."
 (defvar my/agent-shell--team-msg-marker-end "«/TEAM»"
   "End marker for team messages in shell history.")
 
-(defun my/agent-shell--apply-team-message-overlay (start end)
-  "Apply team message face overlay on text from START to END."
-  (let* ((face my/agent-shell-team-message-face)
+(defun my/agent-shell--apply-team-message-overlay (start end &optional face)
+  "Apply team message face overlay on text from START to END.
+Optional FACE overrides the default team message face."
+  (let* ((face (or face my/agent-shell-team-message-face))
          (padding (propertize "  " 'face face))
          (ov (make-overlay start end nil t nil)))
     (overlay-put ov 'face face)
     (overlay-put ov 'line-prefix padding)
     (overlay-put ov 'wrap-prefix padding)
-    (overlay-put ov 'before-string (propertize "\n" 'face face))
-    (overlay-put ov 'after-string (propertize "\n" 'face face))
+    (overlay-put ov 'before-string "\n")
+    (overlay-put ov 'after-string "\n")
     (overlay-put ov 'priority 100)
     (overlay-put ov 'evaporate nil)
     (overlay-put ov 'my-agent-shell-team-msg t)))
@@ -252,8 +261,15 @@ Skips regions already styled.  Safe to call repeatedly."
                      (ov-ms (make-overlay m-start hide-end nil t nil)))
                 (overlay-put ov-ms 'invisible t)
                 (overlay-put ov-ms 'my-agent-shell-team-msg t)
-                ;; Style the content body (starting after the hidden newline)
-                (my/agent-shell--apply-team-message-overlay hide-end content-end))
+                ;; Detect role from content to pick per-role face
+                (let* ((text (buffer-substring-no-properties hide-end content-end))
+                       (role (when (string-match "\nRole: \\(\\w+\\)" text)
+                               (match-string 1 text)))
+                       (face (pcase role
+                               ("dev" my/agent-shell-team-message-dev-face)
+                               (_ my/agent-shell-team-message-face))))
+                  ;; Style the content body (starting after the hidden newline)
+                  (my/agent-shell--apply-team-message-overlay hide-end content-end face)))
               ;; Hide end marker + trailing newlines
               (let* ((hide-start content-end)
                      (hide-end (save-excursion
