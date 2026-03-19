@@ -430,6 +430,15 @@ For choice: radio-select current item (deselect all others)."
               (format "\nNotes:\n%s\n" notes))
             "«/TEAM»")))
 
+(defun my/approval--format-cancellation (req)
+  "Format REQ into a «TEAM» cancellation message string."
+  (let ((request-id (plist-get req :request-id))
+        (title (or (plist-get req :title) "Untitled")))
+    (concat "«TEAM»\n"
+            (format "Approval Cancelled [request-id: %s]\n" request-id)
+            (format "Title: %s\n" title)
+            "«/TEAM»")))
+
 (defun my/approval-submit ()
   "Submit the current request's approval response to the lead."
   (interactive)
@@ -501,9 +510,38 @@ For choice: radio-select current item (deselect all others)."
     (set-window-dedicated-p win t)))
 
 (defun my/approval-quit ()
-  "Hide the approval window."
+  "Cancel the current request and hide the approval window.
+Sends a cancellation message to the lead for the currently selected
+request, removes it from the queue, and hides the window if empty."
   (interactive)
-  (my/approval--hide))
+  (let ((req (my/approval--current-request)))
+    (when req
+      (let* ((msg (my/approval--format-cancellation req))
+             (lead-buf (agent-shell-team--get-lead agent-shell-team--session-id)))
+        (when (buffer-live-p lead-buf)
+          (let ((status (agent-shell-team--agent-status lead-buf)))
+            (if (eq status 'idle)
+                (with-current-buffer lead-buf
+                  (shell-maker-submit :input msg))
+              (agent-shell-team--queue-message
+               nil lead-buf
+               (list :from "approval-ui"
+                     :title "Approval Cancelled"
+                     :message msg))
+              (agent-shell-team--start-drain-timer))))
+        ;; Remove cancelled request from list
+        (setq my/approval--requests
+              (cl-remove-if (lambda (r)
+                              (equal (plist-get r :request-id)
+                                     (plist-get req :request-id)))
+                            my/approval--requests))))
+    (if my/approval--requests
+        (progn
+          (my/approval--clamp-indices)
+          (my/approval--render))
+      (my/approval--hide))
+    (when req
+      (message "Approval cancelled."))))
 
 (defun my/approval-refresh ()
   "Re-render the approval buffer."
