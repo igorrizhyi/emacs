@@ -443,6 +443,56 @@ def create_similarity_edges(graph, threshold: float = 0.25, cross_role_threshold
                 )
 
 
+def create_cross_role_edges(graph, chunk_ids: list[str], threshold: float = 0.40):
+    """Create RELATED_TO edges between dev↔researcher chunks (incremental).
+
+    For each new chunk, if it has role 'dev', search for similar 'researcher'
+    chunks (and vice versa) within *threshold* cosine distance. This surfaces
+    cross-role connections that the tighter same-role similarity pass may miss.
+    """
+    cross_role_map = {"dev": "researcher", "researcher": "dev"}
+
+    for cid in chunk_ids:
+        res = graph.query(
+            "MATCH (c:Chunk {id: $id}) RETURN c.embedding, c.roles",
+            params={"id": cid},
+        )
+        if not res.result_set or not res.result_set[0][0]:
+            continue
+        vec, roles_str = res.result_set[0]
+        roles = {r.strip() for r in (roles_str or "").split(",") if r.strip()}
+
+        # Determine which opposite roles to search for
+        target_roles = {cross_role_map[r] for r in roles if r in cross_role_map}
+        if not target_roles:
+            continue
+
+        for target_role in target_roles:
+            neighbours = graph.query(
+                """
+                CALL db.idx.vector.queryNodes('Chunk', 'embedding', 20, vecf32($vec))
+                YIELD node, score
+                OPTIONAL MATCH (sup)-[:SUPERSEDES]->(node)
+                WITH node, score
+                WHERE sup IS NULL
+                  AND node.id <> $id
+                  AND score <= $threshold
+                RETURN node.id, node.roles, score
+                """,
+                params={"vec": list(vec), "id": cid, "threshold": threshold},
+            )
+            for row in neighbours.result_set:
+                nid, n_roles_str, score = row
+                n_roles = {r.strip() for r in (n_roles_str or "").split(",") if r.strip()}
+                if target_role not in n_roles:
+                    continue
+                graph.query(
+                    "MATCH (a:Chunk {id: $a}), (b:Chunk {id: $b}) "
+                    "MERGE (a)-[r:RELATED_TO]->(b) SET r.score = $score",
+                    params={"a": cid, "b": nid, "score": score},
+                )
+
+
 def create_similarity_edges_for_chunks(graph, chunk_ids: list[str], threshold: float = 0.25):
     """Create RELATED_TO edges only for the given chunks (incremental)."""
     for cid in chunk_ids:
