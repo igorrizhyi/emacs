@@ -11,7 +11,6 @@
 ;;; Code:
 
 (require 'cl-lib)
-(require 'notifications)
 
 (declare-function shell-maker-submit "shell-maker")
 (declare-function evil-define-key* "evil-core")
@@ -928,11 +927,12 @@ REQUEST keys: :request-id :title :description :type
                    ;; Auto-focus the approval window
                    (when-let ((win (get-buffer-window my/approval-buffer-name t)))
                      (select-window win))
-                   ;; Desktop notification
-                   (notifications-notify
-                    :title "Approval Request"
-                    :body (format "Approval needed: %s" req-title)
-                    :urgency 'critical)))))
+                   ;; Desktop notification (async via notify-send to avoid D-Bus blocking)
+                   (make-process
+                    :name "approval-notify"
+                    :command (list "notify-send" "-u" "critical" "Approval Request"
+                                   (format "Approval needed: %s" req-title))
+                    :noquery t)))))
 
 ;;; ---- Auto-refresh on window focus -------------------------------------------
 
