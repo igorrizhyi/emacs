@@ -264,6 +264,7 @@ Emacs instances share a single fetch per cycle."
         (let ((url-request-method "POST")
               (url-request-extra-headers
                `(("x-api-key" . ,token)
+                 ("Authorization" . ,(concat "Bearer " token))
                  ("anthropic-version" . "2023-06-01")
                  ("content-type" . "application/json")))
               (url-request-data
