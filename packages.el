@@ -114,6 +114,9 @@
 (package! magit-gptcommit
   :recipe (:host github :repo "douo/magit-gptcommit"))
 
+;; Desktop notifications
+(package! alert)
+
 ;; Agent shell - AI coding agents in Emacs
 (package! shell-maker)
 (package! acp)
