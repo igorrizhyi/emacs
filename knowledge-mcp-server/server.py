@@ -11,6 +11,7 @@ from common import (
     GRAPH_NAME, NAMESPACE, PROJECT_ROOT,
     get_graph, init_schema, ingest_chunks, query_knowledge, chunk_id,
     chunk_report, create_topic_links, create_similarity_edges_for_chunks,
+    detect_supersession, create_supersedes_edges,
     _resolve_project,
 )
 
@@ -142,8 +143,14 @@ async def _handle_store(arguments: dict) -> list[types.TextContent]:
     new_ids = [c["id"] for c in chunks]
     create_similarity_edges_for_chunks(graph, new_ids)
 
+    # Supersession detection — find and mark chunks that replace older ones
+    supersessions = detect_supersession(graph, chunks)
+    if supersessions:
+        create_supersedes_edges(graph, supersessions)
+
+    supersede_info = f", {len(supersessions)} supersession(s)" if supersessions else ""
     proj_info = f" project={project}" if project else ""
-    return [types.TextContent(type="text", text=f"Stored {len(chunks)} chunk(s). Source: {source}{proj_info}")]
+    return [types.TextContent(type="text", text=f"Stored {len(chunks)} chunk(s). Source: {source}{proj_info}{supersede_info}")]
 
 
 async def main():

@@ -471,6 +471,134 @@ def create_similarity_edges_for_chunks(graph, chunk_ids: list[str], threshold: f
 
 
 # ---------------------------------------------------------------------------
+# Supersession detection
+# ---------------------------------------------------------------------------
+
+SUPERSESSION_CANDIDATE_THRESHOLD = 0.15  # cosine distance — very close
+
+CLASSIFICATION_MODEL = os.environ.get("GRAPHRAG_CLASSIFY_MODEL", "gpt-4o-mini")
+
+_CLASSIFY_PROMPT = """\
+You are comparing two knowledge chunks. Classify the relationship.
+
+EXISTING chunk:
+{existing}
+
+NEW chunk:
+{new}
+
+Classify as exactly one of:
+- SUPERSEDES — the new chunk updates/replaces the existing one (same topic, newer info)
+- CONTRADICTS — they make conflicting claims on the same topic
+- DUPLICATE — they say essentially the same thing
+- DIFFERENT — they cover different topics despite textual similarity
+
+Respond with JSON only: {{"type": "<TYPE>", "reason": "<brief reason>"}}"""
+
+
+def _roles_overlap(roles_a: str, roles_b: str) -> bool:
+    """Check if two comma-separated role strings have any overlap."""
+    set_a = {r.strip() for r in roles_a.split(",") if r.strip()}
+    set_b = {r.strip() for r in roles_b.split(",") if r.strip()}
+    return bool(set_a & set_b)
+
+
+def detect_supersession(graph, new_chunks: list[dict]) -> list[tuple[str, str, dict]]:
+    """Find existing chunks that new chunks might supersede.
+
+    For each new chunk:
+    1. Find very similar existing chunks (cosine distance < threshold)
+    2. Skip chunks with non-overlapping roles (different audience = both valid)
+    3. Same-source fast path: auto-classify as SUPERSEDES without LLM
+    4. Cross-source: ask LLM to classify
+
+    Returns list of (new_id, old_id, classification_dict) tuples.
+    """
+    results = []
+
+    for chunk in new_chunks:
+        cid = chunk["id"]
+        # Fetch the embedding we just stored
+        res = graph.query(
+            "MATCH (c:Chunk {id: $id}) RETURN c.embedding",
+            params={"id": cid},
+        )
+        if not res.result_set or not res.result_set[0][0]:
+            continue
+        vec = res.result_set[0][0]
+
+        # Find very close neighbors
+        neighbours = graph.query(
+            """
+            CALL db.idx.vector.queryNodes('Chunk', 'embedding', 5, vecf32($vec))
+            YIELD node, score
+            WHERE node.id <> $id AND score <= $threshold
+            RETURN node.id, node.content, node.source, node.roles, score
+            """,
+            params={
+                "vec": list(vec),
+                "id": cid,
+                "threshold": SUPERSESSION_CANDIDATE_THRESHOLD,
+            },
+        )
+
+        for row in neighbours.result_set:
+            old_id, old_content, old_source, old_roles, score = row
+
+            # Skip if roles don't overlap — different audience means both valid
+            if old_roles and chunk.get("roles") and not _roles_overlap(chunk["roles"], old_roles):
+                continue
+
+            # Same-source fast path: auto-classify as SUPERSEDES
+            if chunk.get("source") == old_source:
+                results.append((cid, old_id, {
+                    "type": "SUPERSEDES",
+                    "reason": f"Same source ({old_source}), distance={score:.3f}",
+                }))
+                continue
+
+            # Cross-source: ask LLM to classify
+            try:
+                prompt = _CLASSIFY_PROMPT.format(
+                    existing=old_content[:500],
+                    new=chunk["content"][:500],
+                )
+                llm_resp = completion(
+                    model=CLASSIFICATION_MODEL,
+                    messages=[{"role": "user", "content": prompt}],
+                    response_format={"type": "json_object"},
+                )
+                raw = llm_resp.choices[0].message.content.strip()
+                classification = json.loads(raw)
+                # Only keep actionable classifications
+                if classification.get("type") in ("SUPERSEDES", "CONTRADICTS", "DUPLICATE"):
+                    results.append((cid, old_id, classification))
+            except Exception:
+                # LLM failure is non-fatal — skip this candidate
+                continue
+
+    return results
+
+
+def create_supersedes_edges(graph, supersessions: list[tuple[str, str, dict]]):
+    """Create SUPERSEDES edges from detection results."""
+    now = datetime.now(timezone.utc).isoformat()
+    for new_id, old_id, classification in supersessions:
+        graph.query(
+            "MATCH (new:Chunk {id: $new_id}), (old:Chunk {id: $old_id}) "
+            "MERGE (new)-[s:SUPERSEDES]->(old) "
+            "SET s.reason = $reason, s.type = $type, s.detected_at = $ts",
+            params={
+                "new_id": new_id,
+                "old_id": old_id,
+                "reason": classification.get("reason", ""),
+                "type": classification.get("type", "SUPERSEDES"),
+                "ts": now,
+            },
+        )
+
+
+# ---------------------------------------------------------------------------
 # Query pipeline
 # ---------------------------------------------------------------------------
 
