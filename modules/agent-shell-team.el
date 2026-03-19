@@ -821,7 +821,20 @@ When calling `presentOptions`, reuse the same `request_id` (slug) if you are upd
 an existing review (e.g., refining options after user feedback, adding new options to
 an ongoing discussion). This updates the existing review file instead of creating a
 new pending task. Check your conversation context for existing review slugs before
-creating new ones."
+creating new ones.
+
+## Approval Refine Workflow
+When the user submits an approval response, check if the `## Refine` section in the review
+markdown has content. If it does:
+1. The user wants changes to the review plan — address their refinement request
+2. Update the review items/options via a new `presentOptions` call with the SAME `request_id`
+3. Before updating, append a row to the `## Decisions` table in the review file:
+   - Decision: summarize the user's refine request (1 sentence)
+   - Reaction: summarize your response/changes (1 sentence)
+4. Clear the `## Refine` section after processing
+
+The `## Notes` section contains additional context from the user — read it but do not clear it.
+Notes are included in the approval response message automatically."
           (agent-shell-team--knowledge-dir)
           session-id)))
     (let ((knowledge-content (let ((f (agent-shell-team--knowledge-file "lead")))
