@@ -11,7 +11,7 @@
 ;;; Code:
 
 (require 'cl-lib)
-(require 'alert)
+(require 'notifications)
 
 (declare-function shell-maker-submit "shell-maker")
 (declare-function evil-define-key* "evil-core")
@@ -584,9 +584,10 @@ REQUEST keys: :request-id :title :description :type
   (when-let ((win (get-buffer-window my/approval-buffer-name t)))
     (select-window win))
   ;; Desktop notification
-  (alert (format "Approval needed: %s" (plist-get request :title))
-         :title "Approval Request"
-         :severity 'high))
+  (notifications-notify
+   :title "Approval Request"
+   :body (format "Approval needed: %s" (plist-get request :title))
+   :urgency 'critical))
 
 (provide 'my-approval-ui)
 ;;; my-approval-ui.el ends here
