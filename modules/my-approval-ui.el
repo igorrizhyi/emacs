@@ -11,6 +11,7 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'alert)
 
 (declare-function shell-maker-submit "shell-maker")
 (declare-function evil-define-key* "evil-core")
@@ -540,7 +541,11 @@ REQUEST keys: :request-id :title :description :type
       (setq my/approval--request-index 0
             my/approval--item-index 0
             my/approval--focus 'left)))
-  (my/approval--render))
+  (my/approval--render)
+  ;; Desktop notification
+  (alert (format "Approval needed: %s" (plist-get request :title))
+         :title "Approval Request"
+         :severity 'high))
 
 (provide 'my-approval-ui)
 ;;; my-approval-ui.el ends here
