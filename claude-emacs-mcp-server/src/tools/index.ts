@@ -18,6 +18,7 @@ export { handleDismissAgent } from './dismiss-agent-tools.js';
 export { handleMessagePeer } from './message-peer-tools.js';
 export { handleListNamespacePeers } from './namespace-tools.js';
 export { handlePresentOptions } from './approval-tools.js';
+export { handleListPendingReviews } from './review-tools.js';
 export {
   handleExecuteTerminalCommandInEmacs,
   handleGetTerminalContent,
