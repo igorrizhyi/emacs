@@ -126,6 +126,7 @@ Choice :items are plists (:id :label :selected).")
     (define-key map "l" #'my/approval-focus-center)
     (define-key map (kbd "ESC") #'my/approval-focus-left)
     (define-key map (kbd "C-k") #'my/approval-toggle-collapse)
+    (define-key map "o" #'my/approval-open-review-file)
     map)
   "Keymap for `my/approval-mode'.")
 
@@ -159,7 +160,8 @@ Choice :items are plists (:id :label :selected).")
     "g" #'my/approval-refresh
     "l" #'my/approval-focus-center
     (kbd "ESC") #'my/approval-focus-left
-    (kbd "C-k") #'my/approval-toggle-collapse))
+    (kbd "C-k") #'my/approval-toggle-collapse
+    "o" #'my/approval-open-review-file))
 
 ;;; ---- Helpers ----------------------------------------------------------------
 
@@ -183,6 +185,145 @@ Choice :items are plists (:id :label :selected).")
               (setq my/approval--item-index 0)
             (setq my/approval--item-index
                   (max 0 (min my/approval--item-index (1- item-count))))))))))
+
+;;; ---- Markdown File Helpers --------------------------------------------------
+
+(defun my/approval--review-file-path (slug)
+  "Return the full path to the review markdown file for SLUG."
+  (expand-file-name (concat slug ".md")
+                    (expand-file-name ".agent-shell/reviews/"
+                                      (projectile-project-root))))
+
+(defun my/approval--parse-review-file (file)
+  "Parse a review markdown FILE into a request plist.
+Returns a plist with :request-id :title :description :type
+:items :notes :timestamp :file-mtime."
+  (when (file-exists-p file)
+    (let ((slug (file-name-sans-extension (file-name-nondirectory file)))
+          (mtime (float-time (file-attribute-modification-time
+                              (file-attributes file))))
+          title type description items notes
+          current-item)
+      (with-temp-buffer
+        (insert-file-contents file)
+        (goto-char (point-min))
+        (while (not (eobp))
+          (let ((line (buffer-substring-no-properties
+                       (line-beginning-position) (line-end-position))))
+            (cond
+             ;; Title: # ...
+             ((string-match "^# \\(.+\\)" line)
+              (setq title (match-string 1 line)))
+             ;; Type: <!-- type: ... -->
+             ((string-match "<!-- *type: *\\([^ ]+\\) *-->" line)
+              (setq type (match-string 1 line)))
+             ;; Description: > ...
+             ((string-match "^> \\(.*\\)" line)
+              (setq description
+                    (if description
+                        (concat description " " (match-string 1 line))
+                      (match-string 1 line))))
+             ;; Item: - [x] or - [ ] with optional <!-- id: ... -->
+             ((string-match "^- \\[\\([xX ]\\)\\] \\(.*\\)" line)
+              (let* ((checked-str (match-string 1 line))
+                     (rest (match-string 2 line))
+                     (checked (not (string= checked-str " ")))
+                     id label)
+                (if (string-match "\\(.*?\\) *<!-- *id: *\\([^ ]+\\) *-->" rest)
+                    (setq label (string-trim (match-string 1 rest))
+                          id (match-string 2 rest))
+                  (setq label (string-trim rest)
+                        id (format "item-%d" (length items))))
+                (setq current-item
+                      (if (equal type "choice")
+                          (list :id id :label label :selected checked)
+                        (list :id id :label label :checked checked)))
+                (push current-item items)))
+             ;; Item description: 2-space indent after item
+             ((and current-item (string-match "^  \\(.+\\)" line))
+              (plist-put current-item :description (match-string 1 line)))
+             ;; Notes separator + content
+             ((string-match "^Notes: \\(.*\\)" line)
+              (setq notes (match-string 1 line)))
+             ;; Separator line resets current-item context
+             ((string-match "^---" line)
+              (setq current-item nil))
+             ;; Blank line resets current-item context
+             ((string-empty-p (string-trim line))
+              (setq current-item nil))))
+          (forward-line 1)))
+      (list :request-id slug
+            :title (or title slug)
+            :description (or description "")
+            :type (or type "checklist")
+            :items (nreverse items)
+            :notes (or notes "")
+            :timestamp (or mtime (float-time))
+            :file-mtime mtime))))
+
+(defun my/approval--write-review-file (req)
+  "Write request plist REQ back to its markdown review file.
+Full rewrite — files are small (5-30 lines)."
+  (let* ((slug (plist-get req :request-id))
+         (file (my/approval--review-file-path slug))
+         (dir (file-name-directory file)))
+    (unless (file-directory-p dir)
+      (make-directory dir t))
+    (with-temp-file file
+      ;; Title
+      (insert (format "# %s\n" (or (plist-get req :title) slug)))
+      ;; Type
+      (insert (format "<!-- type: %s -->\n" (or (plist-get req :type) "checklist")))
+      ;; Description
+      (let ((desc (plist-get req :description)))
+        (when (and desc (not (string-empty-p desc)))
+          (insert (format "> %s\n" desc))))
+      (insert "\n")
+      ;; Items
+      (dolist (item (plist-get req :items))
+        (let* ((id (plist-get item :id))
+               (label (or (plist-get item :label) "?"))
+               (checked (if (equal (plist-get req :type) "choice")
+                            (plist-get item :selected)
+                          (plist-get item :checked)))
+               (mark (if checked "x" " "))
+               (desc (plist-get item :description)))
+          (insert (format "- [%s] %s <!-- id: %s -->\n" mark label id))
+          (when (and desc (not (string-empty-p desc)))
+            (insert (format "  %s\n" desc)))))
+      ;; Notes
+      (let ((notes (plist-get req :notes)))
+        (when (and notes (not (string-empty-p notes)))
+          (insert "\n---\n")
+          (insert (format "Notes: %s\n" notes)))))
+    ;; Update file-mtime on the plist
+    (plist-put req :file-mtime
+               (float-time (file-attribute-modification-time
+                            (file-attributes file))))))
+
+(defun my/approval--maybe-refresh-from-disk ()
+  "Re-read current request's markdown if file changed externally."
+  (when-let ((req (my/approval--current-request)))
+    (let* ((slug (plist-get req :request-id))
+           (file (my/approval--review-file-path slug)))
+      (when (and (file-exists-p file)
+                 (> (float-time (file-attribute-modification-time
+                                 (file-attributes file)))
+                    (or (plist-get req :file-mtime) 0)))
+        (let ((updated (my/approval--parse-review-file file)))
+          ;; Merge updated fields into existing request in-place
+          (plist-put req :title (plist-get updated :title))
+          (plist-put req :description (plist-get updated :description))
+          (plist-put req :type (plist-get updated :type))
+          (plist-put req :items (plist-get updated :items))
+          (plist-put req :notes (plist-get updated :notes))
+          (plist-put req :file-mtime (plist-get updated :file-mtime)))))))
+
+(defun my/approval--delete-review-file (req)
+  "Delete the markdown review file for REQ if it exists."
+  (let ((file (my/approval--review-file-path (plist-get req :request-id))))
+    (when (file-exists-p file)
+      (delete-file file))))
 
 ;;; ---- Rendering --------------------------------------------------------------
 
@@ -288,7 +429,7 @@ Choice :items are plists (:id :label :selected).")
       (push (propertize (concat "Notes: " notes) 'face 'my/approval-notes-face) lines))
     ;; Submit hint
     (push "" lines)
-    (push (propertize "[RET toggle] [C-Ret submit] [q dismiss] [Q hide] [C-k collapse]" 'face 'my/approval-hint-face) lines)
+    (push (propertize "[RET toggle] [C-Ret submit] [q dismiss] [Q hide] [o open] [C-k collapse]" 'face 'my/approval-hint-face) lines)
     (nreverse lines)))
 
 (defun my/approval--render-collapsed ()
@@ -360,6 +501,7 @@ Choice :items are plists (:id :label :selected).")
 (defun my/approval-prev-item ()
   "Move to the previous item in the current request."
   (interactive)
+  (my/approval--maybe-refresh-from-disk)
   (when-let ((req (my/approval--current-request)))
     (setq my/approval--focus 'center)
     (when (> my/approval--item-index 0)
@@ -369,6 +511,7 @@ Choice :items are plists (:id :label :selected).")
 (defun my/approval-next-item ()
   "Move to the next item in the current request."
   (interactive)
+  (my/approval--maybe-refresh-from-disk)
   (when-let ((req (my/approval--current-request)))
     (setq my/approval--focus 'center)
     (when (< my/approval--item-index (1- (length (plist-get req :items))))
@@ -397,6 +540,7 @@ For choice: radio-select current item (deselect all others)."
               (dolist (it items)
                 (plist-put it :selected nil))
               (plist-put item :selected t)))))
+        (my/approval--write-review-file req)
         (my/approval--render)))))
 
 (defun my/approval-prev-choice ()
@@ -425,6 +569,7 @@ For choice: radio-select current item (deselect all others)."
         (dolist (it items)
           (plist-put it :selected nil))
         (plist-put (nth new-idx items) :selected t)
+        (my/approval--write-review-file req)
         (my/approval--render)))))
 
 (defun my/approval-add-item ()
@@ -438,6 +583,7 @@ For choice: radio-select current item (deselect all others)."
                                 :label label
                                 :checked t)))
             (plist-put req :items (append (plist-get req :items) (list new-item)))
+            (my/approval--write-review-file req)
             (my/approval--render)))))))
 
 (defun my/approval-edit-notes ()
@@ -447,6 +593,7 @@ For choice: radio-select current item (deselect all others)."
     (let* ((current (or (plist-get req :notes) ""))
            (new-notes (read-string "Notes: " current)))
       (plist-put req :notes new-notes)
+      (my/approval--write-review-file req)
       (my/approval--render))))
 
 (defun my/approval-focus-center ()
@@ -526,7 +673,8 @@ For choice: radio-select current item (deselect all others)."
                  :title "Approval Response"
                  :message msg))
           (agent-shell-team--start-drain-timer)))
-      ;; Remove submitted request from list
+      ;; Delete review file and remove submitted request from list
+      (my/approval--delete-review-file req)
       (setq my/approval--requests
             (cl-remove-if (lambda (r)
                             (equal (plist-get r :request-id)
@@ -594,7 +742,8 @@ remaining requests or an empty state."
                      :title "Approval Cancelled"
                      :message msg))
               (agent-shell-team--start-drain-timer))))
-        ;; Remove cancelled request from list
+        ;; Delete review file and remove cancelled request from list
+        (my/approval--delete-review-file req)
         (setq my/approval--requests
               (cl-remove-if (lambda (r)
                               (equal (plist-get r :request-id)
@@ -611,9 +760,21 @@ remaining requests or an empty state."
   (my/approval--hide))
 
 (defun my/approval-refresh ()
-  "Re-render the approval buffer."
+  "Re-read from disk if changed, then re-render the approval buffer."
   (interactive)
+  (my/approval--maybe-refresh-from-disk)
   (my/approval--render))
+
+(defun my/approval-open-review-file ()
+  "Open the current request's markdown file for editing."
+  (interactive)
+  (when-let ((req (my/approval--current-request)))
+    (let ((file (my/approval--review-file-path (plist-get req :request-id))))
+      (if (file-exists-p file)
+          (find-file-other-window file)
+        ;; File doesn't exist yet — create it first
+        (my/approval--write-review-file req)
+        (find-file-other-window file)))))
 
 ;;; ---- Entry Point ------------------------------------------------------------
 
@@ -624,6 +785,19 @@ REQUEST keys: :request-id :title :description :type
   ;; Default timestamp if not provided
   (unless (plist-get request :timestamp)
     (plist-put request :timestamp (float-time)))
+  ;; Check if review file exists on disk (TS server writes it first)
+  (let* ((slug (plist-get request :request-id))
+         (file (my/approval--review-file-path slug)))
+    (when (file-exists-p file)
+      ;; Re-parse from disk to get canonical state
+      (let ((disk-req (my/approval--parse-review-file file)))
+        (when disk-req
+          (plist-put request :title (plist-get disk-req :title))
+          (plist-put request :description (plist-get disk-req :description))
+          (plist-put request :type (plist-get disk-req :type))
+          (plist-put request :items (plist-get disk-req :items))
+          (plist-put request :notes (plist-get disk-req :notes))
+          (plist-put request :file-mtime (plist-get disk-req :file-mtime))))))
   ;; Ensure items have proper structure
   (when (equal (plist-get request :type) "checklist")
     (dolist (item (plist-get request :items))
@@ -635,8 +809,18 @@ REQUEST keys: :request-id :title :description :type
       (unless (cl-some (lambda (it) (plist-get it :selected)) items)
         (when items
           (plist-put (car items) :selected t)))))
-  ;; Add to list
-  (push request my/approval--requests)
+  ;; Dedup: replace existing request with same :request-id, or push new
+  (let ((existing (cl-find-if
+                   (lambda (r)
+                     (equal (plist-get r :request-id)
+                            (plist-get request :request-id)))
+                   my/approval--requests)))
+    (if existing
+        ;; Replace in-place
+        (let ((pos (cl-position existing my/approval--requests :test #'eq)))
+          (setf (nth pos my/approval--requests) request))
+      ;; New request — push to front
+      (push request my/approval--requests)))
   ;; Always expand on new request (exit collapsed mode)
   (when-let ((buf (get-buffer my/approval-buffer-name)))
     (with-current-buffer buf
@@ -659,6 +843,17 @@ REQUEST keys: :request-id :title :description :type
    :title "Approval Request"
    :body (format "Approval needed: %s" (plist-get request :title))
    :urgency 'critical))
+
+;;; ---- Auto-refresh on window focus -------------------------------------------
+
+(defun my/approval--on-window-selection-change (_frame)
+  "Refresh from disk when the approval window gains focus."
+  (when (and (eq major-mode 'my/approval-mode)
+             my/approval--requests)
+    (my/approval--maybe-refresh-from-disk)
+    (my/approval--render)))
+
+(add-hook 'window-selection-change-functions #'my/approval--on-window-selection-change)
 
 (provide 'my-approval-ui)
 ;;; my-approval-ui.el ends here
