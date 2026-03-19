@@ -937,9 +937,14 @@ REQUEST keys: :request-id :title :description :type
 ;;; ---- Auto-refresh on window focus -------------------------------------------
 
 (defun my/approval--on-window-selection-change (_frame)
-  "Refresh from disk when the approval window gains focus."
+  "Refresh from disk when the approval window gains focus.
+Auto-expand if collapsed and there are pending requests."
   (when (and (eq major-mode 'my/approval-mode)
              my/approval--requests)
+    (when my/approval--collapsed
+      (setq my/approval--collapsed nil
+            header-line-format (propertize " Approval Queue" 'face 'bold))
+      (my/approval--display-window my/approval-window-height))
     (my/approval--maybe-refresh-from-disk)
     (my/approval--render)))
 
