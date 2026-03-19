@@ -580,6 +580,9 @@ REQUEST keys: :request-id :title :description :type
             my/approval--item-index 0
             my/approval--focus 'left)))
   (my/approval--render)
+  ;; Auto-focus the approval window
+  (when-let ((win (get-buffer-window my/approval-buffer-name t)))
+    (select-window win))
   ;; Desktop notification
   (alert (format "Approval needed: %s" (plist-get request :title))
          :title "Approval Request"
