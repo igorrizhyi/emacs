@@ -88,9 +88,10 @@
 (defvar my/approval--requests nil
   "List of pending request plists.
 Each has keys :request-id :title :description :type
-:items :notes :timestamp.
+:items :notes :refine :decisions :timestamp.
 Checklist :items are plists (:id :label :checked).
-Choice :items are plists (:id :label :selected).")
+Choice :items are plists (:id :label :selected).
+:decisions is a list of (:decision :reaction) plists.")
 
 ;;; ---- Buffer-local State -----------------------------------------------------
 
@@ -119,6 +120,7 @@ Choice :items are plists (:id :label :selected).")
     (define-key map (kbd "<right>") #'my/approval-next-choice)
     (define-key map "a" #'my/approval-add-item)
     (define-key map "i" #'my/approval-edit-notes)
+    (define-key map "r" #'my/approval-edit-refine)
     (define-key map (kbd "C-<return>") #'my/approval-submit)
     (define-key map "q" #'my/approval-dismiss)
     (define-key map "Q" #'my/approval-hide)
@@ -154,6 +156,7 @@ Choice :items are plists (:id :label :selected).")
     (kbd "<right>") #'my/approval-next-choice
     "a" #'my/approval-add-item
     "i" #'my/approval-edit-notes
+    "r" #'my/approval-edit-refine
     (kbd "C-<return>") #'my/approval-submit
     "q" #'my/approval-dismiss
     "Q" #'my/approval-hide
@@ -197,13 +200,13 @@ Choice :items are plists (:id :label :selected).")
 (defun my/approval--parse-review-file (file)
   "Parse a review markdown FILE into a request plist.
 Returns a plist with :request-id :title :description :type
-:items :notes :timestamp :file-mtime."
+:items :notes :refine :decisions :timestamp :file-mtime."
   (when (file-exists-p file)
     (let ((slug (file-name-sans-extension (file-name-nondirectory file)))
           (mtime (float-time (file-attribute-modification-time
                               (file-attributes file))))
-          title type description items notes
-          current-item)
+          title type description items notes refine decisions
+          current-item current-section)
       (with-temp-buffer
         (insert-file-contents file)
         (goto-char (point-min))
@@ -211,6 +214,38 @@ Returns a plist with :request-id :title :description :type
           (let ((line (buffer-substring-no-properties
                        (line-beginning-position) (line-end-position))))
             (cond
+             ;; Section headers: ## Refine, ## Notes, ## Decisions
+             ((string-match "^## Refine" line)
+              (setq current-section 'refine current-item nil))
+             ((string-match "^## Notes" line)
+              (setq current-section 'notes current-item nil))
+             ((string-match "^## Decisions" line)
+              (setq current-section 'decisions current-item nil))
+             ;; Any other ## heading ends the current section
+             ((string-match "^## " line)
+              (setq current-section nil current-item nil))
+             ;; Inside ## Refine section — collect lines
+             ((eq current-section 'refine)
+              (unless (string-empty-p (string-trim line))
+                (setq refine
+                      (if refine
+                          (concat refine "\n" line)
+                        line))))
+             ;; Inside ## Notes section — collect lines
+             ((eq current-section 'notes)
+              (unless (string-empty-p (string-trim line))
+                (setq notes
+                      (if notes
+                          (concat notes "\n" line)
+                        line))))
+             ;; Inside ## Decisions section — parse table rows
+             ((eq current-section 'decisions)
+              (when (and (string-match "^| *\\([^|]+\\)| *\\([^|]*\\)|?" line)
+                         (not (string-match "^|[-: ]" line))
+                         (not (string-match "Decision" line)))
+                (let ((decision (string-trim (match-string 1 line)))
+                      (reaction (string-trim (match-string 2 line))))
+                  (push (list :decision decision :reaction reaction) decisions))))
              ;; Title: # ...
              ((string-match "^# \\(.+\\)" line)
               (setq title (match-string 1 line)))
@@ -242,9 +277,10 @@ Returns a plist with :request-id :title :description :type
              ;; Item description: 2-space indent after item
              ((and current-item (string-match "^  \\(.+\\)" line))
               (plist-put current-item :description (match-string 1 line)))
-             ;; Notes separator + content
+             ;; Legacy Notes: single-line format (fallback)
              ((string-match "^Notes: \\(.*\\)" line)
-              (setq notes (match-string 1 line)))
+              (unless notes
+                (setq notes (match-string 1 line))))
              ;; Separator line resets current-item context
              ((string-match "^---" line)
               (setq current-item nil))
@@ -258,6 +294,8 @@ Returns a plist with :request-id :title :description :type
             :type (or type "checklist")
             :items (nreverse items)
             :notes (or notes "")
+            :refine (or refine "")
+            :decisions (nreverse decisions)
             :timestamp (or mtime (float-time))
             :file-mtime mtime))))
 
@@ -291,11 +329,24 @@ Full rewrite — files are small (5-30 lines)."
           (insert (format "- [%s] %s <!-- id: %s -->\n" mark label id))
           (when (and desc (not (string-empty-p desc)))
             (insert (format "  %s\n" desc)))))
-      ;; Notes
+      ;; Refine section
+      (insert "\n## Refine\n")
+      (let ((refine (plist-get req :refine)))
+        (when (and refine (not (string-empty-p refine)))
+          (insert (format "%s\n" refine))))
+      ;; Notes section
+      (insert "\n## Notes\n")
       (let ((notes (plist-get req :notes)))
         (when (and notes (not (string-empty-p notes)))
-          (insert "\n---\n")
-          (insert (format "Notes: %s\n" notes)))))
+          (insert (format "%s\n" notes))))
+      ;; Decisions section
+      (insert "\n## Decisions\n")
+      (insert "| Decision | Reaction |\n")
+      (insert "|----------|----------|\n")
+      (dolist (d (plist-get req :decisions))
+        (insert (format "| %s | %s |\n"
+                        (or (plist-get d :decision) "")
+                        (or (plist-get d :reaction) "")))))
     ;; Update file-mtime on the plist
     (plist-put req :file-mtime
                (float-time (file-attribute-modification-time
@@ -317,6 +368,8 @@ Full rewrite — files are small (5-30 lines)."
           (plist-put req :type (plist-get updated :type))
           (plist-put req :items (plist-get updated :items))
           (plist-put req :notes (plist-get updated :notes))
+          (plist-put req :refine (plist-get updated :refine))
+          (plist-put req :decisions (plist-get updated :decisions))
           (plist-put req :file-mtime (plist-get updated :file-mtime)))))))
 
 (defun my/approval--delete-review-file (req)
@@ -423,13 +476,18 @@ Full rewrite — files are small (5-30 lines)."
               (let ((desc-text (concat "   " desc)))
                 (push (propertize desc-text 'face 'my/approval-item-description-face) lines))))
           (cl-incf idx)))))
+    ;; Refine
+    (let ((refine (plist-get req :refine)))
+      (when (and refine (not (string-empty-p refine)))
+        (push "" lines)
+        (push (propertize (concat "Refine: " refine) 'face 'my/approval-notes-face) lines)))
     ;; Notes
     (when (and notes (not (string-empty-p notes)))
       (push "" lines)
       (push (propertize (concat "Notes: " notes) 'face 'my/approval-notes-face) lines))
     ;; Submit hint
     (push "" lines)
-    (push (propertize "[RET toggle] [C-Ret submit] [q dismiss] [Q hide] [o open] [C-k collapse]" 'face 'my/approval-hint-face) lines)
+    (push (propertize "[RET toggle] [C-Ret submit] [q dismiss] [Q hide] [o open] [r refine] [C-k collapse]" 'face 'my/approval-hint-face) lines)
     (nreverse lines)))
 
 (defun my/approval--render-collapsed ()
@@ -596,6 +654,16 @@ For choice: radio-select current item (deselect all others)."
       (my/approval--write-review-file req)
       (my/approval--render))))
 
+(defun my/approval-edit-refine ()
+  "Add or edit refine instructions for the current request."
+  (interactive)
+  (when-let ((req (my/approval--current-request)))
+    (let* ((current (or (plist-get req :refine) ""))
+           (new-refine (read-string "Refine: " current)))
+      (plist-put req :refine new-refine)
+      (my/approval--write-review-file req)
+      (my/approval--render))))
+
 (defun my/approval-focus-center ()
   "Switch focus to the center panel.  Expand if collapsed."
   (interactive)
@@ -640,8 +708,21 @@ For choice: radio-select current item (deselect all others)."
             (format "Type: %s\n" req-type)
             "\nSelected:\n"
             selected-lines "\n"
+            (let ((refine (plist-get req :refine)))
+              (when (and refine (not (string-empty-p refine)))
+                (format "\nRefine:\n%s\n" refine)))
             (when (and notes (not (string-empty-p notes)))
               (format "\nNotes:\n%s\n" notes))
+            (let ((decisions (plist-get req :decisions)))
+              (when decisions
+                (concat "\nDecisions:\n"
+                        (mapconcat
+                         (lambda (d)
+                           (format "- %s → %s"
+                                   (plist-get d :decision)
+                                   (plist-get d :reaction)))
+                         decisions "\n")
+                        "\n")))
             "«/TEAM»")))
 
 (defun my/approval--format-cancellation (req)
@@ -797,6 +878,8 @@ REQUEST keys: :request-id :title :description :type
           (plist-put request :type (plist-get disk-req :type))
           (plist-put request :items (plist-get disk-req :items))
           (plist-put request :notes (plist-get disk-req :notes))
+          (plist-put request :refine (plist-get disk-req :refine))
+          (plist-put request :decisions (plist-get disk-req :decisions))
           (plist-put request :file-mtime (plist-get disk-req :file-mtime))))))
   ;; Ensure items have proper structure
   (when (equal (plist-get request :type) "checklist")
