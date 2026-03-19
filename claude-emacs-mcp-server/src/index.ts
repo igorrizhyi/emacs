@@ -35,6 +35,10 @@ import {
   presentOptionsOutputSchema,
 } from "./schemas/approval-schema.js";
 import {
+  listPendingReviewsInputSchema,
+  listPendingReviewsOutputSchema,
+} from "./schemas/review-schema.js";
+import {
   getDiagnosticsInputSchema,
   getDiagnosticsOutputSchema,
 } from "./schemas/diagnostic-schema.js";
@@ -81,6 +85,7 @@ import {
   handleMessagePeer,
   handleListNamespacePeers,
   handlePresentOptions,
+  handleListPendingReviews,
   handleExecuteTerminalCommandInEmacs,
   handleGetTerminalContent,
   handleCreateTerminal,
@@ -457,12 +462,34 @@ function registerTools() {
       outputSchema: presentOptionsOutputSchema.shape,
     },
     async (args, _extra) => {
-      const result = await handlePresentOptions(bridge, args);
+      const result = await handlePresentOptions(bridge, args, projectRoot);
       return {
         content: result.content,
         structuredContent: {
           success: result.status === 'success',
           message: result.message || '',
+        },
+        isError: result.isError,
+      };
+    }
+  );
+
+  // listPendingReviews tool
+  server.registerTool(
+    "listPendingReviews",
+    {
+      description:
+        "List pending review/approval markdown files in .agent-shell/reviews/.",
+      inputSchema: listPendingReviewsInputSchema.shape,
+      outputSchema: listPendingReviewsOutputSchema.shape,
+    },
+    async (_args, _extra) => {
+      const result = handleListPendingReviews(projectRoot);
+      return {
+        content: result.content,
+        structuredContent: {
+          reviews: result.reviews,
+          count: result.count,
         },
         isError: result.isError,
       };
