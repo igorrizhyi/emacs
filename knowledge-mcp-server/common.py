@@ -678,7 +678,11 @@ SYSTEM_PROMPTS = {
         "If the context does not contain enough information to answer, say so clearly. "
         "Be concise and cite sources in [source] format. "
         "When chunks come from different projects, prefix your information with the project name "
-        "so the reader knows which project each fact applies to."
+        "so the reader knows which project each fact applies to.\n"
+        "Context chunks may be annotated:\n"
+        "- [confirmed]: This knowledge has been implemented and verified in the codebase.\n"
+        "- [recommendation]: This is research/investigation that may not be implemented yet — "
+        "present it as a suggestion, not a fact."
     ),
     "technical": (
         "You are a technical knowledge extractor. Given context chunks from the knowledge graph, "
@@ -691,7 +695,11 @@ SYSTEM_PROMPTS = {
         "If the context lacks information for a category, omit it rather than guessing. "
         "Cite sources in [source] format. "
         "When chunks come from different projects, prefix each fact with the project name "
-        "so the reader knows which project it applies to."
+        "so the reader knows which project it applies to.\n"
+        "Context chunks may be annotated:\n"
+        "- [confirmed]: This knowledge has been implemented and verified in the codebase.\n"
+        "- [recommendation]: This is research/investigation that may not be implemented yet — "
+        "present it as a suggestion, not a fact."
     ),
 }
 
@@ -842,12 +850,39 @@ def query_knowledge(graph, question: str, role: str = None, top_k: int = 8, mode
             "expanded_count": 0,
         }
 
+    # 5b. Confidence annotation for researcher chunks — check for dev-role links
+    confidence = {}  # chunk_id -> "confirmed" | "recommendation"
+    researcher_ids = [h["id"] for h in hits if "researcher" in (h.get("roles") or "")]
+    if researcher_ids:
+        try:
+            res = graph.query(
+                """
+                UNWIND $ids AS cid
+                MATCH (c:Chunk {id: cid})
+                OPTIONAL MATCH (c)-[:RELATED_TO]-(d:Chunk)
+                WHERE d.roles CONTAINS 'dev'
+                RETURN cid, count(d) > 0 AS has_dev_link
+                """,
+                params={"ids": researcher_ids},
+            )
+            for row in res.result_set:
+                confidence[row[0]] = "confirmed" if row[1] else "recommendation"
+        except Exception:
+            # If graph query fails, default researcher chunks to recommendation
+            for rid in researcher_ids:
+                confidence[rid] = "recommendation"
+
     # 6. Build context for LLM
     context_parts = []
     for h in hits:
         content = _truncate_report_content(h["content"]) if _is_report_chunk(h) else h["content"]
-        proj_label = f"from {h['project']}: " if h.get("project") else ""
-        context_parts.append(f"[{proj_label}{h['source']} / {h['section']}] {content}")
+        conf = confidence.get(h["id"])
+        if conf:
+            proj_label = f"{h['project']}: " if h.get("project") else ""
+            context_parts.append(f"[{conf}: {proj_label}{h['source']} / {h['section']}] {content}")
+        else:
+            proj_label = f"from {h['project']}: " if h.get("project") else ""
+            context_parts.append(f"[{proj_label}{h['source']} / {h['section']}] {content}")
     for ec in unique_expanded:
         content = _truncate_report_content(ec["content"]) if _is_report_chunk(ec) else ec["content"]
         proj_label = f"from {ec['project']}: " if ec.get("project") else ""
