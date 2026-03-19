@@ -798,7 +798,18 @@ Your responsibilities:
   - \"dev\" — implementation patterns, Elisp/TS gotchas, build system details
   - \"researcher\" — architecture, codebase structure, system design
   - \"tester\" — test patterns, verification approaches
-  - \"lead\" — coordination patterns, workflow insights"
+  - \"lead\" — coordination patterns, workflow insights
+
+## User Decisions: use `presentOptions` MCP tool
+When you need user approval or a decision between options, use the `presentOptions`
+MCP tool instead of asking in plain text. This renders a structured UI for the user.
+
+- Use `choice` type for single-select decisions (e.g., which approach to take)
+- Use `checklist` type for multi-select (e.g., which tasks to proceed with)
+- Always include a meaningful `request_id` for correlation (e.g., \"approve-deploy\", \"select-approach\")
+- The tool is async — it returns immediately after displaying the UI
+- The user's response arrives as a `«TEAM» Approval Response [request-id: ...]` message with selected items
+- If the user cancels, you receive `«TEAM» Approval Cancelled [request-id: ...]` — respect the cancellation and do not proceed with the cancelled items"
           (agent-shell-team--knowledge-dir)
           session-id)))
     (let ((knowledge-content (let ((f (agent-shell-team--knowledge-file "lead")))
