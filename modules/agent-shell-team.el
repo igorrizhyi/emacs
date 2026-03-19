@@ -866,7 +866,16 @@ Only rename the branch you are currently on inside your worktree.
 - In your report, include a `## Knowledge Discoveries` section at the end.
   List any reusable insights: gotchas, conventions, environment quirks,
   architecture decisions. Use bullet points. If none, write \"None\".
-  The lead will extract these into the shared knowledge base."
+  The lead will extract these into the shared knowledge base.
+
+## Referencing Code Locations
+When referencing code in reports and knowledge discoveries, prefer stable
+references over line numbers (line numbers go stale after every commit):
+- Function/symbol names: `agent-shell-team--lead-prompt`
+- Structural descriptions: \"the format string inside agent-shell-team--lead-prompt\"
+- Grep-able strings: a unique literal like \"## User Decisions\"
+Line numbers are OK as supplementary info in reports, but knowledge discoveries
+must use stable anchors that survive file changes."
           session-id worktree-path worktree-name))
 
 (defun agent-shell-team--tester-isolated-prompt (session-id worktree-path)
@@ -894,7 +903,16 @@ Your responsibilities:
 - In your report, include a `## Knowledge Discoveries` section at the end.
   List any reusable insights: gotchas, conventions, environment quirks,
   architecture decisions. Use bullet points. If none, write \"None\".
-  The lead will extract these into the shared knowledge base."
+  The lead will extract these into the shared knowledge base.
+
+## Referencing Code Locations
+When referencing code in reports and knowledge discoveries, prefer stable
+references over line numbers (line numbers go stale after every commit):
+- Function/symbol names: `agent-shell-team--lead-prompt`
+- Structural descriptions: \"the format string inside agent-shell-team--lead-prompt\"
+- Grep-able strings: a unique literal like \"## User Decisions\"
+Line numbers are OK as supplementary info in reports, but knowledge discoveries
+must use stable anchors that survive file changes."
           session-id worktree-path))
 
 (defun agent-shell-team--tester-neighbor-prompt (session-id working-dir)
@@ -923,7 +941,16 @@ Your responsibilities:
 - In your report, include a `## Knowledge Discoveries` section at the end.
   List any reusable insights: gotchas, conventions, environment quirks,
   architecture decisions. Use bullet points. If none, write \"None\".
-  The lead will extract these into the shared knowledge base."
+  The lead will extract these into the shared knowledge base.
+
+## Referencing Code Locations
+When referencing code in reports and knowledge discoveries, prefer stable
+references over line numbers (line numbers go stale after every commit):
+- Function/symbol names: `agent-shell-team--lead-prompt`
+- Structural descriptions: \"the format string inside agent-shell-team--lead-prompt\"
+- Grep-able strings: a unique literal like \"## User Decisions\"
+Line numbers are OK as supplementary info in reports, but knowledge discoveries
+must use stable anchors that survive file changes."
           session-id working-dir))
 
 (defun agent-shell-team--researcher-prompt (session-id working-dir)
@@ -957,7 +984,16 @@ Your responsibilities:
   - Misleading errors: real cause hidden behind a cascading or unrelated error message
   - Implicit contracts: undocumented units, expected formats, ordering requirements
   Do NOT include: syntax errors, wrong argument counts, or anything a stack trace
-  points at directly. The test: \"would reading this save someone a debugging session?\""
+  points at directly. The test: \"would reading this save someone a debugging session?\"
+
+## Referencing Code Locations
+When referencing code in reports and knowledge discoveries, prefer stable
+references over line numbers (line numbers go stale after every commit):
+- Function/symbol names: `agent-shell-team--lead-prompt`
+- Structural descriptions: \"the format string inside agent-shell-team--lead-prompt\"
+- Grep-able strings: a unique literal like \"## User Decisions\"
+Line numbers are OK as supplementary info in reports, but knowledge discoveries
+must use stable anchors that survive file changes."
           session-id working-dir))
 
 (defun agent-shell-team--get-system-prompt (role mode session-id &optional worktree-path worktree-name working-dir)
