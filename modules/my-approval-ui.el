@@ -79,6 +79,10 @@
   '((t :foreground "#666666"))
   "Face for the submit hint.")
 
+(defface my/approval-collapsed-face
+  '((t :foreground "#bbbbbb" :background "#1a1a2e" :weight bold))
+  "Face for the collapsed summary bar.")
+
 ;;; ---- Data -------------------------------------------------------------------
 
 (defvar my/approval--requests nil
@@ -99,6 +103,9 @@ Choice :items are plists (:id :label :selected).")
 (defvar-local my/approval--focus 'left
   "Which panel has focus: `left' or `center'.")
 
+(defvar-local my/approval--collapsed nil
+  "Non-nil when the approval window is in collapsed (single-line) mode.")
+
 ;;; ---- Keymap -----------------------------------------------------------------
 
 (defvar my/approval-mode-map
@@ -118,6 +125,7 @@ Choice :items are plists (:id :label :selected).")
     (define-key map "g" #'my/approval-refresh)
     (define-key map "l" #'my/approval-focus-center)
     (define-key map (kbd "ESC") #'my/approval-focus-left)
+    (define-key map (kbd "C-k") #'my/approval-toggle-collapse)
     map)
   "Keymap for `my/approval-mode'.")
 
@@ -150,7 +158,8 @@ Choice :items are plists (:id :label :selected).")
     "Q" #'my/approval-hide
     "g" #'my/approval-refresh
     "l" #'my/approval-focus-center
-    (kbd "ESC") #'my/approval-focus-left))
+    (kbd "ESC") #'my/approval-focus-left
+    (kbd "C-k") #'my/approval-toggle-collapse))
 
 ;;; ---- Helpers ----------------------------------------------------------------
 
@@ -186,9 +195,11 @@ Choice :items are plists (:id :label :selected).")
         (let ((inhibit-read-only t)
               (saved-point (point)))
           (erase-buffer)
-          (if (null my/approval--requests)
-              (insert (propertize "  No pending requests." 'face 'my/approval-hint-face))
-            (my/approval--render-panels))
+          (if my/approval--collapsed
+              (my/approval--render-collapsed)
+            (if (null my/approval--requests)
+                (insert (propertize "  No pending requests." 'face 'my/approval-hint-face))
+              (my/approval--render-panels)))
           (goto-char (min saved-point (point-max))))))))
 
 (defun my/approval--render-panels ()
@@ -277,8 +288,56 @@ Choice :items are plists (:id :label :selected).")
       (push (propertize (concat "Notes: " notes) 'face 'my/approval-notes-face) lines))
     ;; Submit hint
     (push "" lines)
-    (push (propertize "[RET toggle] [C-Ret submit] [q dismiss] [Q hide]" 'face 'my/approval-hint-face) lines)
+    (push (propertize "[RET toggle] [C-Ret submit] [q dismiss] [Q hide] [C-k collapse]" 'face 'my/approval-hint-face) lines)
     (nreverse lines)))
+
+(defun my/approval--render-collapsed ()
+  "Render a single-line summary bar for the collapsed state."
+  (let* ((count (length my/approval--requests))
+         (latest-title (when my/approval--requests
+                         (plist-get (car my/approval--requests) :title)))
+         (summary (cond
+                   ((zerop count)
+                    "▶ No pending approvals")
+                   (latest-title
+                    (format "▶ %d pending approval%s — latest: \"%s\"  [C-k expand]"
+                            count (if (= count 1) "" "s")
+                            (truncate-string-to-width latest-title 50)))
+                   (t
+                    (format "▶ %d pending approval%s  [C-k expand]"
+                            count (if (= count 1) "" "s"))))))
+    (insert (propertize summary 'face 'my/approval-collapsed-face))))
+
+(defun my/approval--display-window (height)
+  "Display the approval buffer in a side window with HEIGHT lines."
+  (let* ((buf (my/approval--get-or-create-buffer))
+         (win (get-buffer-window buf t)))
+    (when win (delete-window win))
+    (let ((new-win (display-buffer-in-side-window
+                    buf
+                    `((side . bottom)
+                      (slot . 0)
+                      (window-height . ,height)
+                      (dedicated . t)))))
+      (when new-win
+        (my/approval--set-window-params new-win))
+      new-win)))
+
+(defun my/approval-toggle-collapse ()
+  "Toggle between expanded and collapsed approval window."
+  (interactive)
+  (let ((buf (get-buffer my/approval-buffer-name)))
+    (when (buffer-live-p buf)
+      (with-current-buffer buf
+        (setq my/approval--collapsed (not my/approval--collapsed))
+        (setq header-line-format
+              (unless my/approval--collapsed
+                (propertize " Approval Queue" 'face 'bold))))
+      (let ((height (if (buffer-local-value 'my/approval--collapsed buf)
+                        1
+                      my/approval-window-height)))
+        (my/approval--display-window height))
+      (my/approval--render))))
 
 ;;; ---- Navigation Commands ----------------------------------------------------
 
@@ -318,24 +377,27 @@ Choice :items are plists (:id :label :selected).")
 
 (defun my/approval-toggle-item ()
   "Toggle the current item.
+When collapsed, expand instead.
 For checklist: toggle checkbox on/off.
 For choice: radio-select current item (deselect all others)."
   (interactive)
-  (when-let ((req (my/approval--current-request)))
-    (let ((items (plist-get req :items))
-          (req-type (plist-get req :type)))
-      (cond
-       ((equal req-type "checklist")
-        (let ((item (nth my/approval--item-index items)))
-          (when item
-            (plist-put item :checked (not (plist-get item :checked))))))
-       ((equal req-type "choice")
-        (let ((item (nth my/approval--item-index items)))
-          (when item
-            (dolist (it items)
-              (plist-put it :selected nil))
-            (plist-put item :selected t)))))
-      (my/approval--render))))
+  (if my/approval--collapsed
+      (my/approval-toggle-collapse)
+    (when-let ((req (my/approval--current-request)))
+      (let ((items (plist-get req :items))
+            (req-type (plist-get req :type)))
+        (cond
+         ((equal req-type "checklist")
+          (let ((item (nth my/approval--item-index items)))
+            (when item
+              (plist-put item :checked (not (plist-get item :checked))))))
+         ((equal req-type "choice")
+          (let ((item (nth my/approval--item-index items)))
+            (when item
+              (dolist (it items)
+                (plist-put it :selected nil))
+              (plist-put item :selected t)))))
+        (my/approval--render)))))
 
 (defun my/approval-prev-choice ()
   "Select the previous choice in choice mode."
@@ -388,10 +450,12 @@ For choice: radio-select current item (deselect all others)."
       (my/approval--render))))
 
 (defun my/approval-focus-center ()
-  "Switch focus to the center panel."
+  "Switch focus to the center panel.  Expand if collapsed."
   (interactive)
-  (setq my/approval--focus 'center)
-  (my/approval--render))
+  (if my/approval--collapsed
+      (my/approval-toggle-collapse)
+    (setq my/approval--focus 'center)
+    (my/approval--render)))
 
 (defun my/approval-focus-left ()
   "Switch focus back to the left panel."
@@ -573,8 +637,13 @@ REQUEST keys: :request-id :title :description :type
           (plist-put (car items) :selected t)))))
   ;; Add to list
   (push request my/approval--requests)
-  ;; Show window and render
-  (my/approval--show)
+  ;; Always expand on new request (exit collapsed mode)
+  (when-let ((buf (get-buffer my/approval-buffer-name)))
+    (with-current-buffer buf
+      (setq my/approval--collapsed nil
+            header-line-format (propertize " Approval Queue" 'face 'bold))))
+  ;; Show window at full height and render
+  (my/approval--display-window my/approval-window-height)
   ;; Select the newly added request (it's at index 0 after push)
   (when-let ((buf (get-buffer my/approval-buffer-name)))
     (with-current-buffer buf
