@@ -680,12 +680,15 @@ def query_knowledge(graph, question: str, role: str = None, top_k: int = 8, mode
     # 1. Embed question
     q_vec = embed_texts([question])[0]
 
-    # 2. Vector KNN search — fetch extra candidates when filtering by project
-    fetch_k = top_k * 3 if project else top_k
+    # 2. Vector KNN search — fetch extra candidates to account for
+    #    project filtering and superseded-chunk filtering
+    fetch_k = top_k * 3 if project else top_k * 2
     knn = graph.query(
         """
         CALL db.idx.vector.queryNodes('Chunk', 'embedding', $k, vecf32($vec))
         YIELD node, score
+        OPTIONAL MATCH (superseder:Chunk)-[:SUPERSEDES]->(node)
+        WITH node, score WHERE superseder IS NULL
         RETURN node.id AS id, node.content AS content,
                node.source AS source, node.section AS section,
                node.roles AS roles, score, node.project AS project
@@ -719,12 +722,13 @@ def query_knowledge(graph, question: str, role: str = None, top_k: int = 8, mode
     # 2b. Fulltext fallback when vector search finds nothing
     if not hits:
         try:
-            proj_filter = "WHERE node.project = $project" if project else ""
+            proj_filter = "AND node.project = $project" if project else ""
             ft = graph.query(
                 f"""
                 CALL db.idx.fulltext.queryNodes('Chunk', $q)
                 YIELD node
-                {proj_filter}
+                OPTIONAL MATCH (superseder:Chunk)-[:SUPERSEDES]->(node)
+                WITH node WHERE superseder IS NULL {proj_filter}
                 RETURN node.id AS id, node.content AS content,
                        node.source AS source, node.section AS section,
                        node.roles AS roles, node.project AS project
@@ -756,6 +760,8 @@ def query_knowledge(graph, question: str, role: str = None, top_k: int = 8, mode
             UNWIND $ids AS hid
             MATCH (c1:Chunk {{id: hid}})-[:RELATED_TO|HAS_TOPIC*1..1]-(c2:Chunk)
             WHERE NOT c2.id IN $ids {proj_filter}
+            OPTIONAL MATCH (superseder:Chunk)-[:SUPERSEDES]->(c2)
+            WITH c2 WHERE superseder IS NULL
             RETURN DISTINCT c2.id AS id, c2.content AS content,
                    c2.source AS source, c2.section AS section,
                    c2.project AS project
