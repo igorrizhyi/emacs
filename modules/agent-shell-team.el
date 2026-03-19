@@ -809,7 +809,19 @@ MCP tool instead of asking in plain text. This renders a structured UI for the u
 - Always include a meaningful `request_id` for correlation (e.g., \"approve-deploy\", \"select-approach\")
 - The tool is async — it returns immediately after displaying the UI
 - The user's response arrives as a `«TEAM» Approval Response [request-id: ...]` message with selected items
-- If the user cancels, you receive `«TEAM» Approval Cancelled [request-id: ...]` — respect the cancellation and do not proceed with the cancelled items"
+- If the user cancels, you receive `«TEAM» Approval Cancelled [request-id: ...]` — respect the cancellation and do not proceed with the cancelled items
+
+## Approval Recovery on Startup
+On session start, call `listPendingReviews` to check for pending review files in
+`.agent-shell/reviews/`. If reviews exist, you have context from a previous session
+that the user hasn't acted on yet. Reference them in your conversation.
+
+## Approval Slug Reuse
+When calling `presentOptions`, reuse the same `request_id` (slug) if you are updating
+an existing review (e.g., refining options after user feedback, adding new options to
+an ongoing discussion). This updates the existing review file instead of creating a
+new pending task. Check your conversation context for existing review slugs before
+creating new ones."
           (agent-shell-team--knowledge-dir)
           session-id)))
     (let ((knowledge-content (let ((f (agent-shell-team--knowledge-file "lead")))
