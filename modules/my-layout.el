@@ -275,8 +275,11 @@
   (condition-case nil
       (windmove-down)
     (error
-     (when (my-layout--get-window 'bottom-bar)
-       (select-window (my-layout--get-window 'bottom-bar))))))
+     (let ((approval-win (get-buffer-window " *approval-queue*" t))
+           (bottom-win (my-layout--get-window 'bottom-bar)))
+       (cond
+        (approval-win (select-window approval-win))
+        (bottom-win (select-window bottom-win)))))))
 
 (defun my-layout-show-marks-in-sidebar ()
   "Show marks list in left sidebar."
