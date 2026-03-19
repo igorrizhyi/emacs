@@ -206,9 +206,17 @@ use /project/ as their project root for MCP connection scoping."
 
 (defun claude-code-mcp-register-port (project-root port)
   "Register PORT for PROJECT-ROOT.
-Resolves worktree paths to the main project root before normalization."
+Resolves worktree paths to the main project root before normalization.
+If an existing connection exists for this project, disconnect it first
+to avoid stale websocket/timer state when a new MCP server replaces
+the old one (e.g., when multiple agents share the same project root)."
   (let* ((resolved-root (claude-code-mcp--resolve-main-project-root project-root))
          (normalized-root (claude-code-normalize-project-root resolved-root)))
+    ;; Clean up any existing connection before registering the new one
+    (when (claude-code-mcp-get-connection-info normalized-root)
+      (message "MCP: Closing existing connection for %s before registering new port %d"
+               normalized-root port)
+      (claude-code-mcp-disconnect normalized-root))
     ;; Initialize connection info for this project
     (claude-code-mcp-initialize-connection-info normalized-root)
     ;; Store port in connection info for reconnection

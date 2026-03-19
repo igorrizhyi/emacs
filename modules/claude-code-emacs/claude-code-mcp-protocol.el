@@ -235,11 +235,18 @@ are sent back on this exact connection to avoid cross-agent routing."
   "Handle WebSocket error."
   (message "MCP WebSocket error (%s): %s" type error))
 
-(defun claude-code-mcp-on-close (_websocket project-root)
-  "Handle WebSocket close for PROJECT-ROOT."
-  (claude-code-mcp-set-websocket nil project-root)
-  (message "MCP WebSocket connection closed for project %s" project-root)
-  (claude-code-mcp-handle-connection-lost project-root))
+(defun claude-code-mcp-on-close (websocket project-root)
+  "Handle WebSocket close for PROJECT-ROOT.
+Only modify state if WEBSOCKET is still the current connection.
+When multiple agents share the same project root, an old server's
+on-close callback must not corrupt the newer connection's state."
+  (let ((current-ws (claude-code-mcp-get-websocket project-root)))
+    (if (eq websocket current-ws)
+        (progn
+          (claude-code-mcp-set-websocket nil project-root)
+          (message "MCP WebSocket connection closed for project %s" project-root)
+          (claude-code-mcp-handle-connection-lost project-root))
+      (message "MCP WebSocket close ignored (stale connection) for project %s" project-root))))
 
 (provide 'claude-code-mcp-protocol)
 ;;; claude-code-mcp-protocol.el ends here
