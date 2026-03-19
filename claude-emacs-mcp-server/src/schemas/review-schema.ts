@@ -9,6 +9,7 @@ export const listPendingReviewsOutputSchema = z.object({
     type: z.string(),
     item_count: z.number(),
     file_path: z.string(),
+    has_refine: z.boolean(),
   })),
   count: z.number(),
 });
