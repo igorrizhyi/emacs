@@ -288,6 +288,28 @@ Optional FACE overrides the default team message face."
         (my/agent-shell--style-team-message-markers))
     (my/agent-shell--hide-context-posframe)))
 
+;; --- Idle timer for styling after process output ---
+
+(defvar-local my/agent-shell--style-timer nil
+  "Pending idle timer for styling TEAM/CTX markers.")
+
+(defun my/agent-shell--style-after-output (_proc _output)
+  "After-advice on `shell-maker--output-filter': debounced styling.
+Schedules an idle timer to apply TEAM/CTX faces after streaming pauses."
+  (when (derived-mode-p 'agent-shell-mode)
+    (when (timerp my/agent-shell--style-timer)
+      (cancel-timer my/agent-shell--style-timer))
+    (let ((buf (current-buffer)))
+      (setq my/agent-shell--style-timer
+            (run-with-idle-timer
+             0.5 nil
+             (lambda ()
+               (when (buffer-live-p buf)
+                 (with-current-buffer buf
+                   (setq my/agent-shell--style-timer nil)
+                   (my/agent-shell--style-context-markers)
+                   (my/agent-shell--style-team-message-markers)))))))))
+
 (with-eval-after-load 'agent-shell
   ;; Intercept context insertion: remove from buffer, show in posframe
   (advice-add 'agent-shell--insert-to-shell-buffer
@@ -295,7 +317,10 @@ Optional FACE overrides the default team message face."
   ;; On submit: append context with markers
   (advice-add 'shell-maker-submit :before #'my/agent-shell-on-submit)
   ;; Style markers on every command loop iteration (cheap — skips if already styled)
-  (add-hook 'post-command-hook #'my/agent-shell--maybe-style-context))
+  (add-hook 'post-command-hook #'my/agent-shell--maybe-style-context)
+  ;; Style markers after process output (shell-maker bypasses comint hooks)
+  (advice-add 'shell-maker--output-filter
+              :after #'my/agent-shell--style-after-output))
 
 (provide 'my-agent-shell-style)
 ;;; my-agent-shell-style.el ends here
