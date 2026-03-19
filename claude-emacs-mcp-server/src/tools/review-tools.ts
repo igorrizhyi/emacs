@@ -7,6 +7,7 @@ interface ReviewEntry {
   type: string;
   item_count: number;
   file_path: string;
+  has_refine: boolean;
 }
 
 interface ListPendingReviewsResult {
@@ -34,12 +35,15 @@ export function handleListPendingReviews(projectRoot: string): ListPendingReview
     const titleMatch = content.match(/^# (.+)$/m);
     const typeMatch = content.match(/<!-- type: (choice|checklist) -->/);
     const items = content.match(/^- \[[ x]\]/gm) || [];
+    const refineMatch = content.match(/^## Refine\n([\s\S]*?)(?=\n## |\n*$)/m);
+    const hasRefine = refineMatch ? refineMatch[1].trim().length > 0 : false;
     return {
       slug: f.replace('.md', ''),
       title: titleMatch?.[1] || 'Untitled',
       type: typeMatch?.[1] || 'checklist',
       item_count: items.length,
       file_path: filePath,
+      has_refine: hasRefine,
     };
   });
 

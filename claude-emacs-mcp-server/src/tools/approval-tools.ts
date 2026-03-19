@@ -29,6 +29,14 @@ function writeReviewMarkdown(projectRoot: string, args: PresentOptionsArgs): voi
     }
   }
   lines.push('');
+  lines.push('## Refine');
+  lines.push('');
+  lines.push('## Notes');
+  lines.push('');
+  lines.push('## Decisions');
+  lines.push('| Decision | Reaction |');
+  lines.push('|----------|----------|');
+  lines.push('');
 
   const filePath = path.join(reviewsDir, `${args.request_id}.md`);
   fs.writeFileSync(filePath, lines.join('\n'), 'utf-8');
