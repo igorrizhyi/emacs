@@ -800,7 +800,6 @@ For choice: radio-select current item (deselect all others)."
   "Set protective window parameters on WIN."
   (when (window-live-p win)
     (set-window-parameter win 'no-delete-other-windows t)
-    (set-window-parameter win 'no-other-window t)
     (set-window-parameter win 'dedicated t)
     (set-window-dedicated-p win t)))
 
