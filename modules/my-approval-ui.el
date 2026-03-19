@@ -107,15 +107,16 @@ Choice :items are plists (:id :label :selected).")
     (define-key map (kbd "<down>") #'my/approval-next-request)
     (define-key map "j" #'my/approval-next-item)
     (define-key map "k" #'my/approval-prev-item)
-    (define-key map " " #'my/approval-toggle-item)
+    (define-key map (kbd "RET") #'my/approval-toggle-item)
     (define-key map (kbd "<left>") #'my/approval-prev-choice)
     (define-key map (kbd "<right>") #'my/approval-next-choice)
     (define-key map "a" #'my/approval-add-item)
     (define-key map "i" #'my/approval-edit-notes)
     (define-key map (kbd "C-<return>") #'my/approval-submit)
-    (define-key map "q" #'my/approval-quit)
+    (define-key map "q" #'my/approval-dismiss)
+    (define-key map "Q" #'my/approval-hide)
     (define-key map "g" #'my/approval-refresh)
-    (define-key map (kbd "RET") #'my/approval-focus-center)
+    (define-key map "l" #'my/approval-focus-center)
     (define-key map (kbd "ESC") #'my/approval-focus-left)
     map)
   "Keymap for `my/approval-mode'.")
@@ -139,15 +140,16 @@ Choice :items are plists (:id :label :selected).")
     (kbd "<down>") #'my/approval-next-request
     "j" #'my/approval-next-item
     "k" #'my/approval-prev-item
-    " " #'my/approval-toggle-item
+    (kbd "RET") #'my/approval-toggle-item
     (kbd "<left>") #'my/approval-prev-choice
     (kbd "<right>") #'my/approval-next-choice
     "a" #'my/approval-add-item
     "i" #'my/approval-edit-notes
     (kbd "C-<return>") #'my/approval-submit
-    "q" #'my/approval-quit
+    "q" #'my/approval-dismiss
+    "Q" #'my/approval-hide
     "g" #'my/approval-refresh
-    (kbd "RET") #'my/approval-focus-center
+    "l" #'my/approval-focus-center
     (kbd "ESC") #'my/approval-focus-left))
 
 ;;; ---- Helpers ----------------------------------------------------------------
@@ -275,7 +277,7 @@ Choice :items are plists (:id :label :selected).")
       (push (propertize (concat "Notes: " notes) 'face 'my/approval-notes-face) lines))
     ;; Submit hint
     (push "" lines)
-    (push (propertize "[C-Ret to submit]" 'face 'my/approval-hint-face) lines)
+    (push (propertize "[RET toggle] [C-Ret submit] [q dismiss] [Q hide]" 'face 'my/approval-hint-face) lines)
     (nreverse lines)))
 
 ;;; ---- Navigation Commands ----------------------------------------------------
@@ -466,11 +468,8 @@ For choice: radio-select current item (deselect all others)."
                             (equal (plist-get r :request-id)
                                    (plist-get req :request-id)))
                           my/approval--requests))
-      (if my/approval--requests
-          (progn
-            (my/approval--clamp-indices)
-            (my/approval--render))
-        (my/approval-quit))
+      (my/approval--clamp-indices)
+      (my/approval--render)
       (message "Approval submitted."))))
 
 ;;; ---- Window Management ------------------------------------------------------
@@ -510,10 +509,11 @@ For choice: radio-select current item (deselect all others)."
     (set-window-parameter win 'dedicated t)
     (set-window-dedicated-p win t)))
 
-(defun my/approval-quit ()
-  "Cancel the current request and hide the approval window.
+(defun my/approval-dismiss ()
+  "Cancel/dismiss the current request, keeping the window open.
 Sends a cancellation message to the lead for the currently selected
-request, removes it from the queue, and hides the window if empty."
+request and removes it from the queue.  The window stays open showing
+remaining requests or an empty state."
   (interactive)
   (let ((req (my/approval--current-request)))
     (when req
@@ -536,13 +536,15 @@ request, removes it from the queue, and hides the window if empty."
                               (equal (plist-get r :request-id)
                                      (plist-get req :request-id)))
                             my/approval--requests))))
-    (if my/approval--requests
-        (progn
-          (my/approval--clamp-indices)
-          (my/approval--render))
-      (my/approval--hide))
+    (my/approval--clamp-indices)
+    (my/approval--render)
     (when req
-      (message "Approval cancelled."))))
+      (message "Approval dismissed."))))
+
+(defun my/approval-hide ()
+  "Hide the approval window without cancelling any request."
+  (interactive)
+  (my/approval--hide))
 
 (defun my/approval-refresh ()
   "Re-render the approval buffer."
