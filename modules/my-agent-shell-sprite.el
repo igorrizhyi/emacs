@@ -74,7 +74,11 @@ before the agent is ready."
 (defun my-agent-shell-sprite--tick ()
   "Main animation tick.  Runs every 300ms.
 Iterates lead buffers, updates state, increments frame counter,
-and refreshes the header.  Auto-stops when no lead buffer exists."
+and refreshes the header.  Auto-stops when no lead buffer exists.
+
+DISABLED: Header is not shown, so the timer is pure waste.
+Re-enable by removing the early return below."
+  (ignore)  ; early return — header not displayed, skip all work
   (let ((found-lead nil))
     (dolist (buf (buffer-list))
       (when (buffer-live-p buf)
@@ -92,7 +96,11 @@ and refreshes the header.  Auto-stops when no lead buffer exists."
       (my-agent-shell-sprite--stop-timer))))
 
 (defun my-agent-shell-sprite--ensure-timer ()
-  "Start the animation timer if not already running."
+  "Start the animation timer if not already running.
+
+DISABLED: Header is not shown, so the timer is pure waste.
+Re-enable by removing the early return below."
+  (ignore)  ; early return — don't start timer when header is not displayed
   (unless my-agent-shell-sprite--timer
     (setq my-agent-shell-sprite--timer
           (run-with-timer 0.3 0.3 #'my-agent-shell-sprite--tick))))
@@ -170,8 +178,10 @@ buffers so the header cache key changes on each animation frame."
                             (:sprite-state . ,my-agent-shell-sprite--current-state)))))
     model))
 
-(advice-add 'agent-shell--make-header-model
-            :around #'my-agent-shell-sprite--header-model-advice)
+;; DISABLED: Cache-busting advice is pointless without the animation timer.
+;; Re-enable alongside the timer if the header is shown again.
+;; (advice-add 'agent-shell--make-header-model
+;;             :around #'my-agent-shell-sprite--header-model-advice)
 
 (provide 'my-agent-shell-sprite)
 ;;; my-agent-shell-sprite.el ends here
