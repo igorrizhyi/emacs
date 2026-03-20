@@ -1103,6 +1103,8 @@ WORKTREE-PATH, WORKTREE-NAME, WORKING-DIR depend on role/mode."
                           (agent-shell-team--short-session-id agent-shell-team--session-id)))))
       (propertize info 'face 'agent-shell-team-info-face))))
 
+(eval-when-compile (require 'doom-modeline-core))
+
 (with-eval-after-load 'doom-modeline
   (doom-modeline-def-segment agent-shell-team-role
     "Display team agent role with colored background."
