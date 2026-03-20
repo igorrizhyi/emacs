@@ -1,5 +1,6 @@
 """MCP server for hybrid vector+graph knowledge system."""
 
+import asyncio
 import os
 import sys
 
@@ -24,14 +25,17 @@ server = Server("knowledge")
 
 # Lazy-initialized graph
 _graph = None
+_graph_lock = asyncio.Lock()
+_store_lock = asyncio.Lock()
 
 
-def _ensure_graph():
+async def _ensure_graph():
     """Lazy init: get graph + ensure schema on first call."""
     global _graph
-    if _graph is None:
-        _graph = get_graph()
-        init_schema(_graph)
+    async with _graph_lock:
+        if _graph is None:
+            _graph = get_graph()
+            init_schema(_graph)
     return _graph
 
 
@@ -95,7 +99,7 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
 
 
 async def _handle_query(arguments: dict) -> list[types.TextContent]:
-    graph = _ensure_graph()
+    graph = await _ensure_graph()
     query = arguments["query"]
     role = arguments.get("role")
     mode = arguments.get("mode", "summary")
@@ -113,46 +117,47 @@ async def _handle_query(arguments: dict) -> list[types.TextContent]:
 
 
 async def _handle_store(arguments: dict) -> list[types.TextContent]:
-    graph = _ensure_graph()
-    content = arguments["content"]
-    roles = arguments["roles"]
-    source = arguments.get("source", "mcp")
-    roles_str = ",".join(roles)
+    async with _store_lock:
+        graph = await _ensure_graph()
+        content = arguments["content"]
+        roles = arguments["roles"]
+        source = arguments.get("source", "mcp")
+        roles_str = ",".join(roles)
 
-    # Resolve project from PROJECT_ROOT — required when namespace is active
-    project = _resolve_project() if NAMESPACE else None
+        # Resolve project from PROJECT_ROOT — required when namespace is active
+        project = _resolve_project() if NAMESPACE else None
 
-    if source.startswith("report:"):
-        request_id = source.split(":", 1)[1]
-        chunks = chunk_report(content, request_id, roles_str, project=project)
-    elif content.startswith("- "):
-        chunks = [{"id": chunk_id(source, content[2:].strip()),
-                   "content": content[2:].strip(), "section": "General",
-                   "source": source, "roles": roles_str, "type": "knowledge",
-                   "project": project}]
-    else:
-        raw = [l.strip() for l in content.split("\n") if l.strip() and not l.strip().startswith("#")]
-        chunks = [{"id": chunk_id(source, t), "content": t, "section": "General",
-                   "source": source, "roles": roles_str, "type": "knowledge",
-                   "project": project} for t in raw]
+        if source.startswith("report:"):
+            request_id = source.split(":", 1)[1]
+            chunks = chunk_report(content, request_id, roles_str, project=project)
+        elif content.startswith("- "):
+            chunks = [{"id": chunk_id(source, content[2:].strip()),
+                       "content": content[2:].strip(), "section": "General",
+                       "source": source, "roles": roles_str, "type": "knowledge",
+                       "project": project}]
+        else:
+            raw = [l.strip() for l in content.split("\n") if l.strip() and not l.strip().startswith("#")]
+            chunks = [{"id": chunk_id(source, t), "content": t, "section": "General",
+                       "source": source, "roles": roles_str, "type": "knowledge",
+                       "project": project} for t in raw]
 
-    if not chunks:
-        return [types.TextContent(type="text", text="No content to store")]
+        if not chunks:
+            return [types.TextContent(type="text", text="No content to store")]
 
-    ingest_chunks(graph, chunks, project=project)
-    create_topic_links(graph, chunks)
-    new_ids = [c["id"] for c in chunks]
-    create_similarity_edges_for_chunks(graph, new_ids)
-    create_cross_role_edges(graph, new_ids)
+        ingest_chunks(graph, chunks, project=project)
+        create_topic_links(graph, chunks)
+        new_ids = [c["id"] for c in chunks]
+        create_similarity_edges_for_chunks(graph, new_ids)
+        create_cross_role_edges(graph, new_ids)
 
-    # Supersession detection — find and mark chunks that replace older ones
-    supersessions = detect_supersession(graph, chunks)
-    if supersessions:
-        create_supersedes_edges(graph, supersessions)
+        # Supersession detection — find and mark chunks that replace older ones
+        supersessions = detect_supersession(graph, chunks)
+        if supersessions:
+            create_supersedes_edges(graph, supersessions)
 
-    supersede_info = f", {len(supersessions)} supersession(s)" if supersessions else ""
-    proj_info = f" project={project}" if project else ""
-    return [types.TextContent(type="text", text=f"Stored {len(chunks)} chunk(s). Source: {source}{proj_info}{supersede_info}")]
+        supersede_info = f", {len(supersessions)} supersession(s)" if supersessions else ""
+        proj_info = f" project={project}" if project else ""
+        return [types.TextContent(type="text", text=f"Stored {len(chunks)} chunk(s). Source: {source}{proj_info}{supersede_info}")]
 
 
 async def main():
