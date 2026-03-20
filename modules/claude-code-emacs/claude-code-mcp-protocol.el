@@ -38,11 +38,12 @@
 (declare-function websocket-frame-text "websocket" (frame))
 
 ;; Forward declarations
-(declare-function claude-code-mcp-get-connection-info "claude-code-mcp-connection" (project-root))
-(declare-function claude-code-mcp-get-websocket "claude-code-mcp-connection" (project-root))
-(declare-function claude-code-mcp-set-websocket "claude-code-mcp-connection" (websocket project-root))
-(declare-function claude-code-mcp-handle-pong "claude-code-mcp-connection" (project-root))
-(declare-function claude-code-mcp-handle-connection-lost "claude-code-mcp-connection" (project-root))
+(declare-function claude-code-mcp-get-connection-info "claude-code-mcp-connection" (conn-key))
+(declare-function claude-code-mcp-get-websocket "claude-code-mcp-connection" (conn-key))
+(declare-function claude-code-mcp-set-websocket "claude-code-mcp-connection" (websocket conn-key))
+(declare-function claude-code-mcp-get-any-websocket-for-project "claude-code-mcp-connection" (project-root))
+(declare-function claude-code-mcp-handle-pong "claude-code-mcp-connection" (conn-key))
+(declare-function claude-code-mcp-handle-connection-lost "claude-code-mcp-connection" (conn-key))
 
 ;; Tool handler forward declarations
 (declare-function claude-code-mcp-handle-getOpenBuffers "claude-code-mcp-tools" (params))
@@ -75,7 +76,7 @@
 When WEBSOCKET is provided, send directly on it (bypassing project lookup).
 This is critical for multi-agent setups where multiple MCP servers share
 the same project-root — ensures the response reaches the correct server."
-  (let ((ws (or websocket (claude-code-mcp-get-websocket project-root)))
+  (let ((ws (or websocket (claude-code-mcp-get-any-websocket-for-project project-root)))
         (response (if error
                       `((jsonrpc . "2.0")
                         (id . ,id)
@@ -94,9 +95,10 @@ the same project-root — ensures the response reaches the correct server."
 
 ;;; Message Handling
 
-(defun claude-code-mcp-handle-message (message project-root &optional websocket)
+(defun claude-code-mcp-handle-message (message project-root &optional websocket conn-key)
   "Handle incoming JSON-RPC MESSAGE for PROJECT-ROOT.
-WEBSOCKET is the connection that received this message."
+WEBSOCKET is the connection that received this message.
+CONN-KEY identifies the specific connection for pong and pending-request lookup."
   (condition-case err
       (let* ((json-object-type 'alist)
              (json-array-type 'list)
@@ -104,7 +106,8 @@ WEBSOCKET is the connection that received this message."
         (cond
          ;; Handle ping/pong messages
          ((equal (cdr (assoc 'type msg)) "pong")
-          (claude-code-mcp-handle-pong project-root))
+          (when conn-key
+            (claude-code-mcp-handle-pong conn-key)))
 
          ;; Request from server (check method first)
          ((assoc 'method msg)
@@ -113,7 +116,7 @@ WEBSOCKET is the connection that received this message."
          ;; Response to our request
          ((assoc 'id msg)
           (when-let* ((id (cdr (assoc 'id msg)))
-                      (info (claude-code-mcp-get-connection-info project-root))
+                      (info (when conn-key (claude-code-mcp-get-connection-info conn-key)))
                       (pending-requests (cdr (assoc 'pending-requests info)))
                       (callback (gethash id pending-requests)))
             (remhash id pending-requests)
@@ -225,28 +228,29 @@ are sent back on this exact connection to avoid cross-agent routing."
 
 ;;; WebSocket Event Handlers
 
-(defun claude-code-mcp-on-message (websocket frame project-root)
-  "Handle incoming WebSocket message on WEBSOCKET for PROJECT-ROOT."
+(defun claude-code-mcp-on-message (websocket frame project-root conn-key)
+  "Handle incoming WebSocket message on WEBSOCKET for PROJECT-ROOT.
+CONN-KEY identifies the specific connection for routing pong/responses."
   (let ((payload (websocket-frame-text frame)))
     (when payload
-      (claude-code-mcp-handle-message payload project-root websocket))))
+      (claude-code-mcp-handle-message payload project-root websocket conn-key))))
 
 (defun claude-code-mcp-on-error (_websocket type error &optional _project-root)
   "Handle WebSocket error."
   (message "MCP WebSocket error (%s): %s" type error))
 
-(defun claude-code-mcp-on-close (websocket project-root)
-  "Handle WebSocket close for PROJECT-ROOT.
+(defun claude-code-mcp-on-close (websocket conn-key)
+  "Handle WebSocket close for CONN-KEY.
 Only modify state if WEBSOCKET is still the current connection.
-When multiple agents share the same project root, an old server's
-on-close callback must not corrupt the newer connection's state."
-  (let ((current-ws (claude-code-mcp-get-websocket project-root)))
+When disconnect nils the websocket before closing, this callback
+sees a stale connection and ignores it (preventing spurious reconnects)."
+  (let ((current-ws (claude-code-mcp-get-websocket conn-key)))
     (if (eq websocket current-ws)
         (progn
-          (claude-code-mcp-set-websocket nil project-root)
-          (message "MCP WebSocket connection closed for project %s" project-root)
-          (claude-code-mcp-handle-connection-lost project-root))
-      (message "MCP WebSocket close ignored (stale connection) for project %s" project-root))))
+          (claude-code-mcp-set-websocket nil conn-key)
+          (message "MCP WebSocket connection closed (conn: %s)" conn-key)
+          (claude-code-mcp-handle-connection-lost conn-key))
+      (message "MCP WebSocket close ignored (stale) for conn: %s" conn-key))))
 
 (provide 'claude-code-mcp-protocol)
 ;;; claude-code-mcp-protocol.el ends here

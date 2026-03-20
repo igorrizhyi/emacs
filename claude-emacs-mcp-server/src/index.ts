@@ -123,6 +123,7 @@ log(`Log file: ${logFile}`);
 // Create a new bridge instance for each MCP server
 // This ensures isolation between different Claude Code sessions
 const bridge = new EmacsBridge(log);
+let serverPort: number | undefined;
 const server = new McpServer(
   {
     name: "claude-code-mcp",
@@ -835,6 +836,7 @@ async function main() {
 
   // Start Emacs bridge with port 0 for automatic assignment and target instance
   const port = await bridge.start(0, sessionId, targetInstanceId);
+  serverPort = port;
 
   // Notify Emacs about the assigned port using ps-based instance discovery
   await notifyEmacsPort(port, targetInstanceId);
@@ -904,7 +906,8 @@ process.on("unhandledRejection", (reason, promise) => {
 async function cleanup() {
   const projectRoot = normalizeProjectRoot(process.cwd());
   const targetInstanceId = await getTargetInstanceId(projectRoot);
-  const elisp = `(claude-code-mcp-unregister-port "${projectRoot}")`;
+  const portArg = serverPort ? ` ${serverPort}` : '';
+  const elisp = `(claude-code-mcp-unregister-port "${projectRoot}"${portArg})`;
 
   if (targetInstanceId) {
     // Use instance-specific server

@@ -785,6 +785,28 @@ After reading a finished task report, store it in the knowledge graph:
 
 Do NOT store reports that only contain errors or empty results.
 
+## Implementation Knowledge Extraction
+Devs only report project-specific gotchas in their Knowledge Discoveries section.
+They do NOT describe what they built — that's just \"their job\". But future agents
+need to know what was implemented, where, and how. After reviewing a dev's diff
+and merging, YOU must store a concise implementation summary as knowledge:
+
+- What was added/changed (feature, fix, mechanism)
+- Which files and key functions/variables were touched
+- How it works at a high level (enough for a future dev to find and modify it)
+- Any non-obvious design decisions (why this approach, not another)
+
+Store with `roles: [\"dev\"]` and `source: \"report:{request-id}\"`.
+
+Example: After merging a reconnect-timer fix, store:
+  \"Added reconnect-timer field to connection info alist. register-port cancels
+  pending timer before initiating new connection. Timer stored via setcdr on
+  alist entry. File: claude-code-mcp-connection.el\"
+
+This fills the gap between raw report chunks (verbose, context-heavy) and
+Knowledge Discoveries (narrow gotchas). Without this, the knowledge base
+has no concrete record of what the team actually built.
+
 ## Knowledge Base
 The team uses a GraphRAG knowledge system accessible via MCP tools:
 - `query_knowledge(query, role?)` — retrieve relevant knowledge by semantic query
