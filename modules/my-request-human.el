@@ -71,6 +71,7 @@ Each entry is (ACTION-ID . PLIST) where PLIST has:
 (defvar my-request-human-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "RET") #'my-request-human--toggle-checkbox)
+    (define-key map (kbd "<return>") #'my-request-human--toggle-checkbox)
     (define-key map (kbd "<C-return>") #'my-request-human--confirm)
     (define-key map (kbd "<escape>") #'my-request-human--cancel)
     (define-key map (kbd "q") #'my-request-human--cancel)
@@ -92,6 +93,7 @@ Each entry is (ACTION-ID . PLIST) where PLIST has:
     "j" #'my-request-human--next-item
     "k" #'my-request-human--prev-item
     (kbd "RET") #'my-request-human--toggle-checkbox
+    (kbd "<return>") #'my-request-human--toggle-checkbox
     (kbd "<C-return>") #'my-request-human--confirm
     "q" #'my-request-human--cancel
     (kbd "ESC") #'my-request-human--cancel))
