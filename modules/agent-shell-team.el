@@ -887,7 +887,14 @@ markdown has content. If it does:
 4. Clear the `## Refine` section after processing
 
 The `## Notes` section contains additional context from the user — read it but do not clear it.
-Notes are included in the approval response message automatically."
+Notes are included in the approval response message automatically.
+
+## Review Rigor
+When a dev reports task completion:
+- Do NOT trust the report at face value. Always read the diff.
+- Check: did they actually implement what was requested? Nothing more, nothing less?
+- Verify they included evidence of running verification (test output, byte-compile result).
+- If the report says \"implemented and tested\" but shows no test output, send them back."
           session-id)))
     (let ((knowledge-content (let ((f (agent-shell-team--knowledge-file "lead")))
                                (when (file-exists-p f)
@@ -960,7 +967,28 @@ references over line numbers (line numbers go stale after every commit):
 - Structural descriptions: \"the format string inside agent-shell-team--lead-prompt\"
 - Grep-able strings: a unique literal like \"## User Decisions\"
 Line numbers are OK as supplementary info in reports, but knowledge discoveries
-must use stable anchors that survive file changes."
+must use stable anchors that survive file changes.
+
+## Debugging Discipline
+When you encounter a bug or test failure:
+1. DO NOT guess-and-fix. Read the error carefully first.
+2. Reproduce the issue. Check recent changes (git diff/log).
+3. Trace data flow to find the ROOT CAUSE, not the symptom.
+4. Form a hypothesis, test it with the SMALLEST possible change.
+5. If 3+ fix attempts fail, STOP and report BLOCKED — the architecture may be wrong.
+
+Red flags — if you catch yourself thinking any of these, STOP:
+- \"Quick fix for now, investigate later\"
+- \"Just try changing X and see\"
+- \"I don't fully understand but this might work\"
+
+## Verification Before Completion
+Before calling taskUpdate with status \"finished\":
+1. Identify what command proves your work is correct (byte-compile, test, load).
+2. RUN it. Read the FULL output.
+3. Include the verification result in your report.
+Never say \"should work\" or \"looks correct\" — show evidence.
+If verification fails, fix the issue or report BLOCKED."
           session-id worktree-path))
 
 (defun agent-shell-team--tester-isolated-prompt (session-id worktree-path)
@@ -997,7 +1025,14 @@ references over line numbers (line numbers go stale after every commit):
 - Structural descriptions: \"the format string inside agent-shell-team--lead-prompt\"
 - Grep-able strings: a unique literal like \"## User Decisions\"
 Line numbers are OK as supplementary info in reports, but knowledge discoveries
-must use stable anchors that survive file changes."
+must use stable anchors that survive file changes.
+
+## Evidence-Based Reporting
+Before reporting any test result:
+1. Run the actual test/verification command. Do not extrapolate.
+2. Include the raw output in your report.
+3. State PASS or FAIL with specific evidence, not opinions.
+Never claim \"tests pass\" without showing the output."
           session-id worktree-path))
 
 (defun agent-shell-team--tester-neighbor-prompt (session-id working-dir)
@@ -1035,7 +1070,14 @@ references over line numbers (line numbers go stale after every commit):
 - Structural descriptions: \"the format string inside agent-shell-team--lead-prompt\"
 - Grep-able strings: a unique literal like \"## User Decisions\"
 Line numbers are OK as supplementary info in reports, but knowledge discoveries
-must use stable anchors that survive file changes."
+must use stable anchors that survive file changes.
+
+## Evidence-Based Reporting
+Before reporting any test result:
+1. Run the actual test/verification command. Do not extrapolate.
+2. Include the raw output in your report.
+3. State PASS or FAIL with specific evidence, not opinions.
+Never claim \"tests pass\" without showing the output."
           session-id working-dir))
 
 (defun agent-shell-team--researcher-prompt (session-id working-dir)
