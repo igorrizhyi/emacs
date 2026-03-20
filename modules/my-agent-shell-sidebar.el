@@ -323,10 +323,20 @@ or nil if unavailable, expired, or within 5 minutes of expiry."
           token))
     (error nil)))
 
+(defun my/team-sidebar--network-available-p ()
+  "Return non-nil if any non-loopback network interface is up.
+Lightweight check to avoid doomed fetches after suspend/resume."
+  (cl-some (lambda (iface)
+             (not (member (car iface) '("lo" "lo0"))))
+           (network-interface-list)))
+
 (cl-defun my/team-sidebar--quota-fetch ()
   "Fetch quota utilization, using shared file cache when fresh.
 Only makes an API call if the cache is stale or missing, so multiple
 Emacs instances share a single fetch per cycle."
+  ;; Skip fetch when network is unavailable (e.g. right after suspend/resume)
+  (unless (my/team-sidebar--network-available-p)
+    (cl-return-from my/team-sidebar--quota-fetch nil))
   ;; Timeout recovery: if a fetch has been running > 15s, force-clear the guard
   (when (and my/team-sidebar--quota-fetching
              my/team-sidebar--quota-fetch-started
