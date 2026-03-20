@@ -943,7 +943,9 @@ Auto-expand if collapsed and there are pending requests."
     (when my/approval--collapsed
       (setq my/approval--collapsed nil
             header-line-format (propertize " Approval Queue" 'face 'bold))
-      (my/approval--display-window my/approval-window-height))
+      (let ((new-win (my/approval--display-window my/approval-window-height)))
+        (when new-win
+          (select-window new-win))))
     (my/approval--maybe-refresh-from-disk)
     (my/approval--render)))
 
