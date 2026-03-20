@@ -28,6 +28,7 @@
 (declare-function evil-normal-state "evil-states")
 (defvar agent-shell-team--session-id)
 (defvar agent-shell-team--sessions)
+(defvar my/approval-buffer-name)
 (declare-function agent-shell-team--agent-status "agent-shell-team")
 (declare-function agent-shell-team--short-session-id "agent-shell-team")
 (defvar agent-shell-team--task-queue)
@@ -1428,13 +1429,15 @@ Returns t if anything was inserted, nil otherwise."
 A buffer is team-related if any of:
 - Its name matches *team:XXXX:* pattern (team buffers)
 - It IS the sidebar buffer itself
-- It is visiting a file under .agent-shell/reports/"
+- It IS the approval queue buffer
+- It is visiting a file under .agent-shell/reports/ or .agent-shell/reviews/"
   (and (buffer-live-p buf)
        (let ((name (buffer-name buf)))
          (or (string-match-p "\\*team:[a-z0-9]\\{4\\}:" name)
              (equal name my/team-sidebar-buffer-name)
+             (equal name my/approval-buffer-name)
              (when-let ((file (buffer-file-name buf)))
-               (string-match-p "/\\.agent-shell/reports/" file))))))
+               (string-match-p "/\\.agent-shell/re\\(ports\\|views\\)/" file))))))
 
 (defun my/team-sidebar--auto-toggle (&rest _)
   "Show sidebar when selected window's buffer is team-related, hide otherwise.
