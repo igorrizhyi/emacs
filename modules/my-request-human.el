@@ -70,8 +70,8 @@ Each entry is (ACTION-ID . PLIST) where PLIST has:
 
 (defvar my-request-human-mode-map
   (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "SPC") #'my-request-human--toggle-checkbox)
-    (define-key map (kbd "RET") #'my-request-human--confirm)
+    (define-key map (kbd "RET") #'my-request-human--toggle-checkbox)
+    (define-key map (kbd "<C-return>") #'my-request-human--confirm)
     (define-key map (kbd "<escape>") #'my-request-human--cancel)
     (define-key map (kbd "q") #'my-request-human--cancel)
     map)
@@ -91,8 +91,8 @@ Each entry is (ACTION-ID . PLIST) where PLIST has:
   (evil-define-key* 'normal my-request-human-mode-map
     "j" #'my-request-human--next-item
     "k" #'my-request-human--prev-item
-    " " #'my-request-human--toggle-checkbox
-    (kbd "RET") #'my-request-human--confirm
+    (kbd "RET") #'my-request-human--toggle-checkbox
+    (kbd "<C-return>") #'my-request-human--confirm
     "q" #'my-request-human--cancel
     (kbd "ESC") #'my-request-human--cancel))
 
@@ -169,7 +169,7 @@ Each entry is (ACTION-ID . PLIST) where PLIST has:
                                   'my-request-human-action action)
                       "\n")))
           (insert "\n"))
-        (insert (propertize "[SPC] toggle  [RET] confirm  [q/ESC] cancel"
+        (insert (propertize "[RET] toggle  [C-RET] confirm  [q/ESC] cancel"
                             'face '(:foreground "#666666")))))))
 
 (defun my-request-human--toggle-checkbox ()
@@ -252,7 +252,7 @@ Return the process or nil."
                   (propertize (string-join my-request-human--selected-actions ", ")
                               'face '(:foreground "#888888"))
                   "\n\n")
-          (insert (propertize "[RET] stop & finish  [q/ESC] cancel"
+          (insert (propertize "[C-RET] stop & finish  [q/ESC] cancel"
                               'face '(:foreground "#666666"))))))))
 
 (defun my-request-human--update-spinner ()
