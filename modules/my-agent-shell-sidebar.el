@@ -1439,17 +1439,30 @@ A buffer is team-related if any of:
              (when-let ((file (buffer-file-name buf)))
                (string-match-p "/\\.agent-shell/re\\(ports\\|views\\)/" file))))))
 
+(defvar my/team-sidebar--toggle-timer nil
+  "Debounce timer for `my/team-sidebar--auto-toggle'.")
+
 (defun my/team-sidebar--auto-toggle (&rest _)
-  "Show sidebar when selected window's buffer is team-related, hide otherwise.
+  "Debounced auto-toggle: show sidebar for team buffers, hide otherwise.
 Registered on `window-buffer-change-functions' and
-`window-selection-change-functions'."
-  (when (and (not my/team-sidebar--toggling)
-             (not (active-minibuffer-window)))
-    (let ((my/team-sidebar--toggling t)
-          (sel-buf (window-buffer (selected-window))))
-      (if (my/team-sidebar--team-related-buffer-p sel-buf)
-          (my/team-sidebar--show)
-        (my/team-sidebar--hide)))))
+`window-selection-change-functions'.  Uses a 100ms debounce so rapid-fire
+hook invocations (e.g. both hooks firing on a single `switch-to-buffer')
+collapse into one toggle."
+  (when (and (not (active-minibuffer-window))
+             (not my/team-sidebar--toggling))
+    (when my/team-sidebar--toggle-timer
+      (cancel-timer my/team-sidebar--toggle-timer))
+    (setq my/team-sidebar--toggle-timer
+          (run-with-timer 0.1 nil #'my/team-sidebar--auto-toggle-now))))
+
+(defun my/team-sidebar--auto-toggle-now ()
+  "Actual toggle logic (called after debounce)."
+  (setq my/team-sidebar--toggle-timer nil)
+  (let ((my/team-sidebar--toggling t)
+        (sel-buf (window-buffer (selected-window))))
+    (if (my/team-sidebar--team-related-buffer-p sel-buf)
+        (my/team-sidebar--show)
+      (my/team-sidebar--hide))))
 
 ;;; ---- Refresh Timer ----------------------------------------------------------
 
