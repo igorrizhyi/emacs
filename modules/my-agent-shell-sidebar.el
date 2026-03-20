@@ -224,7 +224,7 @@ UTIL-5H, UTIL-7D are floats; RESET-5H, RESET-7D are unix timestamps."
 
 ;;; ---- OAuth Token Refresh ---------------------------------------------------
 
-(defun my/team-sidebar--refresh-token (callback)
+(cl-defun my/team-sidebar--refresh-token (callback)
   "Refresh the OAuth access token asynchronously.
 CALLBACK is called with the new access token on success, or nil on failure.
 Reads the refresh token from ~/.claude/.credentials.json, posts to the
@@ -421,7 +421,7 @@ Returns non-nil if a retry was initiated, nil otherwise."
              (my/team-sidebar--render))))))
     t))
 
-(defun my/team-sidebar--quota-callback (status)
+(cl-defun my/team-sidebar--quota-callback (status)
   "Handle quota API response. STATUS is the url-retrieve status plist."
   (setq my/team-sidebar--quota-fetching nil
         my/team-sidebar--quota-fetch-started nil)
