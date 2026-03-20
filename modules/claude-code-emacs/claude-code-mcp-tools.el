@@ -295,7 +295,8 @@ Returns project-wide diagnostics using specified buffer for LSP context."
               (error "File not found: %s" path-a))
             (unless (file-exists-p path-b)
               (error "File not found: %s" path-b))
-            (ediff-files path-a path-b))
+            ;; Defer ediff UI out of websocket process filter
+            (run-at-time 0 nil #'ediff-files path-a path-b))
           `((status . "success")
             (message . "Opened ediff session")))
       (error
@@ -313,18 +314,19 @@ Returns project-wide diagnostics using specified buffer for LSP context."
           (let ((full-path (expand-file-name file (claude-code-normalize-project-root (projectile-project-root)))))
             (unless (file-exists-p full-path)
               (error "File not found: %s" full-path))
-            ;; Open the file and compare with revision
-            (condition-case inner-err
-                (with-current-buffer (find-file-noselect full-path)
-                  ;; Check if file is under version control
-                  (let ((backend (vc-backend buffer-file-name)))
-                    (unless backend
-                      (error "File is not under version control: %s" file))
-                    ;; Use vc-version-ediff for version-controlled files
-                    (vc-version-ediff (list buffer-file-name) revision nil)))
-              (error
-               (message "Inner error in openRevisionDiff: %s" (error-message-string inner-err))
-               (signal (car inner-err) (cdr inner-err)))))
+            ;; Defer ediff UI out of websocket process filter
+            (let ((fp full-path) (rev revision) (f file))
+              (run-at-time 0 nil
+                           (lambda ()
+                             (condition-case inner-err
+                                 (with-current-buffer (find-file-noselect fp)
+                                   (let ((backend (vc-backend buffer-file-name)))
+                                     (unless backend
+                                       (message "File is not under version control: %s" f))
+                                     (when backend
+                                       (vc-version-ediff (list buffer-file-name) rev nil))))
+                               (error
+                                (message "Error in openRevisionDiff: %s" (error-message-string inner-err))))))))
           `((status . "success")
             (message . "Opened revision diff")))
       (error
@@ -343,9 +345,12 @@ Returns project-wide diagnostics using specified buffer for LSP context."
             (error "No file specified and current buffer has no file"))
           (unless (file-exists-p target-file)
             (error "File not found: %s" target-file))
-          ;; Use vc-diff for showing uncommitted changes
-          (with-current-buffer (find-file-noselect target-file)
-            (vc-diff nil t))
+          ;; Defer vc-diff UI out of websocket process filter
+          (let ((tf target-file))
+            (run-at-time 0 nil
+                         (lambda ()
+                           (with-current-buffer (find-file-noselect tf)
+                             (vc-diff nil t)))))
           `((status . "success")
             (message . "Showing changes")
             (file . ,(file-name-nondirectory target-file))))
@@ -375,8 +380,8 @@ Returns project-wide diagnostics using specified buffer for LSP context."
               (erase-buffer)
               (insert content-b)
               (goto-char (point-min)))
-            ;; Start ediff
-            (ediff-buffers buf-a buf-b))
+            ;; Defer ediff UI out of websocket process filter
+            (run-at-time 0 nil #'ediff-buffers buf-a buf-b))
           `((status . "success")
             (message . ,(format "Opened ediff session for buffers: %s and %s" title-a title-b))))
       (error
@@ -1162,13 +1167,11 @@ PARAMS should include \\='title\\=' and \\='message\\='."
     (unless message-text
       (error "Message is required"))
 
-    ;; Send notification using alert if available, otherwise use message
-    (if (fboundp 'alert)
-        (alert message-text
-               :title title
-               :category 'claude-code)
-      ;; Fallback to message if alert is not available
-      (message "[%s] %s" title message-text))
+    ;; Send notification via async notify-send to avoid blocking on D-Bus
+    (make-process
+     :name "mcp-notify"
+     :command (list "notify-send" "-u" "normal" title message-text)
+     :noquery t)
 
     ;; Return success response
     `((success . t)

@@ -487,6 +487,8 @@ If already in the lead buffer, toggle back to the previous buffer."
 ;; Key bindings for navigation
 (map! :n "C-h" #'my-layout-navigate-left
       :n "C-l" #'my-layout-navigate-right
+      :n "C-b" #'my-layout-navigate-down
+      :n "C-k" #'my-layout-navigate-up
       :n "s-<right>" #'my-layout-navigate-right)
 
 ;; Specific eat terminal keybindings using s-arrow keys that work reliably

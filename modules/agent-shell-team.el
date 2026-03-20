@@ -492,11 +492,10 @@ session-id (filename sans extension) if found, nil otherwise."
 
 (defun agent-shell-team--notify (title message)
   "Send a desktop notification for team events."
-  (if (fboundp 'alert)
-      (alert message
-             :title title
-             :category 'agent-shell-team)
-    (message "[%s] %s" title message)))
+  (make-process
+   :name "team-notify"
+   :command (list "notify-send" "-u" "normal" title message)
+   :noquery t))
 
 ;;; Registry functions
 
@@ -691,6 +690,9 @@ BEFORE composing ANY task message for tasksPut, you MUST:
    - `role`: the target agent's role (\"dev\", \"researcher\", or \"tester\")
 2. Extract relevant pieces from the response
 3. Embed them as inline context in the task message under a \"Known context:\" header
+4. When embedding knowledge, respect confidence annotations:
+   - `[confirmed]` chunks: present as established facts about the system
+   - `[recommendation]` chunks: present as suggestions/investigations, NOT as how the system works now
 Skipping this step wastes agent time rediscovering known information.
 This is NOT optional — do it for EVERY task dispatch.
 
@@ -801,11 +803,19 @@ Your responsibilities:
   - \"lead\" — coordination patterns, workflow insights
 
 ## User Decisions: use `presentOptions` MCP tool
-When you need user approval or a decision between options, use the `presentOptions`
-MCP tool instead of asking in plain text. This renders a structured UI for the user.
+Whenever you present 2 or more distinct approaches, strategies, or solutions for
+the user to evaluate — whether in a formal decision, brainstorming, or exploratory
+context — use the `presentOptions` MCP tool with `choice` (single-select) or
+`checklist` (multi-select). Do NOT list numbered options in plain text.
+If you catch yourself writing a numbered/bulleted list of alternatives, stop and
+route it through `presentOptions` instead. This renders a structured UI for the user.
 
 - Use `choice` type for single-select decisions (e.g., which approach to take)
 - Use `checklist` type for multi-select (e.g., which tasks to proceed with)
+- CRITICAL: Each item must be ONE atomic task or decision. NEVER group multiple
+  independent changes into a single item. If two things can be approved or rejected
+  independently, they MUST be separate items. Bad: \"Fix A and B in module X\".
+  Good: two separate items \"Fix A in module X\" and \"Fix B in module X\".
 - Always include a meaningful `request_id` for correlation (e.g., \"approve-deploy\", \"select-approach\")
 - The tool is async — it returns immediately after displaying the UI
 - The user's response arrives as a `«TEAM» Approval Response [request-id: ...]` message with selected items
@@ -886,6 +896,14 @@ Slug: 2-4 word kebab-case summary (e.g. feature/dark-mode-toggle, fix/auth-token
 Include the new branch name in your taskUpdate so the lead knows what to merge.
 NEVER rename the `main` branch or any branch other than your own worktree branch.
 Only rename the branch you are currently on inside your worktree.
+
+## Knowledge Context Annotations
+Your task description may include \"Known context:\" with knowledge chunks.
+These chunks may have confidence annotations:
+- `[confirmed]`: This is verified, implemented knowledge — treat as fact about the system.
+- `[recommendation]`: This is from research/investigation that may NOT be implemented yet.
+  Treat as a suggestion or starting point, not as how the system currently works.
+  Always verify recommendation context against the actual codebase before relying on it.
 
 ## Knowledge Base
 - In your report, include a `## Knowledge Discoveries` section at the end.
@@ -1317,8 +1335,10 @@ Only the lead role may call this.  Returns an alist with success/message."
                   (setq found t)
                   (agent-shell-team--log session-id
                    (format "[dismissAgent] Cleaning up %s (%s)" role (buffer-name buf)))
-                  (agent-shell-team--cleanup-agent
-                   buf session-id (alist-get 'worktree agent)))))))
+                  (let ((b buf) (sid session-id) (wt (alist-get 'worktree agent)))
+                    (run-at-time 0 nil
+                                 (lambda ()
+                                   (agent-shell-team--cleanup-agent b sid wt)))))))))
         (cond
          ((eq found 'refused)
           (let ((current-request-id nil)
@@ -1488,17 +1508,21 @@ Return the number of tasks actually enqueued, or signal an error if
                                                (truncate-string-to-width message 60 nil nil "...")
                                                request-id
                                                (if group-id (format ", group: %s" group-id) "")))))))))
-      ;; Try to assign immediately (best-effort, don't fail the response)
-      (condition-case err
-          (agent-shell-team--try-assign-tasks)
-        (error
-         (agent-shell-team--log session-id
-          (format "[tasksPut] Error in try-assign-tasks (tasks are queued, will retry): %s"
-                  (error-message-string err)))))
-      ;; Ensure drain timer is running for retries
-      (condition-case nil
-          (agent-shell-team--start-drain-timer)
-        (error nil))
+      ;; Defer assignment out of websocket process filter so that
+      ;; agent spawning, shell-maker-submit, and D-Bus calls don't
+      ;; block Emacs while the filter is running.
+      (let ((sid session-id))
+        (run-at-time 0 nil
+                     (lambda ()
+                       (condition-case err
+                           (agent-shell-team--try-assign-tasks)
+                         (error
+                          (agent-shell-team--log sid
+                           (format "[tasksPut] Error in try-assign-tasks (tasks are queued, will retry): %s"
+                                   (error-message-string err)))))
+                       (condition-case nil
+                           (agent-shell-team--start-drain-timer)
+                         (error nil)))))
       enqueued)))
 
 (defun agent-shell-team--handle-task-update (raw-input)
@@ -1567,43 +1591,53 @@ Route the status update directly to the lead agent's queue."
                                 message-text))
                     message-text))
               message-text)))
-      ;; Log it
+      ;; Log it (fast, no UI)
       (agent-shell-team--log (or session-id "<nil>")
                              (format "[taskUpdate] %s from request %s"
                                      status request-id))
-      ;; Desktop notification for task lifecycle events
-      (when (member status '("finished" "blocked"))
-        (agent-shell-team--notify
-         (format "Task %s" (capitalize status))
-         (format "%s" request-id)))
-      (if lead-buf
-          ;; Deliver or queue to lead
-          (let ((lead-status (agent-shell-team--agent-status lead-buf)))
-            (pcase lead-status
-              ('idle (agent-shell-team--prompt-agent lead-buf message-text))
-              ((or 'busy 'initializing)
-               (agent-shell-team--queue-message session-id lead-buf
-                                                (list :from "agent" :title "Task Update" :message message-text)))
-              ('dead (agent-shell-team--log session-id "WARNING: lead buffer is dead"))))
-        ;; No lead yet — queue for later delivery
-        (when session-id
-          (agent-shell-team--log session-id "taskUpdate queued pending lead registration")
-          (let ((existing (gethash session-id agent-shell-team--pending-for-lead)))
-            (puthash session-id (append existing (list message-text))
-                     agent-shell-team--pending-for-lead))
-          (agent-shell-team--start-drain-timer)))
-      ;; Persist task status update
-      (when session-id
-        (agent-shell-team--persist-task
-         session-id
-         (list :request-id request-id
-               :status status
-               :commit commit
-               :completed-at (float-time))))
-      ;; Handle group completion tracking if status is "finished"
-      (when (equal status "finished")
-        (when-let ((group-id (gethash request-id agent-shell-team--request-to-group)))
-          (agent-shell-team--handle-task-completion request-id session-id nil)))
+      ;; Defer all side effects (notify, deliver, persist, group completion)
+      ;; out of the websocket process filter to avoid blocking Emacs.
+      (let ((msg message-text)
+            (sid session-id)
+            (lbuf lead-buf)
+            (rid request-id)
+            (st status)
+            (cmt commit))
+        (run-at-time 0 nil
+                     (lambda ()
+                       ;; Desktop notification for task lifecycle events
+                       (when (member st '("finished" "blocked"))
+                         (agent-shell-team--notify
+                          (format "Task %s" (capitalize st))
+                          (format "%s" rid)))
+                       (if lbuf
+                           ;; Deliver or queue to lead
+                           (let ((lead-status (agent-shell-team--agent-status lbuf)))
+                             (pcase lead-status
+                               ('idle (agent-shell-team--prompt-agent lbuf msg))
+                               ((or 'busy 'initializing)
+                                (agent-shell-team--queue-message sid lbuf
+                                                                 (list :from "agent" :title "Task Update" :message msg)))
+                               ('dead (agent-shell-team--log sid "WARNING: lead buffer is dead"))))
+                         ;; No lead yet — queue for later delivery
+                         (when sid
+                           (agent-shell-team--log sid "taskUpdate queued pending lead registration")
+                           (let ((existing (gethash sid agent-shell-team--pending-for-lead)))
+                             (puthash sid (append existing (list msg))
+                                      agent-shell-team--pending-for-lead))
+                           (agent-shell-team--start-drain-timer)))
+                       ;; Persist task status update
+                       (when sid
+                         (agent-shell-team--persist-task
+                          sid
+                          (list :request-id rid
+                                :status st
+                                :commit cmt
+                                :completed-at (float-time))))
+                       ;; Handle group completion tracking if status is "finished"
+                       (when (equal st "finished")
+                         (when-let ((group-id (gethash rid agent-shell-team--request-to-group)))
+                           (agent-shell-team--handle-task-completion rid sid nil))))))
       t)))
 
 (defun agent-shell-team--find-idle-agent (session-id role)
