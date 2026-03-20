@@ -1384,9 +1384,46 @@ Only the lead role may call this.  Returns an alist with success/message."
           `((success . t)
             (message . ,(format "Agent matching '%s' dismissed" target))))
          (t
-          `((success . nil)
-            (message . ,(format "No agent found matching '%s'" target))))))))))
-
+          (let* ((stale-buf (gethash target agent-shell-team--request-to-buffer))
+                 (prev-session (gethash target agent-shell-team--request-to-session))
+                 (lead-match
+                  (cl-some (lambda (agent)
+                             (let ((wt-name (alist-get 'worktree-name agent))
+                                   (buf (alist-get 'buffer agent))
+                                   (role (alist-get 'role agent)))
+                               (when (and (equal role "lead")
+                                          (or (and wt-name (string-match-p (regexp-quote target) wt-name))
+                                              (and (buffer-live-p buf)
+                                                   (string-match-p (regexp-quote target) (buffer-name buf)))))
+                                 t)))
+                           all-agents))
+                 (active-names
+                  (cl-loop for agent in all-agents
+                           for role = (alist-get 'role agent)
+                           for wt-name = (alist-get 'worktree-name agent)
+                           for buf = (alist-get 'buffer agent)
+                           unless (equal role "lead")
+                           collect (or wt-name
+                                       (and (buffer-live-p buf) (buffer-name buf))
+                                       "<unknown>")))
+                 (agents-str (if active-names
+                                 (format " Active non-lead agents: [%s]"
+                                         (string-join active-names ", "))
+                               " No active non-lead agents."))
+                 (reason
+                  (cond
+                   ((and stale-buf (not (buffer-live-p stale-buf)))
+                    "The agent for this request-id has been killed (stale mapping).")
+                   ((and prev-session (not stale-buf))
+                    "This request-id was previously assigned, but the agent was dismissed or reassigned.")
+                   (lead-match
+                    "Target matches the lead agent, which cannot be dismissed.")
+                   (t nil))))
+            `((success . nil)
+              (message . ,(format "No agent found matching '%s'. %s%s"
+                                  target
+                                  (or reason "No specific reason identified.")
+                                  agents-str)))))))))
 (defun agent-shell-team--cleanup-agent (buffer session-id worktree-path)
   "Clean up BUFFER: unregister from session, kill buffer, optionally remove worktree."
   (agent-shell-team--log session-id
