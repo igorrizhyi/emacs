@@ -1039,6 +1039,8 @@ If terminal has active mistty buffer, routes command there instead."
                                       :command command
                                       :project-root project-root)
                                 claude-code-mcp-pending-capture)
+                       ;; Focus the terminal buffer so the user sees the output
+                       (pop-to-buffer buffer)
                        ;; Send command + Enter (using eshell-compatible helper)
                        (claude-code-terminal-send-string buffer command t)
                        ;; Show capture reminder popup
@@ -1080,6 +1082,8 @@ If terminal has active mistty buffer, routes command there instead."
                                       :command command
                                       :project-root project-root)
                                 claude-code-mcp-pending-capture)
+                       ;; Focus the terminal buffer so the user sees the command
+                       (pop-to-buffer buffer)
                        ;; Send command WITHOUT Enter - user will edit and press Enter
                        (claude-code-terminal-send-string buffer command nil)
                        ;; Show capture reminder popup
