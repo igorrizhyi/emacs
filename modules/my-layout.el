@@ -19,6 +19,9 @@
   '(left-sidebar main-center top-chat bottom-bar right-sidebar)
   "Available window splits in the layout.")
 
+(defvar my-layout--last-window-count nil
+  "Cached window count to guard unnecessary resize calls.")
+
 (defvar my-layout--claude-started nil
   "Track whether Claude Code has been started.")
 
@@ -418,7 +421,10 @@ If already in the lead buffer, toggle back to the previous buffer."
 ;; Install the window deletion hook
 (add-hook 'window-selection-change-functions
           (lambda (frame)
-            (my-layout--restore-window-sizes)))
+            (let ((count (length (window-list frame))))
+              (unless (eql count my-layout--last-window-count)
+                (setq my-layout--last-window-count count)
+                (my-layout--restore-window-sizes)))))
 
 ;; Visual focus indication for top chat
 (defface my-layout-focused-window-face
