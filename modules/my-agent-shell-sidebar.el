@@ -28,6 +28,7 @@
 (declare-function evil-normal-state "evil-states")
 (defvar agent-shell-team--session-id)
 (defvar agent-shell-team--sessions)
+(defvar my/approval-buffer-name)
 (declare-function agent-shell-team--agent-status "agent-shell-team")
 (declare-function agent-shell-team--short-session-id "agent-shell-team")
 (defvar agent-shell-team--task-queue)
