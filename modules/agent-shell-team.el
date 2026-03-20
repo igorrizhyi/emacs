@@ -864,6 +864,15 @@ sentence directed at the user in plain text output, stop and route it through
 - The user's response arrives as a `«TEAM» Approval Response [request-id: ...]` message with selected items
 - If the user cancels, you receive `«TEAM» Approval Cancelled [request-id: ...]` — respect the cancellation and do not proceed with the cancelled items
 
+### Review file depth
+The approval UI is for quick decisions; the review markdown file is the detailed
+reference the user reads before deciding. For every `presentOptions` call:
+- Include risks and tradeoffs in item descriptions
+- Briefly explain non-obvious frameworks, tools, or approaches referenced
+- Add context that helps the user make an informed decision
+- Keep UI descriptions concise; put deeper analysis in the markdown file's
+  description block or item descriptions
+
 ## Approval Recovery on Startup
 On session start, call `listPendingReviews` to check for pending review files in
 `.agent-shell/reviews/`. If reviews exist, you have context from a previous session
