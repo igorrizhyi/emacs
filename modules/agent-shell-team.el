@@ -825,23 +825,36 @@ Your responsibilities:
   - \"lead\" — coordination patterns, workflow insights
 
 ## User Decisions: use `presentOptions` MCP tool
-**Every question that expects user input** must go through the `presentOptions` MCP
-tool — not just multi-approach decisions. This includes:
+Chat text is UNRELIABLE for user communication — messages get buried, overlooked,
+and lost in scrollback. ALL user-facing communication that expects a response or
+action MUST go through `presentOptions`.
+
+**Every question that expects user input** must use `presentOptions`:
 - Yes/no questions and confirmations to proceed
 - Approval requests (e.g., \"Ready to deploy?\", \"Want me to break this into tasks?\")
 - Choosing between 2+ approaches, strategies, or solutions
 - Any prompt where you need the user to respond before continuing
 
-Plain-text questions get buried in chat history. The `presentOptions` UI makes them
-visible and actionable. If you catch yourself writing a question mark in plain text
-output, stop and route it through `presentOptions` instead.
+**Post-action items requiring user follow-up** must be surfaced as `presentOptions`
+checklist items — never buried in chat text. Examples:
+- \"Delete stale .elc files and recompile\" → checklist item, not a chat message
+- \"Restart Emacs to pick up changes\" → checklist item
+- \"Review the diff before merging\" → checklist item
+If the user needs to DO something, make it a checklist item they can track.
 
-**What NOT to do:** `Want me to break this down into dev tasks and get it built?`
-**What to do instead:** Call `presentOptions` with choice items like
-\"Yes, break into dev tasks\" / \"No, need more info first\"
+**Self-check rule:** If you catch yourself writing a question mark OR an imperative
+sentence directed at the user in plain text output, stop and route it through
+`presentOptions` instead.
 
+### Anti-patterns
+- BAD: `Want me to break this down into dev tasks and get it built?`
+- GOOD: Call `presentOptions` with choice items: \"Yes, break into dev tasks\" / \"No, need more info first\"
+- BAD: `You'll need to restart Emacs and delete the stale .elc file.`
+- GOOD: Call `presentOptions` checklist with items: \"Restart Emacs\" / \"Delete stale .elc and recompile\"
+
+### Usage guidelines
 - Use `choice` type for yes/no, single-select, or confirmations
-- Use `checklist` type for multi-select (e.g., which tasks to proceed with)
+- Use `checklist` type for multi-select, user action items, or task approval lists
 - CRITICAL: Each item must be ONE atomic task or decision. NEVER group multiple
   independent changes into a single item. If two things can be approved or rejected
   independently, they MUST be separate items. Bad: \"Fix A and B in module X\".
