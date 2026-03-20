@@ -411,7 +411,9 @@ Returns non-nil if a retry was initiated, nil otherwise."
   (if my/team-sidebar--quota-retry-p
       ;; Already retried once — give up
       (progn
-        (setq my/team-sidebar--quota-retry-p nil
+        (setq my/team-sidebar--quota-fetching nil
+              my/team-sidebar--quota-fetch-started nil
+              my/team-sidebar--quota-retry-p nil
               my/team-sidebar--quota-error "Auth failed after retry")
         (my/team-sidebar--render)
         nil)
@@ -427,22 +429,24 @@ Returns non-nil if a retry was initiated, nil otherwise."
          (lambda (new-token)
            (if new-token
                (my/team-sidebar--quota-do-fetch new-token)
-             (setq my/team-sidebar--quota-retry-p nil
+             (setq my/team-sidebar--quota-fetching nil
+                   my/team-sidebar--quota-fetch-started nil
+                   my/team-sidebar--quota-retry-p nil
                    my/team-sidebar--quota-error "Token refresh failed")
              (my/team-sidebar--render))))))
     t))
 
 (cl-defun my/team-sidebar--quota-callback (status)
   "Handle quota API response. STATUS is the url-retrieve status plist."
-  (setq my/team-sidebar--quota-fetching nil
-        my/team-sidebar--quota-fetch-started nil)
   (condition-case nil
       (if (plist-get status :error)
           (let ((http-status (my/team-sidebar--quota-get-http-status)))
             (if (eq http-status 401)
                 (when (my/team-sidebar--quota-handle-401)
                   (cl-return-from my/team-sidebar--quota-callback nil))
-              (setq my/team-sidebar--quota-error "API error")))
+              (setq my/team-sidebar--quota-fetching nil
+                    my/team-sidebar--quota-fetch-started nil
+                    my/team-sidebar--quota-error "API error")))
         ;; Check HTTP status even when url-retrieve doesn't report :error
         (let ((http-status (my/team-sidebar--quota-get-http-status)))
           (when (eq http-status 401)
@@ -461,13 +465,17 @@ Returns non-nil if a retry was initiated, nil otherwise."
             (setq my/team-sidebar--quota-5h-reset (string-to-number reset-5h)))
           (when reset-7d
             (setq my/team-sidebar--quota-7d-reset (string-to-number reset-7d)))
-          (setq my/team-sidebar--quota-error nil
+          (setq my/team-sidebar--quota-fetching nil
+                my/team-sidebar--quota-fetch-started nil
+                my/team-sidebar--quota-error nil
                 my/team-sidebar--quota-retry-p nil)
           ;; Write to shared cache so other instances can skip the API call
           (my/team-sidebar--quota-cache-write
            my/team-sidebar--quota-5h-util my/team-sidebar--quota-7d-util
            my/team-sidebar--quota-5h-reset my/team-sidebar--quota-7d-reset)))
-    (error (setq my/team-sidebar--quota-error "Parse error")))
+    (error (setq my/team-sidebar--quota-fetching nil
+                 my/team-sidebar--quota-fetch-started nil
+                 my/team-sidebar--quota-error "Parse error")))
   (when (buffer-live-p (current-buffer))
     (kill-buffer (current-buffer)))
   ;; Trigger sidebar re-render
