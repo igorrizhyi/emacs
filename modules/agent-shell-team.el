@@ -1434,6 +1434,26 @@ Only the lead role may call this.  Returns an alist with success/message."
   (when (fboundp 'agent-shell-namespace-emit-dismiss)
     (agent-shell-namespace-emit-dismiss
      (agent-shell-team--buffer-worktree-name buffer)))
+  ;; Strip :target from queued tasks that targeted this agent (before mappings are removed)
+  (let ((buf-name (and (buffer-live-p buffer) (buffer-name buffer)))
+        (wt-name (agent-shell-team--buffer-worktree-name buffer))
+        (agent-request-ids (let (ids)
+                             (maphash (lambda (k v)
+                                        (when (eq v buffer) (push k ids)))
+                                      agent-shell-team--request-to-buffer)
+                             ids)))
+    (dolist (task agent-shell-team--task-queue)
+      (when-let ((target (plist-get task :target)))
+        (when (or (and buf-name (string-match-p (regexp-quote target) buf-name))
+                  (and buf-name (string-match-p (regexp-quote buf-name) target))
+                  (and wt-name (not (equal wt-name "main"))
+                       (or (string-match-p (regexp-quote target) wt-name)
+                           (string-match-p (regexp-quote wt-name) target)))
+                  (member target agent-request-ids))
+          (agent-shell-team--log session-id
+           (format "[cleanup] Clearing target %S from queued task %s (agent dismissed)"
+                   target (plist-get task :request-id)))
+          (plist-put task :target nil)))))
   ;; Clean up request-to-buffer and request-to-session mappings for this agent
   (let ((removed-request-ids nil))
     (maphash (lambda (k v)
@@ -1777,10 +1797,11 @@ reached its max agent count, auto-spawn a new agent."
                                        '(busy initializing))
                                  (gethash (alist-get 'buffer targeted-agent) just-assigned)))
                         (push task remaining))
-                       ;; Targeted assignment: agent NOT found — re-queue to wait
+                       ;; Targeted assignment: agent gone — clear target for reassignment
                        (target
                         (agent-shell-team--log session-id
-                         (format "[assign] Targeted agent %S not found for role %s, re-queuing" target role))
+                         (format "[assign] Targeted agent %S gone for role %s, clearing target for reassignment" target role))
+                        (plist-put task :target nil)
                         (push task remaining))
                        ;; Normal assignment: find any idle agent for this role
                        (t
