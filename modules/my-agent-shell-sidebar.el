@@ -807,14 +807,18 @@ Returns t if anything was inserted, nil otherwise."
   (let ((buf (get-buffer my/team-sidebar-buffer-name)))
     (when (and buf (buffer-live-p buf))
       (with-current-buffer buf
-        (let ((inhibit-read-only t)
-              (pos (point)))
+        (let* ((inhibit-read-only t)
+               (pos (point))
+               (win (get-buffer-window buf t))
+               (saved-window-point (when win (window-point win))))
           ;; Preserve prompt block if present
           (let ((prompt-end (my/team-sidebar--prompt-region-end)))
             (goto-char (or prompt-end (point-min)))
             (delete-region (point) (point-max))
             (my/team-sidebar--insert-status)
-            (goto-char (min pos (point-max)))))))))
+            (goto-char (min pos (point-max))))
+          (when (and win saved-window-point)
+            (set-window-point win (min saved-window-point (point-max)))))))))
 
 (defun my/team-sidebar--prompt-region-end ()
   "Return end of the prompt region at top of buffer, or nil if none."
