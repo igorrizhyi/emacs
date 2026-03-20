@@ -764,7 +764,13 @@ For choice: radio-select current item (deselect all others)."
                           my/approval--requests))
       (my/approval--clamp-indices)
       (my/approval--render)
-      (message "Approval submitted."))))
+      (message "Approval submitted.")
+      (when (null my/approval--requests)
+        (my/approval--hide)
+        (let ((target (or (get-mru-window nil nil t)
+                          (next-window nil 'no-minibuf))))
+          (when (and target (window-live-p target))
+            (select-window target)))))))
 
 ;;; ---- Window Management ------------------------------------------------------
 
