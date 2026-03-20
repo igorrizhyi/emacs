@@ -875,7 +875,6 @@ markdown has content. If it does:
 
 The `## Notes` section contains additional context from the user — read it but do not clear it.
 Notes are included in the approval response message automatically."
-          (agent-shell-team--knowledge-dir)
           session-id)))
     (let ((knowledge-content (let ((f (agent-shell-team--knowledge-file "lead")))
                                (when (file-exists-p f)
@@ -949,7 +948,7 @@ references over line numbers (line numbers go stale after every commit):
 - Grep-able strings: a unique literal like \"## User Decisions\"
 Line numbers are OK as supplementary info in reports, but knowledge discoveries
 must use stable anchors that survive file changes."
-          session-id worktree-path worktree-name))
+          session-id worktree-path))
 
 (defun agent-shell-team--tester-isolated-prompt (session-id worktree-path)
   "Generate tester prompt for isolated mode in SESSION-ID.
@@ -1431,7 +1430,8 @@ Only the lead role may call this.  Returns an alist with success/message."
               (message . ,(format "No agent found matching '%s'. %s%s"
                                   target
                                   (or reason "No specific reason identified.")
-                                  agents-str)))))))))
+                                  agents-str)))))))))))
+
 (defun agent-shell-team--cleanup-agent (buffer session-id worktree-path)
   "Clean up BUFFER: unregister from session, kill buffer, optionally remove worktree."
   (agent-shell-team--log session-id
@@ -2142,7 +2142,7 @@ Also detects agents stuck in busy state with no ACP output for
                        (with-current-buffer buf
                          (when (fboundp 'agent-shell-heartbeat-stop)
                            (agent-shell-heartbeat-stop))
-                         (shell-maker-interrupt)
+                         (shell-maker-interrupt t)
                          (shell-maker-finish-output
                           :config shell-maker--config
                           :success nil)))
