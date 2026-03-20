@@ -1266,36 +1266,39 @@ Returns the selected Claude buffer or nil."
 ;; Initialize focused window tracking
 (claude-code--update-focused-window)
 
+;; Debounced mode-line update to consolidate multiple hook triggers.
+;; Multiple hooks (window-selection-change, window-state-change,
+;; buffer-list-update, select-window advice) fire near-simultaneously
+;; on every window switch. This debounce collapses them into one update.
+(defvar claude-code--modeline-update-timer nil
+  "Timer for debouncing mode-line updates.")
+
+(defun claude-code--do-modeline-update ()
+  "Perform the actual mode-line update for all claude-code windows."
+  (setq claude-code--modeline-update-timer nil)
+  (claude-code--update-focused-window)
+  (dolist (window (window-list))
+    (with-current-buffer (window-buffer window)
+      (when (claude-code--buffer-p (current-buffer))
+        (force-mode-line-update)))))
+
+(defun claude-code--schedule-modeline-update (&rest _)
+  "Schedule a debounced mode-line update after 50ms."
+  (when claude-code--modeline-update-timer
+    (cancel-timer claude-code--modeline-update-timer))
+  (setq claude-code--modeline-update-timer
+        (run-with-timer 0.05 nil #'claude-code--do-modeline-update)))
+
 ;; Hook to update focused window and modeline when window selection changes
-(add-hook 'window-selection-change-functions
-          (lambda (frame)
-            (claude-code--update-focused-window)
-            (dolist (window (window-list frame))
-              (with-current-buffer (window-buffer window)
-                (when (claude-code--buffer-p (current-buffer))
-                  (force-mode-line-update))))))
+(add-hook 'window-selection-change-functions #'claude-code--schedule-modeline-update)
 
 ;; Additional hooks to catch all focus changes
-(add-hook 'window-state-change-hook
-          (lambda ()
-            (claude-code--update-focused-window)
-            (dolist (window (window-list))
-              (with-current-buffer (window-buffer window)
-                (when (claude-code--buffer-p (current-buffer))
-                  (force-mode-line-update))))))
+(add-hook 'window-state-change-hook #'claude-code--schedule-modeline-update)
 
-(add-hook 'buffer-list-update-hook
-          (lambda ()
-            (claude-code--update-focused-window)
-            (when (claude-code--buffer-p (current-buffer))
-              (force-mode-line-update))))
+(add-hook 'buffer-list-update-hook #'claude-code--schedule-modeline-update)
 
 ;; Force update when switching windows
-(advice-add 'select-window :after
-            (lambda (&rest _)
-              (claude-code--update-focused-window)
-              (when (claude-code--buffer-p (current-buffer))
-                (force-mode-line-update))))
+(advice-add 'select-window :after #'claude-code--schedule-modeline-update)
 
 ;; Hook to update modeline when evil state changes
 (when (featurep 'evil)
