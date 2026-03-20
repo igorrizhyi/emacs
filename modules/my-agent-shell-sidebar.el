@@ -323,7 +323,7 @@ or nil if unavailable, expired, or within 5 minutes of expiry."
           token))
     (error nil)))
 
-(defun my/team-sidebar--quota-fetch ()
+(cl-defun my/team-sidebar--quota-fetch ()
   "Fetch quota utilization, using shared file cache when fresh.
 Only makes an API call if the cache is stale or missing, so multiple
 Emacs instances share a single fetch per cycle."
