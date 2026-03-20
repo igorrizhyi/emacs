@@ -79,7 +79,7 @@
   "Face for the submit hint.")
 
 (defface my/approval-collapsed-face
-  '((t :foreground "#bbbbbb" :background "#1a1a2e" :weight bold))
+  '((t :foreground "#ffb000" :background "#2e1e13" :weight bold :extend t))
   "Face for the collapsed summary bar.")
 
 ;;; ---- Data -------------------------------------------------------------------
@@ -506,7 +506,7 @@ Full rewrite — files are small (5-30 lines)."
                    (t
                     (format "▶ %d pending approval%s  [s-k expand]"
                             count (if (= count 1) "" "s"))))))
-    (insert (propertize summary 'face 'my/approval-collapsed-face))))
+    (insert (propertize (concat summary "\n") 'face 'my/approval-collapsed-face))))
 
 (defun my/approval--display-window (height)
   "Display the approval buffer in a side window with HEIGHT lines."
