@@ -2,12 +2,15 @@
 
 import hashlib
 import json
+import logging
 import os
 import re
 from datetime import datetime, timezone
 
 from falkordb import FalkorDB
 from litellm import completion, embedding
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -524,7 +527,7 @@ def create_similarity_edges_for_chunks(graph, chunk_ids: list[str], threshold: f
 # Supersession detection
 # ---------------------------------------------------------------------------
 
-SUPERSESSION_CANDIDATE_THRESHOLD = 0.15  # cosine distance — very close
+SUPERSESSION_CANDIDATE_THRESHOLD = 0.25  # cosine distance — tuned for text-embedding-3-small
 
 CLASSIFICATION_MODEL = os.environ.get("GRAPHRAG_CLASSIFY_MODEL", "gpt-4o-mini")
 
@@ -565,6 +568,7 @@ def detect_supersession(graph, new_chunks: list[dict]) -> list[tuple[str, str, d
     Returns list of (new_id, old_id, classification_dict) tuples.
     """
     results = []
+    logger.debug("detect_supersession: checking %d new chunks (threshold=%.2f)", len(new_chunks), SUPERSESSION_CANDIDATE_THRESHOLD)
 
     for chunk in new_chunks:
         cid = chunk["id"]
@@ -591,6 +595,8 @@ def detect_supersession(graph, new_chunks: list[dict]) -> list[tuple[str, str, d
                 "threshold": SUPERSESSION_CANDIDATE_THRESHOLD,
             },
         )
+
+        logger.debug("  chunk %s: %d neighbors within threshold", cid, len(neighbours.result_set))
 
         for row in neighbours.result_set:
             old_id, old_content, old_source, old_roles, score = row
@@ -627,6 +633,7 @@ def detect_supersession(graph, new_chunks: list[dict]) -> list[tuple[str, str, d
                 # LLM failure is non-fatal — skip this candidate
                 continue
 
+    logger.info("detect_supersession: checked %d chunks, found %d candidates (threshold=%.2f)", len(new_chunks), len(results), SUPERSESSION_CANDIDATE_THRESHOLD)
     return results
 
 
