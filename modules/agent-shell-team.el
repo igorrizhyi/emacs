@@ -243,41 +243,51 @@ Used to detect transitions and avoid redundant file ops.")
     (error nil)))
 
 (defun agent-shell-team--update-idle-inhibit ()
-  "Acquire or release the DBus screensaver inhibit based on busy agents."
-  (condition-case err
-      (if (agent-shell-team--any-agents-busy-p)
-          ;; Agents busy — acquire inhibit if not held
-          (unless agent-shell-team--idle-inhibit-cookie
-            (let ((cookie (dbus-call-method
-                           :session
-                           "org.freedesktop.ScreenSaver"
-                           "/org/freedesktop/ScreenSaver"
-                           "org.freedesktop.ScreenSaver"
-                           "Inhibit"
-                           "emacs-agent-shell"
-                           "Team agents active")))
-              (setq agent-shell-team--idle-inhibit-cookie cookie)
-              (when agent-shell-team--session-id
-                (agent-shell-team--log agent-shell-team--session-id
-                  (format "[idle-inhibit] Acquired screensaver inhibit (cookie=%s)" cookie)))))
-        ;; No agents busy — release inhibit if held
-        (when agent-shell-team--idle-inhibit-cookie
-          (dbus-call-method
-           :session
-           "org.freedesktop.ScreenSaver"
-           "/org/freedesktop/ScreenSaver"
-           "org.freedesktop.ScreenSaver"
-           "UnInhibit"
-           :uint32 agent-shell-team--idle-inhibit-cookie)
-          (when agent-shell-team--session-id
-            (agent-shell-team--log agent-shell-team--session-id
-              (format "[idle-inhibit] Released screensaver inhibit (cookie=%s)"
-                      agent-shell-team--idle-inhibit-cookie)))
-          (setq agent-shell-team--idle-inhibit-cookie nil)))
-    (dbus-error
-     (when agent-shell-team--session-id
-       (agent-shell-team--log agent-shell-team--session-id
-         (format "[idle-inhibit] DBus error: %s" (error-message-string err)))))))
+  "Acquire or release the DBus screensaver inhibit based on busy agents.
+Uses the in-memory tracking hash instead of scanning the filesystem,
+and makes D-Bus calls asynchronously to avoid blocking the main thread."
+  (let ((busy (> (hash-table-count agent-shell-team--idle-inhibit-tracked) 0)))
+    (if busy
+        ;; Agents busy — acquire inhibit if not held
+        (unless agent-shell-team--idle-inhibit-cookie
+          (condition-case err
+              (dbus-call-method-asynchronously
+               :session
+               "org.freedesktop.ScreenSaver"
+               "/org/freedesktop/ScreenSaver"
+               "org.freedesktop.ScreenSaver"
+               "Inhibit"
+               (lambda (cookie)
+                 (setq agent-shell-team--idle-inhibit-cookie cookie)
+                 (when agent-shell-team--session-id
+                   (agent-shell-team--log agent-shell-team--session-id
+                     (format "[idle-inhibit] Acquired screensaver inhibit (cookie=%s)" cookie))))
+               "emacs-agent-shell"
+               "Team agents active")
+            (dbus-error
+             (when agent-shell-team--session-id
+               (agent-shell-team--log agent-shell-team--session-id
+                 (format "[idle-inhibit] DBus error (inhibit): %s" (error-message-string err)))))))
+      ;; No agents busy — release inhibit if held
+      (when agent-shell-team--idle-inhibit-cookie
+        (let ((cookie agent-shell-team--idle-inhibit-cookie))
+          (setq agent-shell-team--idle-inhibit-cookie nil)
+          (condition-case err
+              (dbus-call-method-asynchronously
+               :session
+               "org.freedesktop.ScreenSaver"
+               "/org/freedesktop/ScreenSaver"
+               "org.freedesktop.ScreenSaver"
+               "UnInhibit"
+               (lambda (&rest _)
+                 (when agent-shell-team--session-id
+                   (agent-shell-team--log agent-shell-team--session-id
+                     (format "[idle-inhibit] Released screensaver inhibit (cookie=%s)" cookie))))
+               :uint32 cookie)
+            (dbus-error
+             (when agent-shell-team--session-id
+               (agent-shell-team--log agent-shell-team--session-id
+                 (format "[idle-inhibit] DBus error (uninhibit): %s" (error-message-string err)))))))))))
 
 (defun agent-shell-team--sync-idle-inhibit ()
   "Scan all registered agents, sync busy files with actual status.
