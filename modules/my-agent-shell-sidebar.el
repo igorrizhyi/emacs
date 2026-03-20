@@ -619,6 +619,46 @@ Returns non-nil if a retry was initiated, nil otherwise."
 (defvar-local my/team-sidebar--manually-collapsed nil
   "List of session IDs the user has manually collapsed.")
 
+(defvar-local my/team-sidebar--last-render-hash nil
+  "Content hash from last render, used to skip redundant timer re-renders.")
+
+(defvar-local my/team-sidebar--last-preview-buf nil
+  "Last buffer displayed by preview, to skip redundant `display-buffer' calls.")
+
+(defvar my/team-sidebar--preview-timer nil
+  "Debounce timer for preview during rapid j/k navigation.")
+
+(defun my/team-sidebar--compute-render-hash ()
+  "Compute a hash of key sidebar state to detect changes.
+Returns a string hash; cheap to compute."
+  (secure-hash
+   'md5
+   (format "%S|%S|%S|%S|%S|%S"
+           (when (and (boundp 'agent-shell-team--sessions)
+                      (hash-table-p agent-shell-team--sessions))
+             (let (entries)
+               (maphash
+                (lambda (sid agents)
+                  (push (cons sid
+                              (mapcar (lambda (a)
+                                        (cons (alist-get 'buffer a)
+                                              (when (fboundp 'agent-shell-team--agent-status)
+                                                (agent-shell-team--agent-status
+                                                 (alist-get 'buffer a)))))
+                                      agents))
+                        entries))
+                agent-shell-team--sessions)
+               entries))
+           (when (boundp 'agent-shell-team--task-queue)
+             (length agent-shell-team--task-queue))
+           (list my/team-sidebar--quota-5h-util
+                 my/team-sidebar--quota-7d-util
+                 my/team-sidebar--quota-error)
+           my/team-sidebar--foreign-agents
+           (when (boundp 'agent-shell-team--task-groups)
+             agent-shell-team--task-groups)
+           my/team-sidebar--history-cache)))
+
 ;;; ---- Utility ----------------------------------------------------------------
 
 (defun my/team-sidebar--lead-buffer-p (buf)
@@ -834,7 +874,14 @@ Returns t if anything was inserted, nil otherwise."
 
 (defun my/team-sidebar--insert-status ()
   "Insert team status content at point."
-  (let ((has-content nil))
+  (let ((has-content nil)
+        (buf-to-request (when (and (boundp 'agent-shell-team--request-to-buffer)
+                                   (hash-table-p agent-shell-team--request-to-buffer))
+                          (let ((ht (make-hash-table :test 'eq
+                                                     :size (hash-table-count agent-shell-team--request-to-buffer))))
+                            (maphash (lambda (k v) (puthash v k ht))
+                                     agent-shell-team--request-to-buffer)
+                            ht))))
     ;; Quota progress bars at the very top
     (when (my/team-sidebar--insert-quota)
       (setq has-content t))
@@ -876,11 +923,8 @@ Returns t if anything was inserted, nil otherwise."
                                   (line-end-position 0)
                                   'my/sidebar-agent agent)
                ;; Show current task for busy agents
-               (when (and (eq status 'busy)
-                          (boundp 'agent-shell-team--request-to-buffer))
-                 (let ((req-id (cl-loop for k being the hash-keys of agent-shell-team--request-to-buffer
-                                        using (hash-values v)
-                                        when (eq v buffer) return k)))
+               (when (and (eq status 'busy) buf-to-request)
+                 (let ((req-id (gethash buffer buf-to-request)))
                    (when req-id
                      (insert (format "    └ %s\n"
                                      (propertize req-id 'face 'font-lock-comment-face))))))))
@@ -1023,10 +1067,13 @@ Returns t if anything was inserted, nil otherwise."
     (when agent
       (let ((buf (alist-get 'buffer agent)))
         (when (buffer-live-p buf)
-          (let ((window-buffer-change-functions nil)
-                (window-selection-change-functions nil))
-            (display-buffer buf '(display-buffer-use-some-window
-                                  (inhibit-same-window . t)))))))))
+          (unless (eq buf my/team-sidebar--last-preview-buf)
+            (setq my/team-sidebar--last-preview-buf buf)
+            (let ((window-buffer-change-functions nil)
+                  (window-selection-change-functions nil)
+                  (window-configuration-change-hook nil))
+              (display-buffer buf '(display-buffer-use-some-window
+                                    (inhibit-same-window . t))))))))))
 
 (defun my/team-sidebar--task-at-point ()
   "Return the task plist at point, or nil."
@@ -1096,7 +1143,8 @@ Returns t if anything was inserted, nil otherwise."
       (let* ((report (plist-get task :report-path))
              (buf (cond
                    ((and report (file-readable-p report))
-                    (let ((b (find-file-noselect report)))
+                    (let ((b (or (find-buffer-visiting report)
+                                 (find-file-noselect report))))
                       (with-current-buffer b
                         (when (and (fboundp 'markdown-view-mode)
                                    (not (derived-mode-p 'markdown-view-mode)))
@@ -1104,16 +1152,27 @@ Returns t if anything was inserted, nil otherwise."
                       b))
                    (t (my/team-sidebar--render-task-preview task)))))
         (when buf
-          (let ((window-buffer-change-functions nil)
-                (window-selection-change-functions nil))
-            (display-buffer buf '(display-buffer-use-some-window
-                                  (inhibit-same-window . t)))))))))
+          (unless (eq buf my/team-sidebar--last-preview-buf)
+            (setq my/team-sidebar--last-preview-buf buf)
+            (let ((window-buffer-change-functions nil)
+                  (window-selection-change-functions nil)
+                  (window-configuration-change-hook nil))
+              (display-buffer buf '(display-buffer-use-some-window
+                                    (inhibit-same-window . t))))))))))
 
 (defun my/team-sidebar--preview-current ()
   "Preview either agent buffer or task report at point."
   (cond
    ((my/team-sidebar--agent-at-point) (my/team-sidebar--preview-agent))
    ((my/team-sidebar--task-at-point)  (my/team-sidebar--preview-task))))
+
+(defun my/team-sidebar--preview-current-debounced ()
+  "Debounced version of `my/team-sidebar--preview-current' (150ms delay).
+Cancels any pending preview timer before scheduling a new one."
+  (when (timerp my/team-sidebar--preview-timer)
+    (cancel-timer my/team-sidebar--preview-timer))
+  (setq my/team-sidebar--preview-timer
+        (run-with-timer 0.15 nil #'my/team-sidebar--preview-current)))
 
 (defun my/team-sidebar-next-item ()
   "Move to next navigable line (agent, task, or session header) and preview."
@@ -1125,7 +1184,7 @@ Returns t if anything was inserted, nil otherwise."
       (forward-line 1))
     (if (eobp)
         (goto-char start)
-      (my/team-sidebar--preview-current))))
+      (my/team-sidebar--preview-current-debounced))))
 
 (defun my/team-sidebar-prev-item ()
   "Move to previous navigable line (agent, task, or session header) and preview."
@@ -1138,7 +1197,7 @@ Returns t if anything was inserted, nil otherwise."
     (if (and (bobp)
              (not (my/team-sidebar--item-at-point-p)))
         (goto-char start)
-      (my/team-sidebar--preview-current))))
+      (my/team-sidebar--preview-current-debounced))))
 
 (defun my/team-sidebar-next-agent ()
   "Move to next agent line and preview its buffer."
@@ -1405,6 +1464,10 @@ Returns t if anything was inserted, nil otherwise."
   (let ((win (get-buffer-window my/team-sidebar-buffer-name t)))
     (when win
       (delete-window win)))
+  (let ((buf (get-buffer my/team-sidebar-buffer-name)))
+    (when (and buf (buffer-live-p buf))
+      (with-current-buffer buf
+        (setq my/team-sidebar--last-preview-buf nil))))
   (my/team-sidebar--stop-timer))
 
 (defun my/team-sidebar--set-window-params (win)
@@ -1491,10 +1554,16 @@ collapse into one toggle."
           (setq my/team-sidebar--refresh-timer nil))))))
 
 (defun my/team-sidebar--timer-refresh ()
-  "Timer callback: refresh if sidebar is visible."
+  "Timer callback: refresh if sidebar is visible, skip if content unchanged."
   (let ((win (get-buffer-window my/team-sidebar-buffer-name t)))
     (if win
-        (my/team-sidebar--render)
+        (let ((buf (get-buffer my/team-sidebar-buffer-name)))
+          (when (and buf (buffer-live-p buf))
+            (with-current-buffer buf
+              (let ((new-hash (my/team-sidebar--compute-render-hash)))
+                (unless (equal new-hash my/team-sidebar--last-render-hash)
+                  (setq my/team-sidebar--last-render-hash new-hash)
+                  (my/team-sidebar--render))))))
       ;; Sidebar not visible — stop timer
       (my/team-sidebar--stop-timer))))
 
@@ -1516,8 +1585,8 @@ collapse into one toggle."
     (lambda (&rest _)
       (when (and (boundp 'agent-shell-team--role)
                  (equal agent-shell-team--role "lead"))
-        (when (fboundp 'my/team-sidebar-refresh)
-          (my/team-sidebar-refresh))))))
+        (when (fboundp 'my/team-sidebar--render)
+          (my/team-sidebar--render))))))
 
 (provide 'my-agent-shell-sidebar)
 ;;; my-agent-shell-sidebar.el ends here
