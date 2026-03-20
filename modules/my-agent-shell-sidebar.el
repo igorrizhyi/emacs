@@ -333,6 +333,7 @@ Emacs instances share a single fetch per cycle."
              (> (- (float-time) my/team-sidebar--quota-fetch-started) 15))
     (setq my/team-sidebar--quota-fetching nil
           my/team-sidebar--quota-fetch-started nil
+          my/team-sidebar--quota-retry-p nil
           my/team-sidebar--quota-error "Fetch timeout"))
   (when my/team-sidebar--quota-fetching
     (cl-return-from my/team-sidebar--quota-fetch nil))
