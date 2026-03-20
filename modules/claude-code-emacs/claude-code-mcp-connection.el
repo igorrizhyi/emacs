@@ -95,7 +95,8 @@ Each value is an alist with keys:
   - connection-attempts: Number of connection attempts
   - ping-timer: Timer for periodic ping messages
   - ping-timeout-timer: Timer for ping timeout detection
-  - last-pong-time: Time of last received pong")
+  - last-pong-time: Time of last received pong
+  - reconnect-timer: Timer for pending reconnection attempt")
 
 (defun claude-code-mcp-make-instance-project-key (project-root)
   "Create instance-specific project key for PROJECT-ROOT.
@@ -172,7 +173,8 @@ Creates a new connection info structure with default values."
                      (cons 'connection-attempts 0)
                      (cons 'ping-timer nil)
                      (cons 'ping-timeout-timer nil)
-                     (cons 'last-pong-time nil))))
+                     (cons 'last-pong-time nil)
+                     (cons 'reconnect-timer nil))))
     (puthash instance-key info claude-code-mcp-project-connections)
     info))
 
@@ -212,6 +214,13 @@ to avoid stale websocket/timer state when a new MCP server replaces
 the old one (e.g., when multiple agents share the same project root)."
   (let* ((resolved-root (claude-code-mcp--resolve-main-project-root project-root))
          (normalized-root (claude-code-normalize-project-root resolved-root)))
+    ;; Cancel any pending reconnect timer to avoid duplicate connections
+    (when-let* ((info (claude-code-mcp-get-connection-info normalized-root))
+                (reconnect-timer (cdr (assoc 'reconnect-timer info))))
+      (when (timerp reconnect-timer)
+        (cancel-timer reconnect-timer)
+        (message "MCP: Cancelled pending reconnect timer for %s" normalized-root))
+      (setcdr (assoc 'reconnect-timer info) nil))
     ;; Clean up any existing connection before registering the new one
     (when (claude-code-mcp-get-connection-info normalized-root)
       (message "MCP: Closing existing connection for %s before registering new port %d"
@@ -223,7 +232,10 @@ the old one (e.g., when multiple agents share the same project root)."
     (let ((info (claude-code-mcp-get-connection-info normalized-root)))
       (setcdr (assoc 'port info) port))
     (message "MCP server registered on port %d for project %s" port normalized-root)
-    (claude-code-mcp-try-connect-async normalized-root port)))
+    ;; Delay connection to allow old WebSocket close frame to complete,
+    ;; avoiding MASK errors from close/connect frame collision
+    (run-at-time 0.1 nil
+                 #'claude-code-mcp-try-connect-async normalized-root port)))
 
 (defun claude-code-mcp-unregister-port (project-root)
   "Unregister the MCP port for PROJECT-ROOT and disconnect.
@@ -381,8 +393,9 @@ If CALLBACK is provided, call it with connection result."
          (port (cdr (assoc 'port info))))
     (when port
       (setcdr (assoc 'connection-attempts info) 0)
-      (run-at-time claude-code-mcp-connection-retry-delay nil
-                   #'claude-code-mcp-try-connect-async project-root port))))
+      (let ((timer (run-at-time claude-code-mcp-connection-retry-delay nil
+                                #'claude-code-mcp-try-connect-async project-root port)))
+        (setcdr (assoc 'reconnect-timer info) timer)))))
 
 ;;; Event notification functions
 
