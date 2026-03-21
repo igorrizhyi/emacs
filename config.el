@@ -33,6 +33,11 @@
 (require 'my-request-human)
 (require 'my-eshell-funcs)
 (require 'my-knowledge-browser)
+(add-hook 'markdown-mode-hook
+  (lambda ()
+    (when (and buffer-file-name
+               (string-match-p "/.agent-shell/knowledge/.*\\.md$" buffer-file-name))
+      (my/knowledge-browser-mode 1))))
 (after! eshell
   (require 'em-tramp)
   (setq eshell-history-size 10000
