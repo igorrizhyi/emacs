@@ -1167,19 +1167,50 @@ Fallback chain:
 1. .agent-shell/prompts/{role}-{mode}.md
 2. .agent-shell/prompts/{role}.md
 3. nil (no extra instructions)."
+  (when-let* ((path (agent-shell-team--prompt-file-path role mode)))
+    (when (file-readable-p path)
+      (with-temp-buffer
+        (insert-file-contents path)
+        (string-trim (buffer-string))))))
+
+(defun agent-shell-team--prompt-file-path (role mode)
+  "Return the prompt file path for ROLE and MODE, or nil if no project root.
+Uses the same fallback chain as `agent-shell-team--load-project-prompt':
+1. .agent-shell/prompts/{role}-{mode}.md if it exists
+2. .agent-shell/prompts/{role}.md otherwise (may not exist yet)."
   (when-let* ((root (agent-shell-worktree--git-repo-root))
               (prompts-dir (expand-file-name ".agent-shell/prompts/" root)))
-    (let ((specific (expand-file-name (format "%s-%s.md" role mode) prompts-dir))
-          (general (expand-file-name (format "%s.md" role) prompts-dir)))
-      (cond
-       ((file-readable-p specific)
-        (with-temp-buffer
-          (insert-file-contents specific)
-          (string-trim (buffer-string))))
-       ((file-readable-p general)
-        (with-temp-buffer
-          (insert-file-contents general)
-          (string-trim (buffer-string))))))))
+    (if mode
+        (let ((specific (expand-file-name (format "%s-%s.md" role mode) prompts-dir)))
+          (if (file-exists-p specific)
+              specific
+            (expand-file-name (format "%s.md" role) prompts-dir)))
+      (expand-file-name (format "%s.md" role) prompts-dir))))
+
+(defun agent-shell-team-open-agent-prompt ()
+  "Open (or create) the project-specific prompt file for the current agent's role.
+If the current buffer is a registered agent, uses its role and mode.
+Otherwise, prompts the user to pick a role."
+  (interactive)
+  (let (role mode)
+    ;; Try to find current buffer in session registry
+    (catch 'found
+      (maphash
+       (lambda (_session-id agents)
+         (dolist (agent agents)
+           (when (eq (alist-get 'buffer agent) (current-buffer))
+             (setq role (alist-get 'role agent)
+                   mode (alist-get 'mode agent))
+             (throw 'found t))))
+       agent-shell-team--sessions))
+    ;; Fallback: prompt user for role
+    (unless role
+      (setq role (completing-read "Role: " '("dev" "tester" "researcher" "lead") nil t)))
+    (if-let ((path (agent-shell-team--prompt-file-path role mode)))
+        (progn
+          (make-directory (file-name-directory path) t)
+          (find-file path))
+      (user-error "Cannot determine project root"))))
 
 (defun agent-shell-team--get-system-prompt (role mode session-id &optional worktree-path worktree-name working-dir)
   "Generate system prompt for ROLE in MODE within SESSION-ID.
