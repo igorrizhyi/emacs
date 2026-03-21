@@ -16,6 +16,19 @@
 (defvar-local my/knowledge-browser--overlays nil
   "Active fetch indicator overlays.")
 
+(defvar-local my/knowledge-browser--loading-timer nil
+  "Timer for the loading spinner animation.")
+
+(defvar-local my/knowledge-browser--loading-overlay nil
+  "Overlay displaying the loading spinner in the generated content area.")
+
+(defconst my/knowledge-browser--spinner-frames
+  '("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
+  "Braille spinner frames for loading animation.")
+
+(defvar-local my/knowledge-browser--spinner-index 0
+  "Current frame index for the loading spinner.")
+
 (defvar my/knowledge-browser-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "RET") #'my/execute-knowledge-query)
@@ -117,6 +130,90 @@ and the next heading of the same or higher level."
   (setq my/knowledge-browser--overlays
         (delq ov my/knowledge-browser--overlays)))
 
+;;;; Loading spinner
+
+(defun my/--kb-start-loading-spinner (buf heading-pos)
+  "Start a loading spinner in the generated content area at HEADING-POS in BUF.
+Clears existing content, inserts a spinner placeholder, and starts a timer."
+  (with-current-buffer buf
+    ;; Cancel any existing spinner first
+    (my/--kb-stop-loading-spinner)
+    (save-excursion
+      (let* ((hd (my/--kb-heading-at-pos heading-pos))
+             (level (car hd))
+             (sec-end (my/--kb-section-end level heading-pos))
+             (markers (my/--kb-find-generated-markers heading-pos sec-end)))
+        (if markers
+            ;; Clear existing content and insert placeholder
+            (let ((begin-end (save-excursion
+                               (goto-char (car markers))
+                               (end-of-line)
+                               (1+ (point))))
+                  (end-start (save-excursion
+                               (goto-char (cdr markers))
+                               (line-beginning-position))))
+              (goto-char begin-end)
+              (delete-region begin-end end-start)
+              (insert "\n")
+              ;; Place overlay on the blank line
+              (let ((ov (make-overlay (1- (point)) (point))))
+                (overlay-put ov 'display
+                             (propertize "⠋ Loading..."
+                                         'face '(:foreground "#e0a030" :slant italic)))
+                (overlay-put ov 'kb-loading t)
+                (setq my/knowledge-browser--loading-overlay ov)))
+          ;; No markers yet — create them with a placeholder
+          (goto-char heading-pos)
+          (let ((insert-pos heading-pos))
+            (forward-line 1)
+            (setq insert-pos (point))
+            (while (and (< (point) sec-end)
+                        (looking-at "^\\(<!--.*-->\\|\\s-*\\)$"))
+              (forward-line 1)
+              (setq insert-pos (point)))
+            (goto-char insert-pos)
+            (insert "\n<!-- BEGIN GENERATED -->\n\n<!-- END GENERATED -->\n")
+            ;; Place overlay on the blank line between markers
+            (forward-line -2)
+            (let ((ov (make-overlay (line-beginning-position) (line-end-position))))
+              (overlay-put ov 'display
+                           (propertize "⠋ Loading..."
+                                       'face '(:foreground "#e0a030" :slant italic)))
+              (overlay-put ov 'kb-loading t)
+              (setq my/knowledge-browser--loading-overlay ov))))))
+    ;; Start the animation timer
+    (setq my/knowledge-browser--spinner-index 0)
+    (setq my/knowledge-browser--loading-timer
+          (run-with-timer 0.25 0.25 #'my/--kb-spinner-tick buf))))
+
+(defun my/--kb-spinner-tick (buf)
+  "Advance the spinner animation in BUF by one frame."
+  (if (not (buffer-live-p buf))
+      (my/--kb-stop-loading-spinner)
+    (with-current-buffer buf
+      (let ((ov my/knowledge-browser--loading-overlay))
+        (if (or (null ov) (not (overlay-buffer ov)))
+            (my/--kb-stop-loading-spinner)
+          (setq my/knowledge-browser--spinner-index
+                (mod (1+ my/knowledge-browser--spinner-index)
+                     (length my/knowledge-browser--spinner-frames)))
+          (overlay-put ov 'display
+                       (propertize
+                        (format "%s Loading..."
+                                (nth my/knowledge-browser--spinner-index
+                                     my/knowledge-browser--spinner-frames))
+                        'face '(:foreground "#e0a030" :slant italic))))))))
+
+(defun my/--kb-stop-loading-spinner ()
+  "Stop the loading spinner and remove its overlay."
+  (when my/knowledge-browser--loading-timer
+    (cancel-timer my/knowledge-browser--loading-timer)
+    (setq my/knowledge-browser--loading-timer nil))
+  (when (and my/knowledge-browser--loading-overlay
+             (overlay-buffer my/knowledge-browser--loading-overlay))
+    (delete-overlay my/knowledge-browser--loading-overlay))
+  (setq my/knowledge-browser--loading-overlay nil))
+
 ;;;; Content injection
 
 (defun my/--kb-inject-content (buf heading-pos _section-end content)
@@ -172,6 +269,8 @@ or failure), CALLBACK is called with no arguments if non-nil."
          (sec-end (with-current-buffer buf
                     (let ((hd (my/--kb-heading-at-pos heading-pos)))
                       (my/--kb-section-end (car hd) heading-pos)))))
+    ;; Start the loading spinner in the content area
+    (my/--kb-start-loading-spinner buf heading-pos)
     (make-process
      :name "kb-query"
      :buffer proc-buf
@@ -183,16 +282,25 @@ or failure), CALLBACK is called with no arguments if non-nil."
      (lambda (process _event)
        (when (memq (process-status process) '(exit signal))
          (unwind-protect
-             (if (= (process-exit-status process) 0)
-                 (let ((output (with-current-buffer proc-buf
-                                 (buffer-string))))
-                   (if (buffer-live-p buf)
-                       (my/--kb-inject-content buf heading-pos sec-end output)
-                     (message "Knowledge browser: target buffer was killed")))
-               (message "Knowledge query failed (exit %d): %s"
-                        (process-exit-status process)
-                        (with-current-buffer proc-buf
-                          (string-trim (buffer-string)))))
+             (progn
+               ;; Stop the spinner before injecting content
+               (when (buffer-live-p buf)
+                 (with-current-buffer buf
+                   (my/--kb-stop-loading-spinner)))
+               (if (= (process-exit-status process) 0)
+                   (let ((output (with-current-buffer proc-buf
+                                   (buffer-string))))
+                     (if (buffer-live-p buf)
+                         (my/--kb-inject-content buf heading-pos sec-end output)
+                       (message "Knowledge browser: target buffer was killed")))
+                 (when (buffer-live-p buf)
+                   (my/--kb-inject-content buf heading-pos sec-end
+                                           (format "*Query failed (exit %d)*"
+                                                   (process-exit-status process))))
+                 (message "Knowledge query failed (exit %d): %s"
+                          (process-exit-status process)
+                          (with-current-buffer proc-buf
+                            (string-trim (buffer-string))))))
            (when (buffer-live-p buf)
              (with-current-buffer buf
                (my/--kb-remove-overlay ov)))
