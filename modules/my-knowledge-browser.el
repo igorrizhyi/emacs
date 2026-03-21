@@ -21,6 +21,7 @@
     (define-key map (kbd "RET") #'my/execute-knowledge-query)
     (define-key map (kbd "C-c C-k") #'my/knowledge-browser-clear-section)
     (define-key map (kbd "C-c C-K") #'my/knowledge-browser-clear-all)
+    (define-key map (kbd "C-c C-r") #'my/knowledge-browser-refresh-all)
     map)
   "Keymap for `my/knowledge-browser-mode'.")
 
@@ -160,6 +161,45 @@ _SECTION-END is ignored; section bounds are recalculated from the live buffer."
 
 ;;;; Query execution
 
+(defun my/--kb-execute-query-async (buf heading-pos query mode &optional callback)
+  "Execute QUERY for the section at HEADING-POS in BUF asynchronously.
+MODE is \"summary\" or \"technical\".  When the query completes (success
+or failure), CALLBACK is called with no arguments if non-nil."
+  (let* ((ov (with-current-buffer buf
+               (my/--kb-add-fetching-overlay heading-pos)))
+         (proc-buf (generate-new-buffer " *kb-query*"))
+         (default-directory (expand-file-name "knowledge-mcp-server/" doom-user-dir))
+         (sec-end (with-current-buffer buf
+                    (let ((hd (my/--kb-heading-at-pos heading-pos)))
+                      (my/--kb-section-end (car hd) heading-pos)))))
+    (make-process
+     :name "kb-query"
+     :buffer proc-buf
+     :command (list ".venv/bin/python" "query.py"
+                    "--mode" mode
+                    "--project-root" (expand-file-name doom-user-dir)
+                    query)
+     :sentinel
+     (lambda (process _event)
+       (when (memq (process-status process) '(exit signal))
+         (unwind-protect
+             (if (= (process-exit-status process) 0)
+                 (let ((output (with-current-buffer proc-buf
+                                 (buffer-string))))
+                   (if (buffer-live-p buf)
+                       (my/--kb-inject-content buf heading-pos sec-end output)
+                     (message "Knowledge browser: target buffer was killed")))
+               (message "Knowledge query failed (exit %d): %s"
+                        (process-exit-status process)
+                        (with-current-buffer proc-buf
+                          (string-trim (buffer-string)))))
+           (when (buffer-live-p buf)
+             (with-current-buffer buf
+               (my/--kb-remove-overlay ov)))
+           (kill-buffer proc-buf)
+           (when callback
+             (funcall callback))))))))
+
 (defun my/execute-knowledge-query ()
   "Execute the knowledge query for the section at point.
 Fetches content asynchronously and injects it into the buffer."
@@ -174,37 +214,53 @@ Fetches content asynchronously and injects it into the buffer."
            (mode (my/--kb-extract-mode hpos sec-end)))
       (unless query
         (user-error "No <!-- query: ... --> found in this section"))
-      (let* ((buf (current-buffer))
-             (ov (my/--kb-add-fetching-overlay hpos))
-             (proc-buf (generate-new-buffer " *kb-query*"))
-             (default-directory (expand-file-name "knowledge-mcp-server/" doom-user-dir))
-             (_proc (make-process
-                    :name "kb-query"
-                    :buffer proc-buf
-                    :command (list ".venv/bin/python" "query.py"
-                                   "--mode" mode
-                                   "--project-root" (expand-file-name doom-user-dir)
-                                   query)
-                    :sentinel
-                    (lambda (process _event)
-                      (when (memq (process-status process) '(exit signal))
-                        (unwind-protect
-                            (if (= (process-exit-status process) 0)
-                                (let ((output (with-current-buffer proc-buf
-                                                (buffer-string))))
-                                  (if (buffer-live-p buf)
-                                      (progn
-                                        (my/--kb-inject-content buf hpos sec-end output)
-                                        (message "Knowledge query complete."))
-                                    (message "Knowledge browser: target buffer was killed")))
-                              (message "Knowledge query failed (exit %d): %s"
-                                       (process-exit-status process)
-                                       (with-current-buffer proc-buf
-                                         (string-trim (buffer-string)))))
-                          (my/--kb-remove-overlay ov)
-                          (kill-buffer proc-buf)))))))
-        (message "Querying knowledge: %s..."
-                 (truncate-string-to-width query 50 nil nil t))))))
+      (my/--kb-execute-query-async (current-buffer) hpos query mode
+                                   (lambda () (message "Knowledge query complete.")))
+      (message "Querying knowledge: %s..."
+               (truncate-string-to-width query 50 nil nil t)))))
+
+;;;; Batch refresh
+
+(defun my/--kb-collect-sections ()
+  "Collect all query sections in the current buffer.
+Returns a list of (HEADING-TEXT HEADING-POS QUERY MODE)."
+  (save-excursion
+    (goto-char (point-min))
+    (let (sections)
+      (while (re-search-forward "^\\(#+\\) \\(.+\\)$" nil t)
+        (let* ((level (length (match-string 1)))
+               (heading-text (match-string 2))
+               (hpos (line-beginning-position))
+               (sec-end (my/--kb-section-end level hpos))
+               (query (my/--kb-extract-query hpos sec-end)))
+          (when query
+            (let ((mode (my/--kb-extract-mode hpos sec-end)))
+              (push (list heading-text hpos query mode) sections)))))
+      (nreverse sections))))
+
+(defun my/--kb-refresh-chain (buf sections index total)
+  "Refresh SECTIONS starting at INDEX in BUF.  TOTAL is for progress display."
+  (if (>= index (length sections))
+      (message "All %d sections refreshed." total)
+    (let* ((section (nth index sections))
+           (heading-text (nth 0 section))
+           (hpos (nth 1 section))
+           (query (nth 2 section))
+           (mode (nth 3 section)))
+      (message "Refreshing section %d/%d: %s..." (1+ index) total heading-text)
+      (my/--kb-execute-query-async
+       buf hpos query mode
+       (lambda ()
+         (my/--kb-refresh-chain buf sections (1+ index) total))))))
+
+(defun my/knowledge-browser-refresh-all ()
+  "Refresh all knowledge sections in the current buffer sequentially."
+  (interactive)
+  (let ((sections (my/--kb-collect-sections)))
+    (if (null sections)
+        (user-error "No query sections found in buffer")
+      (message "Refreshing %d sections..." (length sections))
+      (my/--kb-refresh-chain (current-buffer) sections 0 (length sections)))))
 
 ;;;; Clear functions
 
