@@ -109,7 +109,7 @@
 (defun my/register-browsed-project-advice (orig-fn &rest args)
   "Register project after browsing to it."
   (let ((result (apply orig-fn args)))
-    (when-let ((project-root (projectile-project-root)))
+    (when-let ((project-root (projectile-project-root default-directory)))
       (projectile-add-known-project project-root)
       (message "Registered project: %s" project-root))
     result))
@@ -118,35 +118,21 @@
 (setq projectile-indexing-method 'alien)
 (setq projectile-require-project-root nil)
 
-;; Manual project control - completely disable automatic project detection
+;; Pin doom config as the project root for buffers inside ~/.config/doom
 (after! projectile
   (remove-hook 'find-file-hook #'projectile-find-file-hook-function)
 
-  ;; Store manually set project
-  (defvar my/manual-project-root nil "Manually set project root.")
+  (defvar my/doom-config-root (expand-file-name "~/.config/doom/")
+    "Doom config directory, pinned as project root for buffers inside it.")
 
-  ;; Store the locked project root
-  (setq my/manual-project-root (when (projectile-project-p) (projectile-project-root)))
-
-  ;; Simple override: return locked project for buffer-local queries
   (advice-add 'projectile-project-root :around
               (lambda (orig-fn &optional dir)
-                (if (and my/manual-project-root (not dir))
-                    my/manual-project-root
-                  (funcall orig-fn dir))))
-
-  ;; Hook into project switching to update our locked project BEFORE switch action runs
-  (advice-add 'projectile-switch-project-by-name :before
-              (lambda (project-to-switch &optional arg)
-                (setq my/manual-project-root project-to-switch)
-                (message "Locked project to: %s" project-to-switch)))
-
-  ;; Function to manually change project
-  (defun my/set-project-root (dir)
-    "Manually set the project root."
-    (interactive "DProject root: ")
-    (setq my/manual-project-root (expand-file-name dir))
-    (message "Project root set to: %s" my/manual-project-root)))
+                (if (and (not dir)
+                         (string-prefix-p my/doom-config-root
+                                          (expand-file-name
+                                           (or buffer-file-name default-directory ""))))
+                    my/doom-config-root
+                  (funcall orig-fn dir)))))
 
 ;; Disable Doom's workspace switching on file open
 (after! persp-mode
