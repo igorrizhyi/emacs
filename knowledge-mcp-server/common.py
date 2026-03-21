@@ -53,7 +53,8 @@ def _derive_graph_name(project_root: str, namespace: str = None) -> str:
         return f"knowledge_{safe_ns}"
     if not project_root:
         return "team_knowledge"  # backward compat fallback
-    basename = os.path.basename(project_root.rstrip("/")) or "default"
+    project_root = project_root.rstrip("/")
+    basename = os.path.basename(project_root) or "default"
     safe_base = re.sub(r'[^a-zA-Z0-9]', '_', basename).strip('_').lower()
     short_hash = hashlib.sha256(project_root.encode()).hexdigest()[:6]
     return f"knowledge_{safe_base}_{short_hash}"
@@ -66,7 +67,7 @@ GRAPH_NAME = _derive_graph_name(PROJECT_ROOT, NAMESPACE)
 def set_graph_name(project_root: str, namespace: str = None):
     """Recalculate and set the module-level GRAPH_NAME from a project root path."""
     global GRAPH_NAME, PROJECT_ROOT, NAMESPACE
-    PROJECT_ROOT = project_root
+    PROJECT_ROOT = project_root.rstrip("/") if project_root else project_root
     NAMESPACE = namespace or _resolve_namespace()
     GRAPH_NAME = _derive_graph_name(project_root, NAMESPACE)
 
