@@ -223,85 +223,25 @@ UTIL-5H, UTIL-7D are floats; RESET-5H, RESET-7D are unix timestamps."
     (setq my/team-sidebar--quota-error nil))
   (my/team-sidebar--render))
 
-;;; ---- OAuth Token Refresh ---------------------------------------------------
+;;; ---- Circuit Breaker -------------------------------------------------------
 
-(cl-defun my/team-sidebar--refresh-token (callback)
-  "Refresh the OAuth access token asynchronously.
-CALLBACK is called with the new access token on success, or nil on failure.
-Reads the refresh token from ~/.claude/.credentials.json, posts to the
-OAuth token endpoint, and atomically updates the credentials file."
-  (condition-case err
-      (let* ((cred-file (expand-file-name "~/.claude/.credentials.json"))
-             (json-object-type 'alist)
-             (json-key-type 'symbol)
-             (creds (json-read-file cred-file))
-             (oauth (alist-get 'claudeAiOauth creds))
-             (refresh-token (alist-get 'refreshToken oauth)))
-        (unless refresh-token
-          (funcall callback nil)
-          (cl-return-from my/team-sidebar--refresh-token nil))
-        (let ((url-request-method "POST")
-              (url-request-extra-headers
-               '(("Content-Type" . "application/json")
-                 ("Authorization" . "Bearer none")))
-              (url-request-data
-               (encode-coding-string
-                (json-encode
-                 `((grant_type . "refresh_token")
-                   (refresh_token . ,refresh-token)
-                   (client_id . "9d1c250a-e61b-44d9-88ed-5944d1962f5e")
-                   (scope . "user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload")))
-                'utf-8)))
-          (url-retrieve
-           "https://platform.claude.com/v1/oauth/token"
-           (lambda (status)
-             (my/team-sidebar--refresh-token-callback status callback))
-           nil t t)))
-    (error
-     (message "OAuth refresh error: %s" err)
-     (funcall callback nil))))
+(defvar my/team-sidebar--quota-consecutive-failures 0
+  "Count of consecutive quota fetch failures for exponential backoff.")
 
-(defun my/team-sidebar--refresh-token-callback (status callback)
-  "Handle OAuth token refresh response.
-STATUS is the url-retrieve status plist. CALLBACK receives the new token or nil."
-  (condition-case err
-      (if (plist-get status :error)
-          (progn
-            (message "OAuth refresh failed: %s" (plist-get status :error))
-            (funcall callback nil))
-        (goto-char (point-min))
-        (re-search-forward "\n\n" nil t)
-        (let* ((json-object-type 'alist)
-               (json-key-type 'symbol)
-               (resp (json-read))
-               (new-access (alist-get 'access_token resp))
-               (new-refresh (alist-get 'refresh_token resp))
-               (expires-in (alist-get 'expires_in resp)))
-          (if (not new-access)
-              (progn
-                (message "OAuth refresh: no access_token in response")
-                (funcall callback nil))
-            (let* ((new-expires-at (floor (* (+ (float-time) expires-in) 1000)))
-                   (cred-file (expand-file-name "~/.claude/.credentials.json"))
-                   (json-object-type 'alist)
-                   (json-key-type 'symbol)
-                   (creds (json-read-file cred-file))
-                   (oauth (alist-get 'claudeAiOauth creds)))
-              (setf (alist-get 'accessToken oauth) new-access)
-              (when new-refresh
-                (setf (alist-get 'refreshToken oauth) new-refresh))
-              (setf (alist-get 'expiresAt oauth) new-expires-at)
-              (setf (alist-get 'claudeAiOauth creds) oauth)
-              (let ((tmp-file (concat cred-file ".tmp")))
-                (with-temp-file tmp-file
-                  (insert (json-encode creds)))
-                (rename-file tmp-file cred-file t))
-              (funcall callback new-access)))))
-    (error
-     (message "OAuth refresh parse error: %s" err)
-     (funcall callback nil)))
-  (when (buffer-live-p (current-buffer))
-    (kill-buffer (current-buffer))))
+(defvar my/team-sidebar--quota-backoff-until 0
+  "Unix timestamp until which quota fetches are skipped (backoff).")
+
+(defun my/team-sidebar--quota-record-failure ()
+  "Increment failure counter and set backoff timer."
+  (cl-incf my/team-sidebar--quota-consecutive-failures)
+  (setq my/team-sidebar--quota-backoff-until
+        (+ (float-time)
+           (* 30 (expt 2 (min my/team-sidebar--quota-consecutive-failures 5))))))
+
+(defun my/team-sidebar--quota-reset-backoff ()
+  "Reset circuit breaker state (on success or fresh token)."
+  (setq my/team-sidebar--quota-consecutive-failures 0
+        my/team-sidebar--quota-backoff-until 0))
 
 ;;; ---- Quota API -------------------------------------------------------------
 
@@ -334,10 +274,25 @@ Lightweight check to avoid doomed fetches after suspend/resume."
 (cl-defun my/team-sidebar--quota-fetch ()
   "Fetch quota utilization, using shared file cache when fresh.
 Only makes an API call if the cache is stale or missing, so multiple
-Emacs instances share a single fetch per cycle."
+Emacs instances share a single fetch per cycle.
+Respects circuit breaker backoff and detects CLI-refreshed tokens."
   ;; Skip fetch when network is unavailable (e.g. right after suspend/resume)
   (unless (my/team-sidebar--network-available-p)
     (cl-return-from my/team-sidebar--quota-fetch nil))
+  ;; Circuit breaker: skip if in backoff period
+  (when (> my/team-sidebar--quota-backoff-until (float-time))
+    (let ((remaining (ceiling (- my/team-sidebar--quota-backoff-until (float-time)))))
+      ;; But first check if token changed — a fresh token resets backoff
+      (let ((token (my/team-sidebar--quota-read-token)))
+        (if (and token my/team-sidebar--quota-last-token
+                 (not (equal token my/team-sidebar--quota-last-token)))
+            ;; Token changed while in backoff — CLI refreshed it, reset and proceed
+            (my/team-sidebar--quota-reset-backoff)
+          ;; Still in backoff with same token
+          (setq my/team-sidebar--quota-error
+                (format "Backing off (%dm%ds until retry)"
+                        (/ remaining 60) (mod remaining 60)))
+          (cl-return-from my/team-sidebar--quota-fetch nil)))))
   ;; Timeout recovery: if a fetch has been running > 15s, force-clear the guard
   (when (and my/team-sidebar--quota-fetching
              my/team-sidebar--quota-fetch-started
@@ -345,7 +300,8 @@ Emacs instances share a single fetch per cycle."
     (setq my/team-sidebar--quota-fetching nil
           my/team-sidebar--quota-fetch-started nil
           my/team-sidebar--quota-retry-p nil
-          my/team-sidebar--quota-error "Fetch timeout"))
+          my/team-sidebar--quota-error "Fetch timeout")
+    (my/team-sidebar--quota-record-failure))
   (when my/team-sidebar--quota-fetching
     (cl-return-from my/team-sidebar--quota-fetch nil))
   ;; Check shared cache first
@@ -355,16 +311,12 @@ Emacs instances share a single fetch per cycle."
       (cl-return-from my/team-sidebar--quota-fetch nil)))
   ;; Cache miss — do the actual API call
   (let ((token (my/team-sidebar--quota-read-token)))
-    (if token
-        (my/team-sidebar--quota-do-fetch token)
-      ;; Token expired or near-expiry — refresh then fetch
-      (my/team-sidebar--refresh-token
-       (lambda (new-token)
-         (if new-token
-             (my/team-sidebar--quota-do-fetch new-token)
-           (setq my/team-sidebar--quota-error "Token refresh failed"
-                 my/team-sidebar--quota-fetching nil
-                 my/team-sidebar--quota-fetch-started nil)))))))
+    (when token
+      ;; Detect token change — if CLI refreshed the token, reset circuit breaker
+      (when (and my/team-sidebar--quota-last-token
+                 (not (equal token my/team-sidebar--quota-last-token)))
+        (my/team-sidebar--quota-reset-backoff))
+      (my/team-sidebar--quota-do-fetch token))))
 
 (defun my/team-sidebar--quota-do-fetch (token)
   "Perform the actual quota API call using TOKEN.
@@ -394,7 +346,8 @@ Sets fetching guards and stores TOKEN for 401 comparison."
     (error
      (setq my/team-sidebar--quota-fetching nil
            my/team-sidebar--quota-fetch-started nil
-           my/team-sidebar--quota-error (format "%s" err)))))
+           my/team-sidebar--quota-error (format "%s" err))
+     (my/team-sidebar--quota-record-failure))))
 
 (defun my/team-sidebar--quota-get-http-status ()
   "Extract HTTP status code from the current url-retrieve response buffer.
@@ -405,8 +358,9 @@ Returns the status as an integer, or nil if not found."
       (string-to-number (match-string 1)))))
 
 (defun my/team-sidebar--quota-handle-401 ()
-  "Handle 401 response by refreshing credentials and retrying.
-Returns non-nil if a retry was initiated, nil otherwise."
+  "Handle 401 response by re-reading credentials and retrying once.
+Returns non-nil if a retry was initiated, nil otherwise.
+Does NOT attempt OAuth refresh — the CLI handles token refresh."
   (when (buffer-live-p (current-buffer))
     (kill-buffer (current-buffer)))
   (if my/team-sidebar--quota-retry-p
@@ -416,26 +370,24 @@ Returns non-nil if a retry was initiated, nil otherwise."
               my/team-sidebar--quota-fetch-started nil
               my/team-sidebar--quota-retry-p nil
               my/team-sidebar--quota-error "Auth failed after retry")
+        (my/team-sidebar--quota-record-failure)
         (my/team-sidebar--render)
         nil)
     (setq my/team-sidebar--quota-retry-p t)
-    ;; Re-read credentials in case CLI already refreshed
+    ;; Re-read credentials in case CLI already refreshed the token
     (let ((fresh-token (my/team-sidebar--quota-read-token)))
       (if (and fresh-token
                (not (equal fresh-token my/team-sidebar--quota-last-token)))
-          ;; CLI refreshed the token — retry immediately
-          (my/team-sidebar--quota-do-fetch fresh-token)
-        ;; Same token or nil — do our own refresh
-        (my/team-sidebar--refresh-token
-         (lambda (new-token)
-           (if new-token
-               (my/team-sidebar--quota-do-fetch new-token)
-             (setq my/team-sidebar--quota-fetching nil
-                   my/team-sidebar--quota-fetch-started nil
-                   my/team-sidebar--quota-retry-p nil
-                   my/team-sidebar--quota-error "Token refresh failed")
-             (my/team-sidebar--render))))))
-    t))
+          ;; Token changed (CLI refreshed it) — retry with fresh token
+          (progn (my/team-sidebar--quota-do-fetch fresh-token) t)
+        ;; Same token or nil — cannot recover without OAuth refresh
+        (setq my/team-sidebar--quota-fetching nil
+              my/team-sidebar--quota-fetch-started nil
+              my/team-sidebar--quota-retry-p nil
+              my/team-sidebar--quota-error "Auth failed (awaiting CLI refresh)")
+        (my/team-sidebar--quota-record-failure)
+        (my/team-sidebar--render)
+        nil))))
 
 (cl-defun my/team-sidebar--quota-callback (status)
   "Handle quota API response. STATUS is the url-retrieve status plist."
@@ -447,7 +399,8 @@ Returns non-nil if a retry was initiated, nil otherwise."
                   (cl-return-from my/team-sidebar--quota-callback nil))
               (setq my/team-sidebar--quota-fetching nil
                     my/team-sidebar--quota-fetch-started nil
-                    my/team-sidebar--quota-error "API error")))
+                    my/team-sidebar--quota-error "API error")
+              (my/team-sidebar--quota-record-failure)))
         ;; Check HTTP status even when url-retrieve doesn't report :error
         (let ((http-status (my/team-sidebar--quota-get-http-status)))
           (when (eq http-status 401)
@@ -470,13 +423,15 @@ Returns non-nil if a retry was initiated, nil otherwise."
                 my/team-sidebar--quota-fetch-started nil
                 my/team-sidebar--quota-error nil
                 my/team-sidebar--quota-retry-p nil)
+          (my/team-sidebar--quota-reset-backoff)
           ;; Write to shared cache so other instances can skip the API call
           (my/team-sidebar--quota-cache-write
            my/team-sidebar--quota-5h-util my/team-sidebar--quota-7d-util
            my/team-sidebar--quota-5h-reset my/team-sidebar--quota-7d-reset)))
     (error (setq my/team-sidebar--quota-fetching nil
                  my/team-sidebar--quota-fetch-started nil
-                 my/team-sidebar--quota-error "Parse error")))
+                 my/team-sidebar--quota-error "Parse error")
+           (my/team-sidebar--quota-record-failure)))
   (when (buffer-live-p (current-buffer))
     (kill-buffer (current-buffer)))
   ;; Trigger sidebar re-render
@@ -1453,6 +1408,8 @@ Cancels any pending preview timer before scheduling a new one."
                     (dedicated . t)))))
         (when win
           (my/team-sidebar--set-window-params win))))
+    ;; Reset circuit breaker when sidebar is shown/toggled
+    (my/team-sidebar--quota-reset-backoff)
     ;; Start refresh timers
     (my/team-sidebar--ensure-timer)
     (my/team-sidebar--quota-ensure-timer)
