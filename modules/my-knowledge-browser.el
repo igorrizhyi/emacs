@@ -51,7 +51,7 @@ This is the position just before the next heading of same or higher level, or `p
   (save-excursion
     (goto-char heading-pos)
     (forward-line 1)
-    (let ((pattern (format "^\\(#{1,%d}\\) " heading-level)))
+    (let ((pattern (format "^\\(#\\{1,%d\\}\\) " heading-level)))
       (if (re-search-forward pattern nil t)
           (line-beginning-position)
         (point-max)))))
