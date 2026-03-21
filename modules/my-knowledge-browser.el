@@ -265,7 +265,9 @@ or failure), CALLBACK is called with no arguments if non-nil."
   (let* ((ov (with-current-buffer buf
                (my/--kb-add-fetching-overlay heading-pos)))
          (proc-buf (generate-new-buffer " *kb-query*"))
-         (default-directory (expand-file-name "knowledge-mcp-server/" doom-user-dir))
+         (server-dir (expand-file-name "knowledge-mcp-server/" doom-user-dir))
+         (python-bin (expand-file-name ".venv/bin/python" server-dir))
+         (query-script (expand-file-name "query.py" server-dir))
          (sec-end (with-current-buffer buf
                     (let ((hd (my/--kb-heading-at-pos heading-pos)))
                       (my/--kb-section-end (car hd) heading-pos)))))
@@ -274,7 +276,7 @@ or failure), CALLBACK is called with no arguments if non-nil."
     (make-process
      :name "kb-query"
      :buffer proc-buf
-     :command (list ".venv/bin/python" "query.py"
+     :command (list python-bin query-script
                     "--mode" mode
                     "--project-root" (expand-file-name doom-user-dir)
                     query)
