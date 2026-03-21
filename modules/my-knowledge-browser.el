@@ -273,7 +273,7 @@ or failure), CALLBACK is called with no arguments if non-nil."
                       (my/--kb-section-end (car hd) heading-pos)))))
     ;; Start the loading spinner in the content area
     (my/--kb-start-loading-spinner buf heading-pos)
-    (let* ((project-root (directory-file-name (expand-file-name doom-user-dir)))
+    (let* ((project-root (directory-file-name (file-truename doom-user-dir)))
            (cmd (list python-bin query-script
                       "--mode" mode
                       "--project-root" project-root
