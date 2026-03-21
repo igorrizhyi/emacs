@@ -36,6 +36,18 @@
 (require 'agent-shell)
 (require 'agent-shell-worktree)
 (require 'agent-shell-emacs-mcp)
+
+;; Override: resolve through worktrees to always get the MAIN repo root.
+;; The upstream version uses --show-toplevel which returns the worktree's own
+;; root when called from inside a worktree, causing nested worktree creation.
+(defun agent-shell-worktree--git-repo-root ()
+  "Return the root of the MAIN git working tree, resolving through worktrees."
+  (when-let* ((common-dir (string-trim (shell-command-to-string
+                            "git rev-parse --path-format=absolute --git-common-dir 2>/dev/null")))
+              (_ (not (string-empty-p common-dir)))
+              (parent (file-name-directory (directory-file-name common-dir))))
+    (when (string-suffix-p "/.git/" (file-name-as-directory common-dir))
+      parent)))
 (require 'acp)
 (require 'dbus)
 (require 'transient)
@@ -602,6 +614,13 @@ Return (worktree-path . worktree-name)."
                                      wt-name))))
     (unless repo-root
       (user-error "Not in a git repository"))
+    ;; Guard against nesting: verify we're creating from the main repo root
+    (let* ((toplevel (string-trim (shell-command-to-string
+                                   "git rev-parse --show-toplevel 2>/dev/null"))))
+      (unless (string= (file-truename toplevel)
+                        (file-truename repo-root))
+        (error "Refusing to create worktree: CWD is inside worktree %s, not main repo %s"
+               toplevel repo-root)))
     ;; Create parent directory if needed
     (make-directory (file-name-directory wt-path) t)
     ;; Create the worktree
@@ -1573,7 +1592,14 @@ Only the lead role may call this.  Returns an alist with success/message."
     (let ((default-directory (file-name-parent-directory worktree-path)))
       (shell-command-to-string
        (format "git worktree remove --force %s 2>&1"
-               (shell-quote-argument worktree-path))))))
+               (shell-quote-argument worktree-path)))
+      ;; Verify removal — fallback to delete-directory + prune if git failed
+      (when (file-directory-p worktree-path)
+        (agent-shell-team--log session-id
+         (format "[cleanup] WARNING: git worktree remove failed for %s, falling back to delete-directory"
+                 worktree-path))
+        (delete-directory worktree-path t)
+        (shell-command-to-string "git worktree prune 2>&1")))))
 
 ;;; Task queue — enqueue, assign, group tracking
 
@@ -1816,7 +1842,12 @@ Route the status update directly to the lead agent's queue."
 Devs and testers get isolated mode (worktree).
 Researchers get neighbor mode.
 Returns the new agent buffer."
-  (let* ((mode (if (member role '("dev" "tester")) "isolated" "neighbor"))
+  ;; Pin default-directory to the main repo root so git commands in
+  ;; create-worktree always run from the correct context, not from
+  ;; an agent's worktree CWD.
+  (let* ((default-directory (or (agent-shell-worktree--git-repo-root)
+                                default-directory))
+         (mode (if (member role '("dev" "tester")) "isolated" "neighbor"))
          worktree-path worktree-name directory)
     (pcase mode
       ("isolated"
@@ -2283,7 +2314,13 @@ Also removes the git worktree if the agent was in isolated mode."
         (let ((default-directory (file-name-parent-directory worktree-path)))
           (shell-command-to-string
            (format "git worktree remove --force %s 2>&1"
-                   (shell-quote-argument worktree-path))))))))
+                   (shell-quote-argument worktree-path)))
+          ;; Verify removal — fallback to delete-directory + prune if git failed
+          (when (file-directory-p worktree-path)
+            (message "[agent-shell-team] WARNING: git worktree remove failed for %s, falling back to delete-directory"
+                     worktree-path)
+            (delete-directory worktree-path t)
+            (shell-command-to-string "git worktree prune 2>&1")))))))
 
 (add-hook 'kill-buffer-hook #'agent-shell-team--buffer-kill-hook)
 
