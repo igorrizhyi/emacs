@@ -305,5 +305,12 @@ Returns a list of (HEADING-TEXT HEADING-POS QUERY MODE)."
         (save-buffer)
         (message "Cleared %d section(s)." count)))))
 
+(add-hook 'markdown-mode-hook
+          (defun my/--kb-maybe-enable ()
+            "Enable knowledge browser mode for knowledge index files."
+            (when (and buffer-file-name
+                       (string-match-p "/\\.agent-shell/knowledge/.*\\.md\\'" buffer-file-name))
+              (my/knowledge-browser-mode 1))))
+
 (provide 'my-knowledge-browser)
 ;;; my-knowledge-browser.el ends here
