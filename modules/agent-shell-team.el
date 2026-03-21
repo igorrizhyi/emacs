@@ -1161,16 +1161,41 @@ Line numbers are OK as supplementary info in reports, but knowledge discoveries
 must use stable anchors that survive file changes."
           session-id working-dir))
 
+(defun agent-shell-team--load-project-prompt (role mode)
+  "Load project-specific prompt for ROLE and MODE from .agent-shell/prompts/.
+Fallback chain:
+1. .agent-shell/prompts/{role}-{mode}.md
+2. .agent-shell/prompts/{role}.md
+3. nil (no extra instructions)."
+  (when-let* ((root (agent-shell-worktree--git-repo-root))
+              (prompts-dir (expand-file-name ".agent-shell/prompts/" root)))
+    (let ((specific (expand-file-name (format "%s-%s.md" role mode) prompts-dir))
+          (general (expand-file-name (format "%s.md" role) prompts-dir)))
+      (cond
+       ((file-readable-p specific)
+        (with-temp-buffer
+          (insert-file-contents specific)
+          (string-trim (buffer-string))))
+       ((file-readable-p general)
+        (with-temp-buffer
+          (insert-file-contents general)
+          (string-trim (buffer-string))))))))
+
 (defun agent-shell-team--get-system-prompt (role mode session-id &optional worktree-path worktree-name working-dir)
   "Generate system prompt for ROLE in MODE within SESSION-ID.
 WORKTREE-PATH, WORKTREE-NAME, WORKING-DIR depend on role/mode."
-  (pcase role
-    ("lead" (agent-shell-team--lead-prompt session-id))
-    ("dev" (agent-shell-team--dev-prompt session-id worktree-path worktree-name))
-    ("tester" (pcase mode
-                ("isolated" (agent-shell-team--tester-isolated-prompt session-id worktree-path))
-                (_ (agent-shell-team--tester-neighbor-prompt session-id (or working-dir default-directory)))))
-    ("researcher" (agent-shell-team--researcher-prompt session-id (or working-dir default-directory)))))
+  (let ((base-prompt
+         (pcase role
+           ("lead" (agent-shell-team--lead-prompt session-id))
+           ("dev" (agent-shell-team--dev-prompt session-id worktree-path worktree-name))
+           ("tester" (pcase mode
+                       ("isolated" (agent-shell-team--tester-isolated-prompt session-id worktree-path))
+                       (_ (agent-shell-team--tester-neighbor-prompt session-id (or working-dir default-directory)))))
+           ("researcher" (agent-shell-team--researcher-prompt session-id (or working-dir default-directory)))))
+        (project-prompt (agent-shell-team--load-project-prompt role mode)))
+    (if project-prompt
+        (concat base-prompt "\n\n## Project-Specific Instructions\n" project-prompt)
+      base-prompt)))
 
 ;;; Doom modeline integration
 
