@@ -273,42 +273,57 @@ or failure), CALLBACK is called with no arguments if non-nil."
                       (my/--kb-section-end (car hd) heading-pos)))))
     ;; Start the loading spinner in the content area
     (my/--kb-start-loading-spinner buf heading-pos)
-    (make-process
-     :name "kb-query"
-     :buffer proc-buf
-     :command (list python-bin query-script
-                    "--mode" mode
-                    "--project-root" (directory-file-name (expand-file-name doom-user-dir))
-                    query)
-     :sentinel
-     (lambda (process _event)
-       (when (memq (process-status process) '(exit signal))
-         (unwind-protect
-             (progn
-               ;; Stop the spinner before injecting content
+    (let* ((project-root (directory-file-name (expand-file-name doom-user-dir)))
+           (cmd (list python-bin query-script
+                      "--mode" mode
+                      "--project-root" project-root
+                      query))
+           (stderr-buf (generate-new-buffer " *kb-query-stderr*")))
+      (message "KB query command: %s" (mapconcat #'shell-quote-argument cmd " "))
+      (message "KB query: text=%S mode=%S project-root=%S" query mode project-root)
+      (make-process
+       :name "kb-query"
+       :buffer proc-buf
+       :stderr stderr-buf
+       :command cmd
+       :sentinel
+       (lambda (process _event)
+         (when (memq (process-status process) '(exit signal))
+           (let ((exit-code (process-exit-status process)))
+             (message "KB query exit code: %d" exit-code)
+             (when (buffer-live-p stderr-buf)
+               (let ((stderr-output (with-current-buffer stderr-buf
+                                      (string-trim (buffer-string)))))
+                 (when (> (length stderr-output) 0)
+                   (message "KB query stderr:\n%s" stderr-output))))
+             (unwind-protect
+                 (progn
+                   ;; Stop the spinner before injecting content
+                   (when (buffer-live-p buf)
+                     (with-current-buffer buf
+                       (my/--kb-stop-loading-spinner)))
+                   (if (= exit-code 0)
+                       (let ((output (with-current-buffer proc-buf
+                                       (buffer-string))))
+                         (if (buffer-live-p buf)
+                             (my/--kb-inject-content buf heading-pos sec-end output)
+                           (message "Knowledge browser: target buffer was killed")))
+                     (when (buffer-live-p buf)
+                       (my/--kb-inject-content buf heading-pos sec-end
+                                               (format "*Query failed (exit %d)*"
+                                                       exit-code)))
+                     (message "Knowledge query failed (exit %d): %s"
+                              exit-code
+                              (with-current-buffer proc-buf
+                                (string-trim (buffer-string))))))
                (when (buffer-live-p buf)
                  (with-current-buffer buf
-                   (my/--kb-stop-loading-spinner)))
-               (if (= (process-exit-status process) 0)
-                   (let ((output (with-current-buffer proc-buf
-                                   (buffer-string))))
-                     (if (buffer-live-p buf)
-                         (my/--kb-inject-content buf heading-pos sec-end output)
-                       (message "Knowledge browser: target buffer was killed")))
-                 (when (buffer-live-p buf)
-                   (my/--kb-inject-content buf heading-pos sec-end
-                                           (format "*Query failed (exit %d)*"
-                                                   (process-exit-status process))))
-                 (message "Knowledge query failed (exit %d): %s"
-                          (process-exit-status process)
-                          (with-current-buffer proc-buf
-                            (string-trim (buffer-string))))))
-           (when (buffer-live-p buf)
-             (with-current-buffer buf
-               (my/--kb-remove-overlay ov)))
-           (kill-buffer proc-buf)
-           (when callback
-             (funcall callback))))))))
+                   (my/--kb-remove-overlay ov)))
+               (kill-buffer proc-buf)
+               (when (buffer-live-p stderr-buf)
+                 (kill-buffer stderr-buf))
+               (when callback
+                 (funcall callback))))))))))
 
 (defun my/execute-knowledge-query ()
   "Execute the knowledge query for the section at point.
