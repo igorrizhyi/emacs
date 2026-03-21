@@ -278,7 +278,7 @@ or failure), CALLBACK is called with no arguments if non-nil."
      :buffer proc-buf
      :command (list python-bin query-script
                     "--mode" mode
-                    "--project-root" (expand-file-name doom-user-dir)
+                    "--project-root" (directory-file-name (expand-file-name doom-user-dir))
                     query)
      :sentinel
      (lambda (process _event)
