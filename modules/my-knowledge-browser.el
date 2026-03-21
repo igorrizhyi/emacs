@@ -64,7 +64,7 @@ This is the position just before the next heading of same or higher level, or `p
   (save-excursion
     (goto-char heading-pos)
     (forward-line 1)
-    (let ((pattern (format "^\\(#{1,%d}\\) " heading-level)))
+    (let ((pattern (format "^\\(#\\{1,%d\\}\\) " heading-level)))
       (if (re-search-forward pattern nil t)
           (line-beginning-position)
         (point-max)))))
@@ -412,6 +412,13 @@ Returns a list of (HEADING-TEXT HEADING-POS QUERY MODE)."
       (when (> count 0)
         (save-buffer)
         (message "Cleared %d section(s)." count)))))
+
+(add-hook 'markdown-mode-hook
+          (defun my/--kb-maybe-enable ()
+            "Enable knowledge browser mode for knowledge index files."
+            (when (and buffer-file-name
+                       (string-match-p "/\\.agent-shell/knowledge/.*\\.md\\'" buffer-file-name))
+              (my/knowledge-browser-mode 1))))
 
 (provide 'my-knowledge-browser)
 ;;; my-knowledge-browser.el ends here
