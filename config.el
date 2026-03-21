@@ -32,6 +32,7 @@
 (require 'my-search)
 (require 'my-request-human)
 (require 'my-eshell-funcs)
+(require 'my-knowledge-browser)
 (after! eshell
   (require 'em-tramp)
   (setq eshell-history-size 10000
@@ -855,9 +856,12 @@
    ((derived-mode-p 'org-mode)
     (call-interactively (key-binding (kbd "RET"))))
 
-   ;; In markdown mode, use default behavior
+   ;; In markdown mode, dispatch knowledge queries or default behavior
    ((derived-mode-p 'markdown-mode 'gfm-mode)
-    (call-interactively (key-binding (kbd "RET"))))
+    (if (and (bound-and-true-p my/knowledge-browser-mode)
+             (my/at-knowledge-query-block-p))
+        (my/execute-knowledge-query)
+      (call-interactively (key-binding (kbd "RET")))))
 
    ;; Default: go to definition
    (t
