@@ -1684,15 +1684,13 @@ Return the number of tasks actually enqueued, or signal an error if
                  (content-dup-queued
                   (cl-find-if (lambda (e)
                                 (and (equal (plist-get e :role) role)
-                                     (equal (plist-get e :message) message)
-                                     (equal (plist-get e :target) target)))
+                                     (equal (plist-get e :message) message)))
                               agent-shell-team--task-queue))
                  (content-dup-active
                   (let ((found nil))
                     (maphash (lambda (_k v)
                                (when (and (equal (plist-get v :role) role)
-                                          (equal (plist-get v :message) message)
-                                          (equal (plist-get v :target) target))
+                                          (equal (plist-get v :message) message))
                                  (setq found v)))
                              agent-shell-team--active-tasks)
                     found)))
@@ -1770,7 +1768,7 @@ Return the number of tasks actually enqueued, or signal an error if
                        (condition-case nil
                            (agent-shell-team--start-drain-timer)
                          (error nil)))))
-      (cons enqueued skipped))))
+      enqueued)))
 
 (defun agent-shell-team--handle-task-update (raw-input)
   "Process a taskUpdate tool call with RAW-INPUT.
