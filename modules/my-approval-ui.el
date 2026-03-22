@@ -106,6 +106,9 @@ Choice :items are plists (:id :label :selected).
 (defvar-local my/approval--collapsed nil
   "Non-nil when the approval window is in collapsed (single-line) mode.")
 
+(defvar-local my/approval--manual-collapse-time nil
+  "Timestamp of the last manual collapse, used to debounce auto-expand.")
+
 ;;; ---- Keymap -----------------------------------------------------------------
 
 (defvar my/approval-mode-map
@@ -131,6 +134,9 @@ Choice :items are plists (:id :label :selected).
     (define-key map "o" #'my/approval-open-review-file)
     map)
   "Keymap for `my/approval-mode'.")
+
+;; Global binding so s-k works from any buffer
+(global-set-key (kbd "s-k") #'my/approval-toggle-collapse)
 
 ;;; ---- Mode -------------------------------------------------------------------
 
@@ -530,6 +536,8 @@ Full rewrite — files are small (5-30 lines)."
     (when (buffer-live-p buf)
       (with-current-buffer buf
         (setq my/approval--collapsed (not my/approval--collapsed))
+        (when my/approval--collapsed
+          (setq my/approval--manual-collapse-time (float-time)))
         (setq header-line-format
               (unless my/approval--collapsed
                 (propertize " Approval Queue" 'face 'bold))))
@@ -946,7 +954,9 @@ REQUEST keys: :request-id :title :description :type
 Auto-expand if collapsed and there are pending requests."
   (when (and (eq major-mode 'my/approval-mode)
              my/approval--requests)
-    (when my/approval--collapsed
+    (when (and my/approval--collapsed
+               (or (null my/approval--manual-collapse-time)
+                   (> (- (float-time) my/approval--manual-collapse-time) 2.0)))
       (setq my/approval--collapsed nil
             header-line-format (propertize " Approval Queue" 'face 'bold))
       (let ((new-win (my/approval--display-window my/approval-window-height)))
