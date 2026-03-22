@@ -1684,13 +1684,15 @@ Return the number of tasks actually enqueued, or signal an error if
                  (content-dup-queued
                   (cl-find-if (lambda (e)
                                 (and (equal (plist-get e :role) role)
-                                     (equal (plist-get e :message) message)))
+                                     (equal (plist-get e :message) message)
+                                     (equal (plist-get e :target) target)))
                               agent-shell-team--task-queue))
                  (content-dup-active
                   (let ((found nil))
                     (maphash (lambda (_k v)
                                (when (and (equal (plist-get v :role) role)
-                                          (equal (plist-get v :message) message))
+                                          (equal (plist-get v :message) message)
+                                          (equal (plist-get v :target) target))
                                  (setq found v)))
                              agent-shell-team--active-tasks)
                     found)))
@@ -1768,7 +1770,7 @@ Return the number of tasks actually enqueued, or signal an error if
                        (condition-case nil
                            (agent-shell-team--start-drain-timer)
                          (error nil)))))
-      enqueued)))
+      (cons enqueued skipped))))
 
 (defun agent-shell-team--handle-task-update (raw-input)
   "Process a taskUpdate tool call with RAW-INPUT.
@@ -1879,8 +1881,11 @@ Route the status update directly to the lead agent's queue."
                                 :status st
                                 :commit cmt
                                 :completed-at (float-time))))
-                       ;; Handle group completion tracking if status is "finished"
+                       ;; Clean up tracking tables and handle group completion when finished
                        (when (equal st "finished")
+                         (remhash rid agent-shell-team--active-tasks)
+                         (remhash rid agent-shell-team--request-to-buffer)
+                         (remhash rid agent-shell-team--request-to-session)
                          (when-let ((group-id (gethash rid agent-shell-team--request-to-group)))
                            (agent-shell-team--handle-task-completion rid sid nil))))))
       t)))
