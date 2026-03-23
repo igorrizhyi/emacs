@@ -188,48 +188,114 @@ def chunk_id(source: str, content: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def chunk_report(report_text: str, request_id: str, role: str, project: str = None) -> list[dict]:
-    """Split a task report into per-section chunks."""
-    source = f"report:{request_id}"
-    chunks = []
-    current_section = "Summary"
-    current_lines = []
+MAX_CHUNK_CHARS = 1500  # paragraph-split threshold for report chunks
 
-    for line in report_text.split("\n"):
-        if line.startswith("## "):
-            # Flush previous section
-            if current_lines:
-                content = "\n".join(current_lines).strip()
-                if content and len(content) > 20:  # Skip trivially short sections
-                    chunks.append({
-                        "id": chunk_id(source, content),
-                        "content": content,
-                        "source": source,
-                        "section": current_section,
-                        "roles": role,
-                        "type": "report",
-                        "project": project,
-                    })
-            current_section = line[3:].strip()
-            current_lines = []
-        elif line.startswith("# "):
-            current_section = line[2:].strip()
-        else:
-            current_lines.append(line)
 
-    # Flush last section
-    if current_lines:
-        content = "\n".join(current_lines).strip()
-        if content and len(content) > 20:
-            chunks.append({
-                "id": chunk_id(source, content),
-                "content": content,
+def _split_paragraphs(content: str, section: str, source: str, role: str,
+                       project: str, max_chars: int = MAX_CHUNK_CHARS) -> list[dict]:
+    """Split *content* on paragraph boundaries if it exceeds *max_chars*.
+
+    Each resulting chunk gets the same section label with a ``(part N)`` suffix
+    when there are multiple parts.
+    """
+    if len(content) <= max_chars:
+        return [{
+            "id": chunk_id(source, content),
+            "content": content,
+            "source": source,
+            "section": section,
+            "roles": role,
+            "type": "report",
+            "project": project,
+        }]
+
+    paragraphs = re.split(r'\n\n+', content)
+    parts: list[dict] = []
+    buf: list[str] = []
+    buf_len = 0
+
+    def _flush_buf(idx: int):
+        if not buf:
+            return
+        text = "\n\n".join(buf).strip()
+        if text and len(text) > 20:
+            label = f"{section} (part {idx})" if idx > 1 else section
+            parts.append({
+                "id": chunk_id(source, text),
+                "content": text,
                 "source": source,
-                "section": current_section,
+                "section": label,
                 "roles": role,
                 "type": "report",
                 "project": project,
             })
+
+    part_num = 1
+    for para in paragraphs:
+        para = para.strip()
+        if not para:
+            continue
+        if buf_len + len(para) > max_chars and buf:
+            _flush_buf(part_num)
+            part_num += 1
+            buf.clear()
+            buf_len = 0
+        buf.append(para)
+        buf_len += len(para)
+
+    _flush_buf(part_num)
+    # If paragraph splitting produced only 1 part, drop the suffix
+    if len(parts) == 1:
+        parts[0]["section"] = section
+        parts[0]["id"] = chunk_id(source, parts[0]["content"])
+    return parts
+
+
+def chunk_report(report_text: str, request_id: str, role: str, project: str = None) -> list[dict]:
+    """Split a task report into per-section chunks.
+
+    Splits on ``## `` (H2) and ``### `` (H3) headings, then applies a
+    paragraph-level size guard for chunks exceeding :data:`MAX_CHUNK_CHARS`.
+    """
+    source = f"report:{request_id}"
+    chunks: list[dict] = []
+    h2_section = "Summary"
+    h3_section: str | None = None
+    current_lines: list[str] = []
+
+    def _section_label() -> str:
+        if h3_section:
+            return f"{h2_section} / {h3_section}"
+        return h2_section
+
+    def _flush():
+        if not current_lines:
+            return
+        content = "\n".join(current_lines).strip()
+        if content and len(content) > 20:
+            chunks.extend(_split_paragraphs(
+                content, _section_label(), source, role, project,
+            ))
+
+    for line in report_text.split("\n"):
+        if line.startswith("### "):
+            _flush()
+            h3_section = line[4:].strip()
+            current_lines = []
+        elif line.startswith("## "):
+            _flush()
+            h2_section = line[3:].strip()
+            h3_section = None
+            current_lines = []
+        elif line.startswith("# "):
+            _flush()
+            h2_section = line[2:].strip()
+            h3_section = None
+            current_lines = []
+        else:
+            current_lines.append(line)
+
+    _flush()
     return chunks
 
 
@@ -756,21 +822,19 @@ def create_supersedes_edges(graph, supersessions: list[tuple[str, str, dict]]):
 
 
 MAX_CONTEXT_CHARS = 12000
-MAX_REPORT_CHUNK_CHARS = 2000
 MAX_EXPANDED_CHUNKS = 5
 SCORE_THRESHOLD = 0.5  # cosine distance; lower = better
+EXPANSION_SCORE_THRESHOLD = 0.6  # slightly more lenient for graph-expanded chunks
 
 
-def _truncate_report_content(content: str) -> str:
-    """Truncate report chunk content to MAX_REPORT_CHUNK_CHARS."""
-    if len(content) <= MAX_REPORT_CHUNK_CHARS:
-        return content
-    return content[:MAX_REPORT_CHUNK_CHARS] + "... [truncated]"
-
-
-def _is_report_chunk(hit: dict) -> bool:
-    """Check if a chunk originates from a task report."""
-    return (hit.get("source") or "").startswith("report:")
+def _cosine_distance(a: list[float], b: list[float]) -> float:
+    """Compute cosine distance between two vectors (0 = identical, 2 = opposite)."""
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = sum(x * x for x in a) ** 0.5
+    norm_b = sum(x * x for x in b) ** 0.5
+    if norm_a == 0 or norm_b == 0:
+        return 1.0
+    return 1.0 - dot / (norm_a * norm_b)
 
 
 SYSTEM_PROMPTS = {
@@ -976,15 +1040,27 @@ def query_knowledge(graph, question: str, role: str = None, top_k: int = 8, mode
                 {"id": row[0], "content": row[1], "source": row[2], "section": row[3], "project": row[4]}
             )
 
-    # Deduplicate expanded and cap at MAX_EXPANDED_CHUNKS
+    # Deduplicate expanded, filter by vector relevance, and cap
     seen = set(seen_ids)
-    unique_expanded = []
+    candidate_expanded = []
     for ec in expanded_chunks:
         if ec["id"] not in seen:
             seen.add(ec["id"])
-            unique_expanded.append(ec)
-        if len(unique_expanded) >= MAX_EXPANDED_CHUNKS:
-            break
+            candidate_expanded.append(ec)
+
+    # Relevance filtering: embed expanded chunks and drop those too distant from query
+    unique_expanded = []
+    if candidate_expanded:
+        exp_texts = [ec["content"] for ec in candidate_expanded]
+        exp_vecs = embed_texts(exp_texts)
+        for ec, ev in zip(candidate_expanded, exp_vecs):
+            dist = _cosine_distance(q_vec, ev)
+            if dist <= EXPANSION_SCORE_THRESHOLD:
+                ec["score"] = dist
+                unique_expanded.append(ec)
+        # Sort by relevance (closest first) and cap
+        unique_expanded.sort(key=lambda x: x.get("score", 1.0))
+        unique_expanded = unique_expanded[:MAX_EXPANDED_CHUNKS]
 
     # 5. Short-circuit if no chunks found — don't hallucinate generic answers
     if not hits and not unique_expanded:
@@ -1020,18 +1096,16 @@ def query_knowledge(graph, question: str, role: str = None, top_k: int = 8, mode
     # 6. Build context for LLM
     context_parts = []
     for h in hits:
-        content = _truncate_report_content(h["content"]) if _is_report_chunk(h) else h["content"]
         conf = confidence.get(h["id"])
         if conf:
             proj_label = f"{h['project']}: " if h.get("project") else ""
-            context_parts.append(f"[{conf}: {proj_label}{h['source']} / {h['section']}] {content}")
+            context_parts.append(f"[{conf}: {proj_label}{h['source']} / {h['section']}] {h['content']}")
         else:
             proj_label = f"from {h['project']}: " if h.get("project") else ""
-            context_parts.append(f"[{proj_label}{h['source']} / {h['section']}] {content}")
+            context_parts.append(f"[{proj_label}{h['source']} / {h['section']}] {h['content']}")
     for ec in unique_expanded:
-        content = _truncate_report_content(ec["content"]) if _is_report_chunk(ec) else ec["content"]
         proj_label = f"from {ec['project']}: " if ec.get("project") else ""
-        context_parts.append(f"[expanded: {proj_label}{ec['source']} / {ec['section']}] {content}")
+        context_parts.append(f"[expanded: {proj_label}{ec['source']} / {ec['section']}] {ec['content']}")
 
     context_text = "\n\n".join(context_parts)
 
