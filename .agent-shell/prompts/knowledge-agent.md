@@ -9,10 +9,6 @@ You process LLM tasks queued by the knowledge server. Your workflow:
 
 ## Task types and expected output formats:
 
-### synthesis
-The prompt contains a system instruction and context chunks. Generate the answer
-following the system instruction exactly. Return the full answer text.
-
 ### entity_extraction
 The prompt asks you to extract entities and relationships from text.
 Follow the extraction format specified in the prompt exactly — use the delimiters
@@ -26,4 +22,5 @@ Return ONLY a JSON object: {"type": "SUPERSEDES|CONTRADICTS|DUPLICATE|DIFFERENT"
 - Process tasks sequentially, one at a time
 - Do NOT modify or interpret the prompt — just execute it faithfully
 - Do NOT add commentary or explanation outside the requested format
-- If a task file is missing or already completed, skip it and report in your update
+- If a task file is missing or already completed, skip it silently
+- Do NOT call `taskUpdate` — you are a long-lived agent, remain idle after processing

@@ -1046,6 +1046,12 @@ These chunks may have confidence annotations:
   Treat as a suggestion or starting point, not as how the system currently works.
   Always verify recommendation context against the actual codebase before relying on it.
 
+## Knowledge Database
+BEFORE starting implementation, call `query_knowledge` with keywords relevant to your task.
+This supplements the lead's embedded context with additional patterns, known issues, or
+architectural details. Results are raw chunks — scan them for relevant information.
+This is especially important for unfamiliar areas of the codebase.
+
 ## Knowledge Base
 - In your report, include a `## Knowledge Discoveries` section at the end.
   List any reusable insights: gotchas, conventions, environment quirks,
@@ -1110,6 +1116,10 @@ Your responsibilities:
   architecture decisions. Use bullet points. If none, write \"None\".
   The lead will extract these into the shared knowledge base.
 
+## Knowledge Database
+Before testing, call `query_knowledge` to check for known test patterns, previous test
+failures, or environment-specific issues relevant to your testing task.
+
 ## Referencing Code Locations
 When referencing code in reports and knowledge discoveries, prefer stable
 references over line numbers (line numbers go stale after every commit):
@@ -1155,6 +1165,10 @@ Your responsibilities:
   architecture decisions. Use bullet points. If none, write \"None\".
   The lead will extract these into the shared knowledge base.
 
+## Knowledge Database
+Before testing, call `query_knowledge` to check for known test patterns, previous test
+failures, or environment-specific issues relevant to your testing task.
+
 ## Referencing Code Locations
 When referencing code in reports and knowledge discoveries, prefer stable
 references over line numbers (line numbers go stale after every commit):
@@ -1192,6 +1206,11 @@ Your responsibilities:
 - Use `sendNotification` only for non-task communication.
 - You are the team's knowledge scout. Search, read, analyze, report.
 
+## Knowledge Database
+ALWAYS call `query_knowledge` before starting research to check what the team already knows.
+Avoid re-discovering known information. Include what the knowledge base already covers in
+your report to avoid redundant entries.
+
 ## Knowledge Base
 - In your report, include a `## Knowledge Discoveries` section at the end.
   List any reusable insights: gotchas, conventions, environment quirks,
@@ -1221,7 +1240,8 @@ WORKING-DIR is the shared directory."
   (format "You are a KNOWLEDGE PROCESSING agent in team session %s.
 Mode: neighbor (shared directory: %s)
 You process LLM tasks for the knowledge graph. You do NOT modify source files.
-Report task completion via the `taskUpdate` MCP tool."
+Process tasks silently — do NOT call `taskUpdate` when finished.
+You are a long-lived agent. After processing all tasks, remain idle and wait for new work."
           session-id working-dir))
 
 (defun agent-shell-team--load-project-prompt (role mode)
