@@ -487,5 +487,55 @@ PARAMS is an alist of event parameters."
            (message "Error sending event %s to MCP server for project %s: %s"
                     event-name project-root err)))))))
 
+;;; Interactive commands
+
+;;;###autoload
+(defun claude-code-mcp-reconnect (project-root)
+  "Manually reconnect MCP WebSocket(s) for PROJECT-ROOT.
+Useful when all automatic reconnection attempts have been exhausted,
+e.g. after returning from system suspend."
+  (interactive
+   (list (claude-code-normalize-project-root
+          (or (and (fboundp 'projectile-project-root) (projectile-project-root))
+              default-directory))))
+  (let ((connections (claude-code-mcp-get-all-project-connections project-root))
+        (reconnected 0)
+        (already-connected 0))
+    (if (null connections)
+        (message "MCP: No connections registered for %s" project-root)
+      (dolist (entry connections)
+        (let* ((conn-key (car entry))
+               (info (cdr entry))
+               (ws (cdr (assoc 'websocket info)))
+               (port (cdr (assoc 'port info))))
+          (cond
+           ;; Already connected
+           ((and ws (websocket-openp ws))
+            (cl-incf already-connected))
+           ;; Has port but no active websocket — reconnect
+           (port
+            ;; Cancel any pending reconnect timer
+            (when-let ((timer (cdr (assoc 'reconnect-timer info))))
+              (when (timerp timer)
+                (cancel-timer timer))
+              (setcdr (assoc 'reconnect-timer info) nil))
+            ;; Reset attempt counter
+            (setcdr (assoc 'connection-attempts info) 0)
+            ;; Start fresh connection cycle
+            (claude-code-mcp-try-connect-async conn-key)
+            (cl-incf reconnected))
+           ;; No port — shouldn't happen but handle gracefully
+           (t
+            (message "MCP: Connection %s has no port, skipping" conn-key)))))
+      (cond
+       ((and (> reconnected 0) (> already-connected 0))
+        (message "MCP: Reconnecting %d connection(s), %d already active for %s"
+                 reconnected already-connected project-root))
+       ((> reconnected 0)
+        (message "MCP: Reconnecting %d connection(s) for %s" reconnected project-root))
+       ((> already-connected 0)
+        (message "MCP: All %d connection(s) already active for %s"
+                 already-connected project-root))))))
+
 (provide 'claude-code-mcp-connection)
 ;;; claude-code-mcp-connection.el ends here
