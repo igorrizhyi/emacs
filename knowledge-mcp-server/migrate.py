@@ -1,6 +1,7 @@
 """Migrate existing markdown knowledge files into FalkorDB hybrid vector+graph store."""
 
 import argparse
+import asyncio
 import os
 import sys
 
@@ -18,7 +19,11 @@ from common import (
     ingest_chunks,
     create_topic_links,
     create_similarity_edges,
+    create_cross_role_edges,
+    detect_supersession,
+    create_supersedes_edges,
 )
+from entities import extract_and_store_entities
 
 ROLE_MAP = {
     "dev.md": "dev",
@@ -28,7 +33,41 @@ ROLE_MAP = {
 }
 
 
-def migrate(knowledge_dir: str, clean: bool = False, project: str = None):
+def _post_ingest(graph, all_chunks, *, with_entities=False, with_supersession=False):
+    """Run post-ingest steps: cross-role edges, supersession, entity extraction.
+
+    Returns (supersession_count, entity_count, rel_count) for stats.
+    """
+    new_ids = [c["id"] for c in all_chunks]
+
+    print("Creating cross-role edges...")
+    create_cross_role_edges(graph, new_ids)
+
+    supersession_count = 0
+    if with_supersession:
+        print("Detecting supersessions (LLM)...")
+        supersessions = detect_supersession(graph, all_chunks)
+        supersession_count = len(supersessions)
+        if supersessions:
+            create_supersedes_edges(graph, supersessions)
+            print(f"  Created {supersession_count} SUPERSEDES edge(s)")
+        else:
+            print("  No supersessions found")
+
+    entity_count = 0
+    rel_count = 0
+    if with_entities:
+        print("Extracting entities (LLM)...")
+        entity_count, rel_count = asyncio.run(
+            extract_and_store_entities(graph, all_chunks)
+        )
+        print(f"  Extracted {entity_count} entities, {rel_count} relationships")
+
+    return supersession_count, entity_count, rel_count
+
+
+def migrate(knowledge_dir: str, clean: bool = False, project: str = None,
+            with_entities: bool = False, with_supersession: bool = False):
     graph = get_graph()
 
     if clean:
@@ -75,6 +114,12 @@ def migrate(knowledge_dir: str, clean: bool = False, project: str = None):
     print("Creating similarity edges...")
     create_similarity_edges(graph)
 
+    supersession_count, entity_count, rel_count = _post_ingest(
+        graph, all_chunks,
+        with_entities=with_entities,
+        with_supersession=with_supersession,
+    )
+
     # Print stats
     topic_count = graph.query("MATCH (t:Topic) RETURN count(t)").result_set[0][0]
     related_count = graph.query("MATCH ()-[r:RELATED_TO]->() RETURN count(r)").result_set[0][0]
@@ -85,6 +130,10 @@ def migrate(knowledge_dir: str, clean: bool = False, project: str = None):
     print(f"  Total chunks: {len(all_chunks)}")
     print(f"  Topics: {topic_count}")
     print(f"  RELATED_TO edges: {related_count}")
+    if with_supersession:
+        print(f"  Supersessions: {supersession_count}")
+    if with_entities:
+        print(f"  Entities: {entity_count}, Relationships: {rel_count}")
     print("Done.")
 
 
@@ -97,7 +146,8 @@ def _infer_role(content: str) -> str:
     return "dev"
 
 
-def migrate_reports(reports_dir: str, project: str = None):
+def migrate_reports(reports_dir: str, project: str = None,
+                    with_entities: bool = False, with_supersession: bool = False):
     """Import historical task reports from .agent-shell/reports/."""
     graph = get_graph()
     init_schema(graph)
@@ -153,9 +203,19 @@ def migrate_reports(reports_dir: str, project: str = None):
     print("Creating similarity edges (full rebuild)...")
     create_similarity_edges(graph)
 
+    supersession_count, entity_count, rel_count = _post_ingest(
+        graph, all_chunks,
+        with_entities=with_entities,
+        with_supersession=with_supersession,
+    )
+
     print(f"\n--- Report Migration Stats ---")
     print(f"  Reports processed: {report_count}")
     print(f"  Chunks created: {len(all_chunks)}")
+    if with_supersession:
+        print(f"  Supersessions: {supersession_count}")
+    if with_entities:
+        print(f"  Entities: {entity_count}, Relationships: {rel_count}")
     print("Done.")
 
 
@@ -347,7 +407,26 @@ def main():
         help="Source graph name for graph-to-graph migration (e.g. knowledge_doom_abc123). "
              "Copies all Chunk nodes into the namespace graph. Requires --namespace.",
     )
+    parser.add_argument(
+        "--with-entities",
+        action="store_true",
+        help="Run entity extraction (requires LLM calls, slow)",
+    )
+    parser.add_argument(
+        "--with-supersession",
+        action="store_true",
+        help="Run supersession detection (requires LLM calls, slow)",
+    )
+    parser.add_argument(
+        "--full",
+        action="store_true",
+        help="Shorthand for --with-entities --with-supersession",
+    )
     args = parser.parse_args()
+
+    if args.full:
+        args.with_entities = True
+        args.with_supersession = True
 
     graph_root = args.project_root or project_root
     if graph_root:
@@ -375,14 +454,18 @@ def main():
         if not os.path.isdir(args.reports_dir):
             print(f"Error: Reports directory not found: {args.reports_dir}")
             sys.exit(1)
-        migrate_reports(args.reports_dir, project=project)
+        migrate_reports(args.reports_dir, project=project,
+                        with_entities=args.with_entities,
+                        with_supersession=args.with_supersession)
         return
 
     if not os.path.isdir(args.knowledge_dir):
         print(f"Error: Knowledge directory not found: {args.knowledge_dir}")
         sys.exit(1)
 
-    migrate(args.knowledge_dir, clean=args.clean, project=project)
+    migrate(args.knowledge_dir, clean=args.clean, project=project,
+            with_entities=args.with_entities,
+            with_supersession=args.with_supersession)
 
 
 if __name__ == "__main__":
