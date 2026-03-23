@@ -71,6 +71,8 @@ def set_graph_name(project_root: str, namespace: str = None):
     NAMESPACE = namespace or _resolve_namespace()
     GRAPH_NAME = _derive_graph_name(project_root, NAMESPACE)
 
+KNOWLEDGE_LLM_BACKEND = os.environ.get("KNOWLEDGE_LLM_BACKEND", "openai")
+
 FALKORDB_HOST = os.environ.get("FALKORDB_HOST", "127.0.0.1")
 FALKORDB_PORT = int(os.environ.get("FALKORDB_PORT", "6380"))
 EMBED_MODEL = "text-embedding-3-small"
@@ -658,6 +660,75 @@ def detect_supersession(graph, new_chunks: list[dict]) -> list[tuple[str, str, d
     return results
 
 
+def detect_supersession_queued(graph, new_chunks: list[dict]) -> tuple[list[tuple[str, str, dict]], list[str]]:
+    """Like detect_supersession but queues cross-source LLM calls for agent backend.
+
+    Same-source fast path still works without LLM.
+
+    Returns (same_source_results, queued_task_ids).
+    """
+    from llm_queue import queue_llm_task
+
+    results = []
+    task_ids = []
+    logger.debug("detect_supersession_queued: checking %d new chunks", len(new_chunks))
+
+    for chunk in new_chunks:
+        cid = chunk["id"]
+        res = graph.query(
+            "MATCH (c:Chunk {id: $id}) RETURN c.embedding",
+            params={"id": cid},
+        )
+        if not res.result_set or not res.result_set[0][0]:
+            continue
+        vec = res.result_set[0][0]
+
+        neighbours = graph.query(
+            """
+            CALL db.idx.vector.queryNodes('Chunk', 'embedding', 5, vecf32($vec))
+            YIELD node, score
+            WHERE node.id <> $id AND score <= $threshold
+            RETURN node.id, node.content, node.source, node.roles, score
+            """,
+            params={
+                "vec": list(vec),
+                "id": cid,
+                "threshold": SUPERSESSION_CANDIDATE_THRESHOLD,
+            },
+        )
+
+        for row in neighbours.result_set:
+            old_id, old_content, old_source, old_roles, score = row
+
+            if old_roles and chunk.get("roles") and not _roles_overlap(chunk["roles"], old_roles):
+                continue
+
+            # Same-source fast path
+            if chunk.get("source") == old_source:
+                results.append((cid, old_id, {
+                    "type": "SUPERSEDES",
+                    "reason": f"Same source ({old_source}), distance={score:.3f}",
+                }))
+                continue
+
+            # Cross-source: queue for agent
+            prompt = _CLASSIFY_PROMPT.format(
+                existing=old_content[:500],
+                new=chunk["content"][:500],
+            )
+            tid = queue_llm_task(
+                PROJECT_ROOT,
+                "supersession_classification",
+                prompt,
+                context={"new_id": cid, "old_id": old_id},
+            )
+            task_ids.append(tid)
+
+    logger.info("detect_supersession_queued: %d same-source results, %d queued tasks",
+                len(results), len(task_ids))
+    return results, task_ids
+
+
 def create_supersedes_edges(graph, supersessions: list[tuple[str, str, dict]]):
     """Create SUPERSEDES edges from detection results."""
     now = datetime.now(timezone.utc).isoformat()
@@ -967,6 +1038,26 @@ def query_knowledge(graph, question: str, role: str = None, top_k: int = 8, mode
 
     system_prompt = SYSTEM_PROMPTS.get(mode, SYSTEM_PROMPTS["summary"])
 
+    sources = list({h["source"] for h in hits})
+
+    # Agent backend: queue synthesis task instead of calling LLM
+    if KNOWLEDGE_LLM_BACKEND == "agent":
+        from llm_queue import queue_llm_task
+        full_prompt = f"System: {system_prompt}\n\nContext:\n{context_text}\n\nQuestion: {question}"
+        task_id = queue_llm_task(
+            PROJECT_ROOT,
+            "synthesis",
+            full_prompt,
+            context={"sources": sources, "expanded_count": len(unique_expanded)},
+        )
+        return {
+            "response": None,
+            "chunks": hits,
+            "sources": sources,
+            "expanded_count": len(unique_expanded),
+            "pending_llm_tasks": [task_id],
+        }
+
     messages = [
         {
             "role": "system",
@@ -980,8 +1071,6 @@ def query_knowledge(graph, question: str, role: str = None, top_k: int = 8, mode
 
     llm_resp = completion(model=LLM_MODEL, messages=messages)
     answer = llm_resp.choices[0].message.content
-
-    sources = list({h["source"] for h in hits})
 
     return {
         "response": answer,
