@@ -1,5 +1,6 @@
 ;;; my-agent-shell-tables.el --- Markdown table alignment for agent-shell -*- lexical-binding: t; -*-
 
+(require 'cl-lib)
 (require 'map)
 
 (defun my/agent-shell--parse-table-row (line)
