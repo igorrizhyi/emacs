@@ -815,6 +815,40 @@ def query_knowledge(graph, question: str, role: str = None, top_k: int = 8, mode
         except Exception:
             pass  # fulltext index may not exist or query may fail
 
+    seen_ids = {h["id"] for h in hits}
+
+    # 2c. Direct entity vector search — find chunks via matching entities
+    try:
+        entity_proj_filter = "AND c.project = $project" if project else ""
+        entity_query = f"""
+        CALL db.idx.vector.queryNodes('Entity', 'embedding', $k, vecf32($vec))
+        YIELD node, score
+        WHERE score <= $threshold
+        MATCH (node)<-[:HAS_ENTITY]-(c:Chunk)
+        {entity_proj_filter}
+        OPTIONAL MATCH (superseder:Chunk)-[:SUPERSEDES]->(c)
+        WITH c WHERE superseder IS NULL
+        RETURN DISTINCT c.id AS id, c.content AS content, c.source AS source,
+               c.section AS section, c.project AS project, c.roles AS roles
+        """
+        entity_params = {"k": 5, "vec": q_vec, "threshold": SCORE_THRESHOLD, **({"project": project} if project else {})}
+        entity_result = graph.query(entity_query, entity_params)
+        for row in entity_result.result_set:
+            cid = row[0]
+            if cid not in seen_ids:
+                seen_ids.add(cid)
+                hits.append({
+                    "id": cid,
+                    "content": row[1],
+                    "source": row[2],
+                    "section": row[3],
+                    "project": row[4],
+                    "roles": row[5],
+                    "score": 0.0,  # entity-matched, no direct vector score
+                })
+    except Exception:
+        pass  # Entity index may not exist yet, graceful degradation
+
     hit_ids = [h["id"] for h in hits]
 
     # 4. Graph expansion — 1 hop only to limit context size (batched)
@@ -831,6 +865,15 @@ def query_knowledge(graph, question: str, role: str = None, top_k: int = 8, mode
             RETURN DISTINCT c2.id AS id, c2.content AS content,
                    c2.source AS source, c2.section AS section,
                    c2.project AS project
+            UNION
+            UNWIND $ids AS hid
+            MATCH (c1:Chunk {{id: hid}})-[:HAS_ENTITY]->(e:Entity)<-[:HAS_ENTITY]-(c2:Chunk)
+            WHERE NOT c2.id IN $ids {proj_filter}
+            OPTIONAL MATCH (superseder:Chunk)-[:SUPERSEDES]->(c2)
+            WITH c2 WHERE superseder IS NULL
+            RETURN DISTINCT c2.id AS id, c2.content AS content,
+                   c2.source AS source, c2.section AS section,
+                   c2.project AS project
             """,
             params={"ids": hit_ids, **({"project": project} if project else {})},
         )
@@ -840,7 +883,7 @@ def query_knowledge(graph, question: str, role: str = None, top_k: int = 8, mode
             )
 
     # Deduplicate expanded and cap at MAX_EXPANDED_CHUNKS
-    seen = set(hit_ids)
+    seen = set(seen_ids)
     unique_expanded = []
     for ec in expanded_chunks:
         if ec["id"] not in seen:
