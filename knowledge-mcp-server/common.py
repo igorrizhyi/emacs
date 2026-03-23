@@ -131,6 +131,26 @@ def init_schema(graph):
         except Exception:
             pass  # already exists
 
+    # Entity node constraints and indexes
+    try:
+        graph.query("CREATE CONSTRAINT FOR (e:Entity) REQUIRE e.name IS UNIQUE")
+    except Exception:
+        pass  # already exists
+
+    try:
+        graph.create_node_vector_index("Entity", "embedding", dim=EMBED_DIM, similarity_function="cosine")
+    except Exception:
+        pass  # already exists
+
+    for stmt in (
+        "CREATE INDEX FOR (e:Entity) ON (e.type)",
+        "CREATE INDEX FOR (e:Entity) ON (e.name)",
+    ):
+        try:
+            graph.query(stmt)
+        except Exception:
+            pass  # already exists
+
     # Seed roles
     for role in ("dev", "researcher", "tester", "lead"):
         graph.query("MERGE (:Role {name: $name})", params={"name": role})

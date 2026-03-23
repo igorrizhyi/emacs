@@ -1,6 +1,7 @@
 """MCP server for hybrid vector+graph knowledge system."""
 
 import asyncio
+import logging
 import os
 import sys
 
@@ -16,6 +17,9 @@ from common import (
     detect_supersession, create_supersedes_edges,
     _resolve_project,
 )
+from entities import extract_and_store_entities
+
+logger = logging.getLogger(__name__)
 
 _project = _resolve_project()
 _ns_info = f", namespace={NAMESPACE}" if NAMESPACE else ""
@@ -117,47 +121,62 @@ async def _handle_query(arguments: dict) -> list[types.TextContent]:
 
 
 async def _handle_store(arguments: dict) -> list[types.TextContent]:
-    async with _store_lock:
-        graph = await _ensure_graph()
-        content = arguments["content"]
-        roles = arguments["roles"]
-        source = arguments.get("source", "mcp")
-        roles_str = ",".join(roles)
+    content = arguments["content"]
+    source = arguments.get("source", "mcp")
+    roles = arguments["roles"]
+    asyncio.create_task(_store_knowledge_bg(content, source, roles))
+    return [types.TextContent(type="text", text="Knowledge storage initiated.")]
 
-        # Resolve project from PROJECT_ROOT — required when namespace is active
-        project = _resolve_project() if NAMESPACE else None
 
-        if source.startswith("report:"):
-            request_id = source.split(":", 1)[1]
-            chunks = chunk_report(content, request_id, roles_str, project=project)
-        elif content.startswith("- "):
-            chunks = [{"id": chunk_id(source, content[2:].strip()),
-                       "content": content[2:].strip(), "section": "General",
-                       "source": source, "roles": roles_str, "type": "knowledge",
-                       "project": project}]
-        else:
-            raw = [l.strip() for l in content.split("\n") if l.strip() and not l.strip().startswith("#")]
-            chunks = [{"id": chunk_id(source, t), "content": t, "section": "General",
-                       "source": source, "roles": roles_str, "type": "knowledge",
-                       "project": project} for t in raw]
+async def _store_knowledge_bg(content: str, source: str, roles: list[str]):
+    """Background task: chunk, ingest, link, and extract entities."""
+    try:
+        async with _store_lock:
+            graph = await _ensure_graph()
+            roles_str = ",".join(roles)
 
-        if not chunks:
-            return [types.TextContent(type="text", text="No content to store")]
+            # Resolve project from PROJECT_ROOT — required when namespace is active
+            project = _resolve_project() if NAMESPACE else None
 
-        ingest_chunks(graph, chunks, project=project)
-        create_topic_links(graph, chunks)
-        new_ids = [c["id"] for c in chunks]
-        create_similarity_edges_for_chunks(graph, new_ids)
-        create_cross_role_edges(graph, new_ids)
+            if source.startswith("report:"):
+                request_id = source.split(":", 1)[1]
+                chunks = chunk_report(content, request_id, roles_str, project=project)
+            elif content.startswith("- "):
+                chunks = [{"id": chunk_id(source, content[2:].strip()),
+                           "content": content[2:].strip(), "section": "General",
+                           "source": source, "roles": roles_str, "type": "knowledge",
+                           "project": project}]
+            else:
+                raw = [l.strip() for l in content.split("\n") if l.strip() and not l.strip().startswith("#")]
+                chunks = [{"id": chunk_id(source, t), "content": t, "section": "General",
+                           "source": source, "roles": roles_str, "type": "knowledge",
+                           "project": project} for t in raw]
 
-        # Supersession detection — find and mark chunks that replace older ones
-        supersessions = detect_supersession(graph, chunks)
-        if supersessions:
-            create_supersedes_edges(graph, supersessions)
+            if not chunks:
+                logger.info("store_knowledge_bg: no content to store")
+                return
 
-        supersede_info = f", {len(supersessions)} supersession(s)" if supersessions else ""
-        proj_info = f" project={project}" if project else ""
-        return [types.TextContent(type="text", text=f"Stored {len(chunks)} chunk(s). Source: {source}{proj_info}{supersede_info}")]
+            ingest_chunks(graph, chunks, project=project)
+            create_topic_links(graph, chunks)
+            new_ids = [c["id"] for c in chunks]
+            create_similarity_edges_for_chunks(graph, new_ids)
+            create_cross_role_edges(graph, new_ids)
+
+            # Supersession detection — find and mark chunks that replace older ones
+            supersessions = detect_supersession(graph, chunks)
+            if supersessions:
+                create_supersedes_edges(graph, supersessions)
+
+            # Entity extraction
+            entity_count, rel_count = await extract_and_store_entities(graph, chunks)
+
+            supersede_info = f", {len(supersessions)} supersession(s)" if supersessions else ""
+            entity_info = f", {entity_count} entities, {rel_count} relationships" if entity_count else ""
+            proj_info = f" project={project}" if project else ""
+            logger.info("Stored %d chunk(s). Source: %s%s%s%s",
+                        len(chunks), source, proj_info, supersede_info, entity_info)
+    except Exception:
+        logger.exception("Background store_knowledge failed")
 
 
 async def main():
