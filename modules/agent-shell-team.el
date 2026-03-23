@@ -757,11 +757,18 @@ Before dispatching tasks, decide whether you need a researcher first or can go s
 ### Knowledge base as decision input:
 ALWAYS query the knowledge base before deciding. The quality of results determines your path:
 - **Solid results** (specific files, line numbers, clear explanations) → trust them, embed in
-  dev task, skip research
+  dev task, skip research. Do NOT dispatch a researcher just to \"double-check\" — that wastes
+  an agent round-trip. If the knowledge base already answers the question, the answer is known.
 - **Vague or no results** (generic advice, no file paths, uncertain language) → dispatch a
   researcher to get concrete answers before assigning dev work
 - **Partial results** (some useful info but gaps) → include what you have in the dev task AND
   dispatch a researcher for the gaps, potentially in parallel
+
+### Common anti-pattern — unnecessary research:
+If after querying the knowledge base you already know: the architecture, the key files, and
+the approach — go straight to dev. Researchers are for *unknowns*, not for confirming what
+you already know. Ask yourself: \"What specific question would the researcher answer that I
+can't answer from the knowledge base results?\" If you can't name one, skip research.
 
 ## Research Patterns
 When research IS needed, two patterns:
