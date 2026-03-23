@@ -281,9 +281,13 @@ Returns a plist with :request-id :title :description :type
                           (list :id id :label label :selected checked)
                         (list :id id :label label :checked checked)))
                 (push current-item items)))
-             ;; Item description: 2-space indent after item
+             ;; Item description: 2-space indent after item (accumulate multi-line)
              ((and current-item (string-match "^  \\(.+\\)" line))
-              (plist-put current-item :description (match-string 1 line)))
+              (let ((existing (plist-get current-item :description)))
+                (plist-put current-item :description
+                           (if existing
+                               (concat existing "\n" (match-string 1 line))
+                             (match-string 1 line)))))
              ;; Legacy Notes: single-line format (fallback)
              ((string-match "^Notes: \\(.*\\)" line)
               (unless notes
@@ -335,7 +339,8 @@ Full rewrite — files are small (5-30 lines)."
                (desc (plist-get item :description)))
           (insert (format "- [%s] %s <!-- id: %s -->\n" mark label id))
           (when (and desc (not (string-empty-p desc)))
-            (insert (format "  %s\n" desc)))))
+            (dolist (desc-line (split-string desc "\n" t))
+              (insert (format "  %s\n" desc-line))))))
       ;; Refine section
       (insert "\n## Refine\n")
       (let ((refine (plist-get req :refine)))
@@ -384,6 +389,50 @@ Full rewrite — files are small (5-30 lines)."
   (let ((file (my/approval--review-file-path (plist-get req :request-id))))
     (when (file-exists-p file)
       (delete-file file))))
+
+;;; ---- Markdown Formatting ----------------------------------------------------
+
+(defun my/approval--format-markdown (text)
+  "Convert basic markdown inline syntax in TEXT to propertized text.
+Supports **bold**, *italic*, `code`, and table rows (lines starting with |)."
+  (if (string-match-p "^|" text)
+      ;; Table rows: render in monospace face for alignment
+      (propertize text 'face 'font-lock-constant-face)
+    (let ((result text)
+          (segments nil)
+          (pos 0))
+      ;; Process inline formatting: **bold**, *italic*, `code`
+      ;; Build segments list by scanning for patterns
+      (while (< pos (length result))
+        (cond
+         ;; `code`
+         ((and (< pos (length result))
+               (eq (aref result pos) ?`)
+               (string-match "`\\([^`]+\\)`" result pos))
+          (push (propertize (match-string 1 result) 'face 'font-lock-constant-face) segments)
+          (setq pos (match-end 0)))
+         ;; **bold**
+         ((and (< (1+ pos) (length result))
+               (eq (aref result pos) ?*)
+               (eq (aref result (1+ pos)) ?*)
+               (string-match "\\*\\*\\([^*]+\\)\\*\\*" result pos))
+          (push (propertize (match-string 1 result) 'face 'bold) segments)
+          (setq pos (match-end 0)))
+         ;; *italic*
+         ((and (< pos (length result))
+               (eq (aref result pos) ?*)
+               (string-match "\\*\\([^*]+\\)\\*" result pos))
+          (push (propertize (match-string 1 result) 'face 'italic) segments)
+          (setq pos (match-end 0)))
+         ;; Plain character
+         (t
+          ;; Collect consecutive plain chars
+          (let ((start pos))
+            (while (and (< pos (length result))
+                        (not (memq (aref result pos) '(?* ?`))))
+              (setq pos (1+ pos)))
+            (push (substring result start pos) segments)))))
+      (apply #'concat (nreverse segments)))))
 
 ;;; ---- Rendering --------------------------------------------------------------
 
@@ -462,7 +511,12 @@ Full rewrite — files are small (5-30 lines)."
                  (text (concat " " checkbox " " label)))
             (when highlighted
               (setq text (propertize text 'face 'my/approval-item-highlight-face)))
-            (push text lines))
+            (push text lines)
+            (when-let ((item-desc (plist-get item :description)))
+              (dolist (desc-line (split-string item-desc "\n" t))
+                (push (propertize (concat "     " (my/approval--format-markdown desc-line))
+                                  'face 'my/approval-item-description-face)
+                      lines))))
           (cl-incf idx))))
      ((equal req-type "choice")
       (let ((idx 0))
@@ -480,8 +534,10 @@ Full rewrite — files are small (5-30 lines)."
               (setq text (propertize text 'face 'my/approval-item-highlight-face)))
             (push text lines)
             (when (and desc (not (string-empty-p desc)))
-              (let ((desc-text (concat "   " desc)))
-                (push (propertize desc-text 'face 'my/approval-item-description-face) lines))))
+              (dolist (desc-line (split-string desc "\n" t))
+                (push (propertize (concat "     " (my/approval--format-markdown desc-line))
+                                  'face 'my/approval-item-description-face)
+                      lines))))
           (cl-incf idx)))))
     ;; Refine
     (let ((refine (plist-get req :refine)))
