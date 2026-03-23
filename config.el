@@ -1214,6 +1214,9 @@
   ;; Custom output styling for agent-shell body sections
   (require 'my-agent-shell-style)
   (add-hook 'agent-shell-section-functions #'my/agent-shell-style-sections)
+  ;; Markdown table alignment in output sections
+  (require 'my-agent-shell-tables)
+  (add-hook 'agent-shell-section-functions #'my/agent-shell-align-tables)
   ;; Mark agent-shell buffers as "real" so Doom doesn't skip them in buffer switching
   (add-hook 'agent-shell-mode-hook #'doom-mark-buffer-as-real-h)
   ;; Custom keybindings for agent-shell buffers
