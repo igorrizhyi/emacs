@@ -20,7 +20,12 @@ def _log(msg: str):
 
 
 def _print_result(result: dict):
-    print(f"\n{result['response']}")
+    if result.get("response") is not None:
+        print(f"\n{result['response']}")
+    elif result.get("context_text"):
+        print(f"\n[Synthesis skipped — raw context below]\n{result['context_text']}")
+    else:
+        print("\n[No response]")
     if result.get("sources"):
         print(f"Sources: {', '.join(result['sources'])}")
     print(f"({len(result.get('chunks', []))} chunks, {result.get('expanded_count', 0)} via graph)")

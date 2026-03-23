@@ -72,6 +72,7 @@ def set_graph_name(project_root: str, namespace: str = None):
     GRAPH_NAME = _derive_graph_name(project_root, NAMESPACE)
 
 KNOWLEDGE_LLM_BACKEND = os.environ.get("KNOWLEDGE_LLM_BACKEND", "openai")
+KNOWLEDGE_SKIP_SYNTHESIS = os.environ.get("KNOWLEDGE_SKIP_SYNTHESIS", "").lower() in ("1", "true", "yes")
 
 FALKORDB_HOST = os.environ.get("FALKORDB_HOST", "127.0.0.1")
 FALKORDB_PORT = int(os.environ.get("FALKORDB_PORT", "6380"))
@@ -1039,6 +1040,16 @@ def query_knowledge(graph, question: str, role: str = None, top_k: int = 8, mode
     system_prompt = SYSTEM_PROMPTS.get(mode, SYSTEM_PROMPTS["summary"])
 
     sources = list({h["source"] for h in hits})
+
+    # Skip synthesis: return raw chunks without LLM processing
+    if KNOWLEDGE_SKIP_SYNTHESIS:
+        return {
+            "response": None,
+            "chunks": hits,
+            "sources": sources,
+            "expanded_count": len(unique_expanded),
+            "context_text": context_text,
+        }
 
     # Agent backend: queue synthesis task instead of calling LLM
     if KNOWLEDGE_LLM_BACKEND == "agent":

@@ -150,6 +150,15 @@ async def _handle_query(arguments: dict) -> list[types.TextContent]:
 
     result = query_knowledge(graph, query, role=role, top_k=8, mode=mode, project=project)
 
+    # Skip-synthesis mode: return raw context chunks without LLM answer
+    if result.get("context_text") and result.get("response") is None:
+        parts = []
+        if result.get("sources"):
+            parts.append("**Sources:** " + ", ".join(result["sources"]))
+        parts.append(f"({len(result['chunks'])} chunks retrieved, {result.get('expanded_count', 0)} via graph expansion)")
+        parts.append(f"\n**Context:**\n{result['context_text']}")
+        return [types.TextContent(type="text", text="\n".join(parts))]
+
     # Agent backend: return sources + pending tasks (no synthesis yet)
     if result.get("pending_llm_tasks"):
         parts = []
