@@ -73,6 +73,8 @@ def set_graph_name(project_root: str, namespace: str = None):
 
 KNOWLEDGE_LLM_BACKEND = os.environ.get("KNOWLEDGE_LLM_BACKEND", "openai")
 KNOWLEDGE_SKIP_SYNTHESIS = os.environ.get("KNOWLEDGE_SKIP_SYNTHESIS", "").lower() in ("1", "true", "yes")
+EMACS_SERVER_NAME = os.environ.get("EMACS_SERVER_NAME")
+KNOWLEDGE_PROJECT_ROOT = os.environ.get("KNOWLEDGE_PROJECT_ROOT", PROJECT_ROOT)
 
 FALKORDB_HOST = os.environ.get("FALKORDB_HOST", "127.0.0.1")
 FALKORDB_PORT = int(os.environ.get("FALKORDB_PORT", "6380"))

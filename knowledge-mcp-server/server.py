@@ -12,6 +12,7 @@ import mcp.types as types
 
 from common import (
     GRAPH_NAME, KNOWLEDGE_LLM_BACKEND, NAMESPACE, PROJECT_ROOT,
+    EMACS_SERVER_NAME, KNOWLEDGE_PROJECT_ROOT,
     get_graph, init_schema, ingest_chunks, query_knowledge, chunk_id,
     chunk_report, create_topic_links, create_similarity_edges_for_chunks,
     create_cross_role_edges,
@@ -177,6 +178,53 @@ async def _handle_query(arguments: dict) -> list[types.TextContent]:
     return [types.TextContent(type="text", text="\n".join(parts))]
 
 
+async def _dispatch_knowledge_agent(task_uuids: list[str]):
+    """Fire-and-forget: spawn a knowledge agent via emacsclient to process LLM tasks.
+
+    If EMACS_SERVER_NAME is not set, this is a no-op (caller should fall back).
+    """
+    if not EMACS_SERVER_NAME or not task_uuids:
+        return
+
+    uuid_str = ", ".join(task_uuids)
+    timestamp = int(asyncio.get_event_loop().time())
+    request_id = f"kb-auto-{timestamp}"
+    project_root = KNOWLEDGE_PROJECT_ROOT or PROJECT_ROOT
+
+    message = (
+        f"Process knowledge LLM tasks: {uuid_str}\\n"
+        "For each task UUID, call `get_llm_task(id=UUID)` to get the prompt, "
+        "process it, then call `submit_llm_result(id=UUID, result=RESPONSE)`."
+    )
+
+    elisp = (
+        f'(let ((default-directory "{project_root}/"))'
+        " (agent-shell-team--handle-tasks-put"
+        " (list (cons (quote tasks)"
+        f' (vector (list (cons (quote role) "knowledge")'
+        f' (cons (quote message) "{message}")'
+        f' (cons (quote request_id) "{request_id}")))))))'
+    )
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "emacsclient", "-s", EMACS_SERVER_NAME, "--eval", elisp,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
+        if proc.returncode != 0:
+            logger.error("emacsclient dispatch failed (rc=%d): %s",
+                         proc.returncode, stderr.decode().strip())
+        else:
+            logger.info("Dispatched knowledge agent for %d tasks (request_id=%s)",
+                        len(task_uuids), request_id)
+    except asyncio.TimeoutError:
+        logger.error("emacsclient dispatch timed out for tasks: %s", uuid_str)
+    except Exception:
+        logger.exception("Failed to dispatch knowledge agent via emacsclient")
+
+
 async def _handle_store(arguments: dict) -> list[types.TextContent]:
     content = arguments["content"]
     source = arguments.get("source", "mcp")
@@ -184,7 +232,15 @@ async def _handle_store(arguments: dict) -> list[types.TextContent]:
 
     if KNOWLEDGE_LLM_BACKEND == "agent":
         task_ids = await _store_and_queue_llm(content, source, roles)
-        return [types.TextContent(type="text", text=json.dumps({"pending_llm_tasks": task_ids}))]
+        if EMACS_SERVER_NAME and task_ids:
+            # Self-dispatch: fire-and-forget emacsclient call
+            asyncio.create_task(_dispatch_knowledge_agent(task_ids))
+            return [types.TextContent(type="text", text="Knowledge storage initiated.")]
+        elif task_ids:
+            # Fallback: return pending tasks for lead to dispatch
+            return [types.TextContent(type="text", text=json.dumps({"pending_llm_tasks": task_ids}))]
+        else:
+            return [types.TextContent(type="text", text="Knowledge storage initiated.")]
     else:
         asyncio.create_task(_store_knowledge_bg(content, source, roles))
         return [types.TextContent(type="text", text="Knowledge storage initiated.")]
