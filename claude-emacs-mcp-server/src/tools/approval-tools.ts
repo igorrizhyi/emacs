@@ -25,7 +25,9 @@ function writeReviewMarkdown(projectRoot: string, args: PresentOptionsArgs): voi
     const checked = item.default_selected ? 'x' : ' ';
     lines.push(`- [${checked}] ${item.label} <!-- id: ${item.id} -->`);
     if (item.description) {
-      lines.push(`  ${item.description}`);
+      for (const descLine of item.description.split('\n')) {
+        lines.push(`  ${descLine}`);
+      }
     }
   }
   lines.push('');
