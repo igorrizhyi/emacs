@@ -5,6 +5,7 @@ pieces, ingests the new chunks, and creates SUPERSEDES edges from new to old.
 """
 
 import argparse
+import asyncio
 import logging
 import os
 import sys
@@ -148,6 +149,25 @@ def migrate_rechunk(dry_run: bool = False):
     new_ids = [c["id"] for c in all_new_chunks]
     logger.info("Creating similarity edges for new chunks...")
     create_similarity_edges_for_chunks(graph, new_ids)
+
+    # Extract entities for new chunks and clean up old entity edges
+    try:
+        from entities import extract_and_store_entities
+        logger.info("Extracting entities for %d new chunks...", len(all_new_chunks))
+        entity_count, rel_count = asyncio.run(extract_and_store_entities(graph, all_new_chunks))
+        logger.info("  Extracted %d entities, %d relationships", entity_count, rel_count)
+
+        # Remove HAS_ENTITY edges from old superseded chunks
+        old_ids = [s[1] for s in supersessions]  # (new_id, old_id, classification)
+        unique_old_ids = list(set(old_ids))
+        for old_id in unique_old_ids:
+            graph.query(
+                "MATCH (old:Chunk {id: $old_id})-[r:HAS_ENTITY]->() DELETE r",
+                params={"old_id": old_id},
+            )
+        logger.info("  Removed HAS_ENTITY edges from %d superseded chunks", len(unique_old_ids))
+    except Exception as e:
+        logger.warning("Entity extraction failed (non-fatal): %s", e)
 
     # Summary
     logger.info("\n--- Re-chunking Migration Stats ---")
