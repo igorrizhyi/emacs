@@ -33,6 +33,14 @@
 (require 'my-request-human)
 (require 'my-eshell-funcs)
 (require 'my-knowledge-browser)
+
+;; Exclude .agent-shell from project searches and LSP file watchers
+(after! projectile
+  (add-to-list 'projectile-globally-ignored-directories ".agent-shell"))
+
+(after! lsp-mode
+  (add-to-list 'lsp-file-watch-ignored-directories "[/\\\\]\\.agent-shell\\'"))
+
 (add-hook 'markdown-mode-hook
   (lambda ()
     (when (and buffer-file-name
