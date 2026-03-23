@@ -15,11 +15,12 @@
 
 ;; Multi-agent team orchestration layer on top of agent-shell-emacs-mcp.
 ;;
-;; Supports four roles:
+;; Supports five roles:
 ;;   - lead: Supervisor — reviews, merges, dispatches, assigns tasks
 ;;   - dev: Implements features in isolated worktrees
 ;;   - tester: Runs tests/validation, reports results
 ;;   - researcher: Explores codebase, finds code, answers questions about the project
+;;   - knowledge: Lightweight LLM processing for knowledge graph tasks
 ;;
 ;; Two cooperation modes:
 ;;   - isolated: Agent gets its own git worktree
@@ -107,6 +108,11 @@ without prompting for confirmation."
   "Face for researcher role badge in mode line."
   :group 'agent-shell-team)
 
+(defface agent-shell-team-role-knowledge-face
+  '((t :background "#1abc9c" :foreground "#000000" :weight bold))
+  "Face for knowledge role badge in mode line."
+  :group 'agent-shell-team)
+
 (defface agent-shell-team-info-face
   '((t :background "#3b4252" :foreground "#88c0d0" :weight normal))
   "Face for team info (session, worktree) in mode line."
@@ -119,7 +125,7 @@ without prompting for confirmation."
 Generated eagerly at load time so MCP handlers always have a valid session.")
 
 (defvar-local agent-shell-team--role nil
-  "Role: dev, lead, tester, or researcher.")
+  "Role: dev, lead, tester, researcher, or knowledge.")
 
 (defvar-local agent-shell-team--mode nil
   "Mode: isolated or neighbor.")
@@ -671,7 +677,7 @@ Schema:
 {
   \"tasks\": [
     {
-      \"role\": \"dev\",           // required: dev, tester, researcher
+      \"role\": \"dev\",           // required: dev, tester, researcher, knowledge
       \"message\": \"...\",        // required: task description
       \"group_id\": \"group-1\",   // optional: batch related subtasks
       \"request_id\": \"abc123\",  // optional: auto-generated if omitted
@@ -858,6 +864,7 @@ Your responsibilities:
   - \"dev\" — implementation patterns, Elisp/TS gotchas, build system details
   - \"researcher\" — architecture, codebase structure, system design
   - \"tester\" — test patterns, verification approaches
+  - \"knowledge\" — knowledge graph LLM processing tasks
   - \"lead\" — coordination patterns, workflow insights
 
 ## Knowledge LLM Task Processing
@@ -865,7 +872,7 @@ When `store_knowledge` or `query_knowledge` returns a response containing `pendi
 you MUST dispatch a knowledge processing agent to handle them:
 
 1. Extract the task UUIDs from the response
-2. Dispatch via `tasksPut` with role `dev` and a message like:
+2. Dispatch via `tasksPut` with role `knowledge` and a message like:
    \"Process knowledge LLM tasks: {uuid-1}, {uuid-2}, {uuid-3}
    For each task UUID, call `get_llm_task(id=UUID)` to get the prompt,
    process it, then call `submit_llm_result(id=UUID, result=RESPONSE)\".
@@ -1191,6 +1198,15 @@ Line numbers are OK as supplementary info in reports, but knowledge discoveries
 must use stable anchors that survive file changes."
           session-id working-dir))
 
+(defun agent-shell-team--knowledge-prompt (session-id working-dir)
+  "Generate knowledge processing agent prompt for SESSION-ID.
+WORKING-DIR is the shared directory."
+  (format "You are a KNOWLEDGE PROCESSING agent in team session %s.
+Mode: neighbor (shared directory: %s)
+You process LLM tasks for the knowledge graph. You do NOT modify source files.
+Report task completion via the `taskUpdate` MCP tool."
+          session-id working-dir))
+
 (defun agent-shell-team--load-project-prompt (role mode)
   "Load project-specific prompt for ROLE and MODE from .agent-shell/prompts/.
 Fallback chain:
@@ -1235,7 +1251,7 @@ Otherwise, prompts the user to pick a role."
        agent-shell-team--sessions))
     ;; Fallback: prompt user for role
     (unless role
-      (setq role (completing-read "Role: " '("dev" "tester" "researcher" "lead") nil t)))
+      (setq role (completing-read "Role: " '("dev" "tester" "researcher" "knowledge" "lead") nil t)))
     (if-let ((path (agent-shell-team--prompt-file-path role mode)))
         (progn
           (make-directory (file-name-directory path) t)
@@ -1252,7 +1268,8 @@ WORKTREE-PATH, WORKTREE-NAME, WORKING-DIR depend on role/mode."
            ("tester" (pcase mode
                        ("isolated" (agent-shell-team--tester-isolated-prompt session-id worktree-path))
                        (_ (agent-shell-team--tester-neighbor-prompt session-id (or working-dir default-directory)))))
-           ("researcher" (agent-shell-team--researcher-prompt session-id (or working-dir default-directory)))))
+           ("researcher" (agent-shell-team--researcher-prompt session-id (or working-dir default-directory)))
+           ("knowledge" (agent-shell-team--knowledge-prompt session-id (or working-dir default-directory)))))
         (project-prompt (agent-shell-team--load-project-prompt role mode)))
     (if project-prompt
         (concat base-prompt "\n\n## Project-Specific Instructions\n" project-prompt)
@@ -1267,7 +1284,8 @@ WORKTREE-PATH, WORKTREE-NAME, WORKING-DIR depend on role/mode."
                   ("lead" 'agent-shell-team-role-lead-face)
                   ("dev" 'agent-shell-team-role-dev-face)
                   ("tester" 'agent-shell-team-role-tester-face)
-                  ("researcher" 'agent-shell-team-role-researcher-face))))
+                  ("researcher" 'agent-shell-team-role-researcher-face)
+                  ("knowledge" 'agent-shell-team-role-knowledge-face))))
       (propertize (format " %s " (upcase agent-shell-team--role))
                   'face face))))
 
@@ -1398,6 +1416,9 @@ Route sendNotification calls between team agents."
        ("Runtime Check" "lead")
        (_ "lead")))
     ("researcher"
+     (pcase title
+       (_ "lead")))
+    ("knowledge"
      (pcase title
        (_ "lead")))
     ("lead"
@@ -2568,8 +2589,8 @@ When called from an existing team buffer:
                         (setq agent-shell-team--session-id
                               (agent-shell-team--generate-session-id))))
          (in-team-buffer (not (null (gethash session-id agent-shell-team--sessions))))
-         (role (completing-read "Role: " '("lead" "dev" "tester" "researcher") nil t))
-         (mode (if (member role '("lead" "researcher"))
+         (role (completing-read "Role: " '("lead" "dev" "tester" "researcher" "knowledge") nil t))
+         (mode (if (member role '("lead" "researcher" "knowledge"))
                    "neighbor"  ;; Lead and researcher always work on main tree
                  (if in-team-buffer
                      (completing-read "Mode: " '("isolated" "neighbor") nil t)
