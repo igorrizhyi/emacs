@@ -298,6 +298,8 @@ async def _handle_get_llm_task(arguments: dict) -> list[types.TextContent]:
     task = _get_llm_task(PROJECT_ROOT, task_id)
     if task is None:
         return [types.TextContent(type="text", text=f"Task {task_id} not found")]
+    if task.get("status") == "completed":
+        task.pop("prompt", None)
     return [types.TextContent(type="text", text=json.dumps(task, indent=2))]
 
 
