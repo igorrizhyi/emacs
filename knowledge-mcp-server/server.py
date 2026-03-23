@@ -320,9 +320,8 @@ async def _handle_submit_llm_result(arguments: dict) -> list[types.TextContent]:
 
     try:
         if task_type == "synthesis":
-            # No post-processing needed — result is in the task file
-            cleanup_task(PROJECT_ROOT, task_id)
-            return [types.TextContent(type="text", text=f"Synthesis task {task_id} completed.")]
+            # No cleanup — lead reads the result via get_llm_task after the knowledge agent finishes
+            return [types.TextContent(type="text", text=f"Synthesis task {task_id} completed. Result available via get_llm_task.")]
 
         elif task_type == "entity_extraction":
             graph = await _ensure_graph()

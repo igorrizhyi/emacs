@@ -880,7 +880,7 @@ you MUST dispatch a knowledge processing agent to handle them:
 
 For `query_knowledge` responses with pending tasks:
 - The response contains sources and metadata but NO synthesized answer yet
-- After the agent finishes, read the task result from the agent's report
+- After the knowledge agent reports `taskUpdate finished`, call `get_llm_task(id=UUID)` to read the synthesis result from the `result` field
 - Use the synthesized answer as you would normally
 
 For `store_knowledge` responses with pending tasks:
