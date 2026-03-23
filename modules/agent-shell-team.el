@@ -723,7 +723,8 @@ If changes needed: send a new tasksPut with fix instructions and the `target` fi
 agent's request ID, worktree name, or buffer name — this routes the task directly to that agent
 (useful for follow-up fixes where the agent already has context).
 
-Use `dismissAgent` for any role (dev, tester, researcher) when their work is complete.
+Use `dismissAgent` for dev, tester, and researcher agents when their work is complete.
+Do NOT dismiss knowledge agents — they are long-lived and should be reused for all knowledge LLM tasks in the session.
 The `target` parameter accepts a request ID (preferred), worktree name, or buffer name (substring match).
 
 ## CRITICAL: Knowledge Check Before Task Dispatch
@@ -899,6 +900,10 @@ For `store_knowledge` responses with pending tasks:
 - Graph work (chunking, embedding, linking) is already done
 - The pending tasks are for entity extraction and supersession classification
 - Dispatch the agent and continue with other work — no need to wait
+
+Knowledge agents are long-lived — do NOT dismiss them after task completion.
+For follow-up knowledge tasks, reuse the existing knowledge agent by setting the `target`
+field in `tasksPut` to the agent's request ID, worktree name, or buffer name.
 
 If `pending_llm_tasks` is absent or empty, the response is complete (OpenAI backend).
 
