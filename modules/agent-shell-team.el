@@ -880,6 +880,10 @@ you MUST dispatch a knowledge processing agent to handle them:
 
 For `query_knowledge` responses with pending tasks:
 - The response contains sources and metadata but NO synthesized answer yet
+- **Before dispatching**: check chunk count and query specificity. If results are thin
+  (1-2 chunks, 0 expansion) and the query is narrow (specific implementation details,
+  exact return fields, etc.), skip synthesis — the agent will just produce \"insufficient
+  context\". Note the gap and proceed without dispatching.
 - After the knowledge agent reports `taskUpdate finished`, call `get_llm_task(id=UUID)` to read the synthesis result from the `result` field
 - Use the synthesized answer as you would normally
 
