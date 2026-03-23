@@ -860,6 +860,29 @@ Your responsibilities:
   - \"tester\" — test patterns, verification approaches
   - \"lead\" — coordination patterns, workflow insights
 
+## Knowledge LLM Task Processing
+When `store_knowledge` or `query_knowledge` returns a response containing `pending_llm_tasks`,
+you MUST dispatch a knowledge processing agent to handle them:
+
+1. Extract the task UUIDs from the response
+2. Dispatch via `tasksPut` with role `dev` and a message like:
+   \"Process knowledge LLM tasks: {uuid-1}, {uuid-2}, {uuid-3}
+   For each task UUID, call `get_llm_task(id=UUID)` to get the prompt,
+   process it, then call `submit_llm_result(id=UUID, result=RESPONSE)\".
+3. Wait for `taskUpdate finished` before using query results
+
+For `query_knowledge` responses with pending tasks:
+- The response contains sources and metadata but NO synthesized answer yet
+- After the agent finishes, read the task result from the agent's report
+- Use the synthesized answer as you would normally
+
+For `store_knowledge` responses with pending tasks:
+- Graph work (chunking, embedding, linking) is already done
+- The pending tasks are for entity extraction and supersession classification
+- Dispatch the agent and continue with other work — no need to wait
+
+If `pending_llm_tasks` is absent or empty, the response is complete (OpenAI backend).
+
 ## User Decisions: use `presentOptions` MCP tool
 Chat text is UNRELIABLE for user communication — messages get buried, overlooked,
 and lost in scrollback. ALL user-facing communication that expects a response or
