@@ -845,17 +845,43 @@ async function main() {
   registerTools();
   registerResources();
 
+  const PING_NORMAL_INTERVAL = 30000;
+  const PING_RETRY_INITIAL = 5000;
+  const PING_RETRY_MAX = 60000;
+  const PING_FAILURE_TIMEOUT = 5 * 60 * 1000; // 5 minutes
+
+  let pingRetryDelay = 0;
+  let pingFailureSince: number | null = null;
+
   const ping = async () => {
     try {
       await server.server.ping();
-      log(`Ping successful for session ${sessionId}`);
-      setTimeout(ping, 30000);
+      if (pingFailureSince !== null) {
+        const downtime = Math.round((Date.now() - pingFailureSince) / 1000);
+        log(`Ping recovered for session ${sessionId} after ${downtime}s of failures. Resuming normal ping cycle.`);
+        pingFailureSince = null;
+        pingRetryDelay = 0;
+      } else {
+        log(`Ping successful for session ${sessionId}`);
+      }
+      setTimeout(ping, PING_NORMAL_INTERVAL);
     } catch (error) {
-      log(
-        `Ping failed for session ${sessionId}, Emacs bridge on port ${port}. Exitting...`
-      );
-      await cleanup();
-      process.exit(1);
+      const now = Date.now();
+      if (pingFailureSince === null) {
+        pingFailureSince = now;
+        pingRetryDelay = PING_RETRY_INITIAL;
+        log(`Ping failed for session ${sessionId} — entering suspended state, will retry in ${pingRetryDelay / 1000}s`);
+      } else {
+        const elapsed = now - pingFailureSince;
+        if (elapsed >= PING_FAILURE_TIMEOUT) {
+          log(`Ping has failed for ${Math.round(elapsed / 1000)}s (>${PING_FAILURE_TIMEOUT / 1000}s). CLI appears truly dead. Exiting.`);
+          await cleanup();
+          process.exit(1);
+        }
+        pingRetryDelay = Math.min(pingRetryDelay * 2, PING_RETRY_MAX);
+        log(`Ping still failing for session ${sessionId} (${Math.round(elapsed / 1000)}s elapsed). Retrying in ${pingRetryDelay / 1000}s...`);
+      }
+      setTimeout(ping, pingRetryDelay);
     }
   };
   server.server.oninitialized = () => {
