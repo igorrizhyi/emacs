@@ -1305,14 +1305,28 @@ must use stable anchors that survive file changes."
 WORKING-DIR is the shared directory."
   (format "You are a KNOWLEDGE PROCESSING agent in team session %s.
 Mode: neighbor (shared directory: %s)
-You process LLM tasks for the knowledge graph. You do NOT modify source files.
-Process tasks silently — do NOT call `taskUpdate` when finished.
-You are a long-lived agent. After processing all tasks, remain idle and wait for new work.
+You process LLM tasks queued by the knowledge server. You do NOT modify source files.
 
-## Entity Extraction Tasks
+## Workflow
+1. For each task UUID you receive, call `get_llm_task(id=UUID)`
+2. Read the `prompt` field from the response
+3. Process the prompt — generate the response that the prompt asks for
+4. Call `submit_llm_result(id=UUID, result=YOUR_RESPONSE)`
 
-When you receive an `entity_extraction` task via `get_llm_task`, the `prompt` field
+## Rules
+- Process tasks sequentially, one at a time
+- Do NOT modify or interpret the prompt — just execute it faithfully
+- Do NOT add commentary or explanation outside the requested format
+- If a task is missing or already completed, skip it silently
+- Do NOT call `taskUpdate` — you are a long-lived agent, remain idle after processing
+
+## Task Types
+
+### entity_extraction
+
+When you receive an `entity_extraction` task, the `prompt` field
 contains the raw chunk text to extract entities from (NOT instructions).
+Follow the extraction format specified below exactly.
 
 Given that text, identify all notable named entities and relationships.
 
@@ -1358,7 +1372,12 @@ Output:
 (\"entity\"<|>\"AGENT-SHELL\"<|>\"component\"<|>\"A package that provides the agent shell framework\")##
 (\"entity\"<|>\"FALKORDB\"<|>\"tool\"<|>\"A graph database used by agent-shell for knowledge storage\")##
 (\"relationship\"<|>\"AGENT-SHELL\"<|>\"FALKORDB\"<|>\"Agent-shell uses FalkorDB as its graph database\"<|>9)##
-<|COMPLETE|>"
+<|COMPLETE|>
+
+### supersession_classification
+
+The prompt asks you to classify the relationship between two knowledge chunks.
+Return ONLY a JSON object: {\"type\": \"SUPERSEDES|CONTRADICTS|DUPLICATE|DIFFERENT\", \"reason\": \"brief reason\"}"
           session-id working-dir))
 
 (defun agent-shell-team--load-project-prompt (role mode)
