@@ -2,6 +2,7 @@
 
 (require 'cl-lib)
 (require 'map)
+(require 'text-property-search)
 
 (defun my/agent-shell--parse-table-row (line)
   "Parse a markdown table LINE into a list of cell strings.
@@ -180,6 +181,20 @@ Intended for use in `agent-shell-section-functions'."
                                                   final-lines)))
                         (my/agent-shell--apply-table-faces
                          (+ body-start rel-start) parsed-rows)))))))))))))
+
+(defun my/agent-shell-post-stream-tables (&rest _)
+  "Align tables in the last output block after streaming finishes.
+Intended as :after advice on `shell-maker-finish-output'."
+  (when (derived-mode-p 'agent-shell-mode)
+    (save-excursion
+      (goto-char (point-max))
+      (let ((match (text-property-search-backward 'agent-shell-ui-state)))
+        (when match
+          (let ((range `((:body (:start . ,(prop-match-beginning match))
+                                (:end . ,(prop-match-end match))))))
+            (my/agent-shell-align-tables range)))))))
+
+(advice-add 'shell-maker-finish-output :after #'my/agent-shell-post-stream-tables)
 
 (provide 'my-agent-shell-tables)
 ;;; my-agent-shell-tables.el ends here
