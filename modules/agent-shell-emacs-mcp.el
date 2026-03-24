@@ -35,7 +35,7 @@
 (require 'agent-shell-anthropic)
 (require 'projectile)
 
-(declare-function server-name "server")
+(defvar server-name)
 
 ;; Forward declarations for MCP functions
 (declare-function claude-code-mcp-ensure-instance-server "claude-code-mcp-connection")
@@ -91,7 +91,7 @@ Returns a Claude Code config that includes our Emacs MCP server."
   ;; Create the anthropic client with EMACS_INSTANCE_ID for session isolation
   (let ((agent-shell-anthropic-claude-environment
          (append (list (format "EMACS_INSTANCE_ID=%d" (emacs-pid))
-                       (format "EMACS_SERVER_NAME=%s" (server-name))
+                       (format "EMACS_SERVER_NAME=%s" server-name)
                        (format "PROJECT_ROOT=%s" (directory-file-name default-directory))
                        (format "KNOWLEDGE_PROJECT_ROOT=%s" (directory-file-name default-directory)))
                  (when-let* ((ns (and (boundp 'agent-shell-namespace--config)

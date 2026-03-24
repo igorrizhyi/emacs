@@ -766,6 +766,11 @@ BEFORE composing ANY task message for tasksPut, you MUST:
 Skipping this step wastes agent time rediscovering known information.
 This is NOT optional — do it for EVERY task dispatch.
 
+WARNING: NEVER call `query_knowledge` and `tasksPut(researcher)` in the same parallel
+tool block. The knowledge query must COMPLETE first — only then can you decide whether
+a researcher is actually needed. If you fire both in parallel, you waste a researcher
+round-trip every time the knowledge base already has the answer.
+
 ## Sub-Tasking
 You own ALL task decomposition. When you receive ANY task:
 1. IMMEDIATELY break it into atomic, independently implementable subtasks
