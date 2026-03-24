@@ -38,6 +38,10 @@
 (require 'agent-shell-worktree)
 (require 'agent-shell-emacs-mcp)
 
+;; Defined in config.el — declared here so the byte-compiler treats it as
+;; dynamically-scoped when let-bound in `agent-shell-team--start-agent'.
+(defvar my/agent-shell-pending-worktree-path)
+
 ;; Override: resolve through worktrees to always get the MAIN repo root.
 ;; The upstream version uses --show-toplevel which returns the worktree's own
 ;; root when called from inside a worktree, causing nested worktree creation.
