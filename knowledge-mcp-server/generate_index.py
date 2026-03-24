@@ -1,6 +1,6 @@
 """Auto-generate a knowledge browser index from the FalkorDB knowledge graph.
 
-Introspects Topic nodes and their relationships to produce a structured
+Introspects Chunk sections and their relationships to produce a structured
 markdown file with query blocks for the knowledge browser minor mode.
 
 Usage:
@@ -15,7 +15,7 @@ from common import get_graph, init_schema, set_graph_name
 
 
 # ---------------------------------------------------------------------------
-# Union-Find for topic clustering
+# Union-Find for section clustering
 # ---------------------------------------------------------------------------
 
 
@@ -50,30 +50,33 @@ class UnionFind:
 # ---------------------------------------------------------------------------
 
 
-def fetch_topics(graph):
-    """Return list of (topic_name, chunk_count) sorted by chunk_count desc."""
+def fetch_sections(graph):
+    """Return list of (section_name, chunk_count) sorted by chunk_count desc."""
     result = graph.query(
         """
-        MATCH (t:Topic)<-[:HAS_TOPIC]-(c:Chunk)
+        MATCH (c:Chunk)
+        WHERE c.section IS NOT NULL AND c.section <> ''
         OPTIONAL MATCH (sup:Chunk)-[:SUPERSEDES]->(c)
-        WITH t, c WHERE sup IS NULL
-        RETURN t.name AS topic, count(c) AS chunk_count
+        WITH c WHERE sup IS NULL
+        RETURN c.section AS section, count(c) AS chunk_count
         ORDER BY chunk_count DESC
         """
     )
     return [(row[0], row[1]) for row in result.result_set]
 
 
-def fetch_topic_clusters(graph):
-    """Return list of (topic_a, topic_b, link_strength) for related topics."""
+def fetch_section_clusters(graph):
+    """Return list of (section_a, section_b, link_strength) for related sections."""
     result = graph.query(
         """
-        MATCH (t1:Topic)<-[:HAS_TOPIC]-(c1:Chunk)-[:RELATED_TO]-(c2:Chunk)-[:HAS_TOPIC]->(t2:Topic)
-        WHERE t1.name < t2.name
+        MATCH (c1:Chunk)-[:RELATED_TO]-(c2:Chunk)
+        WHERE c1.section IS NOT NULL AND c1.section <> ''
+          AND c2.section IS NOT NULL AND c2.section <> ''
+          AND c1.section < c2.section
         OPTIONAL MATCH (sup1:Chunk)-[:SUPERSEDES]->(c1)
         OPTIONAL MATCH (sup2:Chunk)-[:SUPERSEDES]->(c2)
-        WITH t1, t2 WHERE sup1 IS NULL AND sup2 IS NULL
-        RETURN t1.name AS topic_a, t2.name AS topic_b, count(*) AS link_strength
+        WITH c1, c2 WHERE sup1 IS NULL AND sup2 IS NULL
+        RETURN c1.section AS section_a, c2.section AS section_b, count(*) AS link_strength
         ORDER BY link_strength DESC
         LIMIT 50
         """
@@ -86,46 +89,46 @@ def fetch_topic_clusters(graph):
 # ---------------------------------------------------------------------------
 
 
-def group_topics(topics, clusters, min_chunks=2):
-    """Group topics into sections using connected components.
+def group_sections(sections, clusters, min_chunks=2):
+    """Group sections into browsable groups using connected components.
 
     Args:
-        topics: list of (topic_name, chunk_count)
-        clusters: list of (topic_a, topic_b, link_strength)
-        min_chunks: minimum chunk count to include a topic
+        sections: list of (section_name, chunk_count)
+        clusters: list of (section_a, section_b, link_strength)
+        min_chunks: minimum chunk count to include a section
 
     Returns:
-        list of (section_heading, [topic_names]) — each group sorted by chunk count
+        list of (section_heading, [section_names]) — each group sorted by chunk count
     """
-    # Filter low-signal topics
-    topic_chunks = {name: count for name, count in topics if count >= min_chunks}
-    if not topic_chunks:
+    # Filter low-signal sections
+    section_chunks = {name: count for name, count in sections if count >= min_chunks}
+    if not section_chunks:
         return []
 
     # Build connected components from cluster edges
     uf = UnionFind()
-    for t in topic_chunks:
-        uf.find(t)  # ensure all topics are registered
+    for s in section_chunks:
+        uf.find(s)  # ensure all sections are registered
 
-    for ta, tb, _strength in clusters:
-        if ta in topic_chunks and tb in topic_chunks:
-            uf.union(ta, tb)
+    for sa, sb, _strength in clusters:
+        if sa in section_chunks and sb in section_chunks:
+            uf.union(sa, sb)
 
     # Collect groups by root
     groups = defaultdict(list)
-    for topic in topic_chunks:
-        root = uf.find(topic)
-        groups[root].append(topic)
+    for section in section_chunks:
+        root = uf.find(section)
+        groups[root].append(section)
 
-    # For each group, sort by chunk count desc and pick the top topic as heading
+    # For each group, sort by chunk count desc and pick the top section as heading
     result = []
     for _root, members in groups.items():
-        members.sort(key=lambda t: topic_chunks[t], reverse=True)
+        members.sort(key=lambda s: section_chunks[s], reverse=True)
         heading = members[0]
         result.append((heading, members))
 
     # Sort groups: largest groups first, then by heading chunk count
-    result.sort(key=lambda g: (len(g[1]), topic_chunks[g[0]]), reverse=True)
+    result.sort(key=lambda g: (len(g[1]), section_chunks[g[0]]), reverse=True)
     return result
 
 
@@ -134,12 +137,12 @@ def group_topics(topics, clusters, min_chunks=2):
 # ---------------------------------------------------------------------------
 
 
-def _build_query(topics):
-    """Build a query string covering the given topics."""
-    if len(topics) == 1:
-        return topics[0]
-    # Combine related topics into a natural query
-    return ", ".join(topics)
+def _build_query(sections):
+    """Build a query string covering the given sections."""
+    if len(sections) == 1:
+        return sections[0]
+    # Combine related sections into a natural query
+    return ", ".join(sections)
 
 
 def generate_markdown(groups):
@@ -190,7 +193,7 @@ def main():
         "--min-chunks",
         type=int,
         default=2,
-        help="Minimum chunk count to include a topic (default: 2)",
+        help="Minimum chunk count to include a section (default: 2)",
     )
     args = parser.parse_args()
 
@@ -209,18 +212,18 @@ def main():
     graph = get_graph()
     init_schema(graph)
 
-    print(f"Graph: connected. Fetching topics...")
-    topics = fetch_topics(graph)
-    print(f"  Found {len(topics)} topics")
+    print(f"Graph: connected. Fetching sections...")
+    sections = fetch_sections(graph)
+    print(f"  Found {len(sections)} sections")
 
-    clusters = fetch_topic_clusters(graph)
-    print(f"  Found {len(clusters)} topic cluster edges")
+    clusters = fetch_section_clusters(graph)
+    print(f"  Found {len(clusters)} section cluster edges")
 
-    groups = group_topics(topics, clusters, min_chunks=args.min_chunks)
-    print(f"  Grouped into {len(groups)} sections")
+    groups = group_sections(sections, clusters, min_chunks=args.min_chunks)
+    print(f"  Grouped into {len(groups)} groups")
 
     if not groups:
-        print("No topics with sufficient chunks found. Skipping index generation.")
+        print("No sections with sufficient chunks found. Skipping index generation.")
         return
 
     content = generate_markdown(groups)
@@ -230,8 +233,8 @@ def main():
         f.write(content)
 
     print(f"Index written to {output_path}")
-    total_topics = sum(len(m) for _, m in groups)
-    print(f"  {len(groups)} sections covering {total_topics} topics")
+    total_sections = sum(len(m) for _, m in groups)
+    print(f"  {len(groups)} groups covering {total_sections} sections")
 
 
 if __name__ == "__main__":

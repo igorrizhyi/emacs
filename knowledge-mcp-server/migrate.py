@@ -18,7 +18,6 @@ from common import (
     chunk_knowledge_file,
     chunk_report,
     ingest_chunks,
-    create_topic_links,
     create_similarity_edges,
     create_cross_role_edges,
     detect_supersession,
@@ -109,9 +108,6 @@ def migrate(knowledge_dir: str, clean: bool = False, project: str = None,
     print(f"\nIngesting {len(all_chunks)} chunks...")
     ingest_chunks(graph, all_chunks, project=project)
 
-    print("Creating topic links...")
-    create_topic_links(graph, all_chunks)
-
     print("Creating similarity edges...")
     create_similarity_edges(graph)
 
@@ -122,14 +118,12 @@ def migrate(knowledge_dir: str, clean: bool = False, project: str = None,
     )
 
     # Print stats
-    topic_count = graph.query("MATCH (t:Topic) RETURN count(t)").result_set[0][0]
     related_count = graph.query("MATCH ()-[r:RELATED_TO]->() RETURN count(r)").result_set[0][0]
 
     print(f"\n--- Migration Stats ---")
     for fname, count in file_stats.items():
         print(f"  {fname}: {count} chunks")
     print(f"  Total chunks: {len(all_chunks)}")
-    print(f"  Topics: {topic_count}")
     print(f"  RELATED_TO edges: {related_count}")
     if with_supersession:
         print(f"  Supersessions: {supersession_count}")
@@ -201,9 +195,6 @@ def migrate_reports(reports_dir: str, project: str = None,
     print(f"\nIngesting {len(all_chunks)} chunks from {report_count} reports...")
     ingest_chunks(graph, all_chunks, project=project)
 
-    print("Creating topic links...")
-    create_topic_links(graph, all_chunks)
-
     print("Creating similarity edges (full rebuild)...")
     create_similarity_edges(graph)
 
@@ -226,8 +217,8 @@ def migrate_reports(reports_dir: str, project: str = None,
 def migrate_from_graph(source_graph_name: str, project: str):
     """Copy all Chunk nodes from a source graph into the current namespace graph.
 
-    Preserves embeddings, Topic nodes, and all relationships (HAS_TOPIC,
-    FOR_ROLE, RELATED_TO).  Uses MERGE on chunk/topic IDs for idempotency.
+    Preserves embeddings and all relationships (FOR_ROLE, RELATED_TO).
+    Uses MERGE on chunk IDs for idempotency.
     """
     db = FalkorDB(host=FALKORDB_HOST, port=FALKORDB_PORT)
     src = db.select_graph(source_graph_name)
@@ -295,25 +286,7 @@ def migrate_from_graph(source_graph_name: str, project: str):
 
     print(f"  Copied {len(chunks)} chunks")
 
-    # --- 2. Copy Topic nodes and HAS_TOPIC relationships ---
-    print("Copying topics and HAS_TOPIC edges...")
-    topic_res = src.query(
-        "MATCH (c:Chunk)-[:HAS_TOPIC]->(t:Topic) "
-        "RETURN c.id, t.name"
-    )
-    topic_edges = topic_res.result_set
-    for cid, tname in topic_edges:
-        dst.query(
-            """
-            MATCH (c:Chunk {id: $id})
-            MERGE (t:Topic {name: $topic})
-            MERGE (c)-[:HAS_TOPIC]->(t)
-            """,
-            params={"id": cid, "topic": tname},
-        )
-    print(f"  Copied {len(topic_edges)} HAS_TOPIC edges")
-
-    # --- 3. Copy FOR_ROLE relationships ---
+    # --- 2. Copy FOR_ROLE relationships ---
     print("Copying FOR_ROLE edges...")
     role_res = src.query(
         "MATCH (c:Chunk)-[:FOR_ROLE]->(r:Role) "
@@ -331,7 +304,7 @@ def migrate_from_graph(source_graph_name: str, project: str):
         )
     print(f"  Copied {len(role_edges)} FOR_ROLE edges")
 
-    # --- 4. Copy RELATED_TO relationships ---
+    # --- 3. Copy RELATED_TO relationships ---
     print("Copying RELATED_TO edges...")
     rel_res = src.query(
         "MATCH (a:Chunk)-[r:RELATED_TO]->(b:Chunk) "
@@ -351,15 +324,13 @@ def migrate_from_graph(source_graph_name: str, project: str):
 
     # --- Stats ---
     dst_chunks = dst.query("MATCH (c:Chunk) RETURN count(c)").result_set[0][0]
-    dst_topics = dst.query("MATCH (t:Topic) RETURN count(t)").result_set[0][0]
     dst_related = dst.query("MATCH ()-[r:RELATED_TO]->() RETURN count(r)").result_set[0][0]
 
     print(f"\n--- Graph-to-Graph Migration Stats ---")
     print(f"  Source chunks copied: {len(chunks)}")
-    print(f"  HAS_TOPIC edges:     {len(topic_edges)}")
     print(f"  FOR_ROLE edges:      {len(role_edges)}")
     print(f"  RELATED_TO edges:    {len(rel_edges)}")
-    print(f"  Target graph totals: {dst_chunks} chunks, {dst_topics} topics, {dst_related} RELATED_TO")
+    print(f"  Target graph totals: {dst_chunks} chunks, {dst_related} RELATED_TO")
     print("Done.")
 
 

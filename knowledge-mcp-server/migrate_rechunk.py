@@ -18,7 +18,6 @@ from common import (
     chunk_report,
     chunk_id,
     ingest_chunks,
-    create_topic_links,
     create_supersedes_edges,
     create_similarity_edges_for_chunks,
 )
@@ -136,10 +135,6 @@ def migrate_rechunk(dry_run: bool = False):
     # Ingest new chunks
     logger.info("\nIngesting %d new chunks...", len(all_new_chunks))
     ingest_chunks(graph, all_new_chunks)
-
-    # Create topic links for new chunks
-    logger.info("Creating topic links...")
-    create_topic_links(graph, all_new_chunks)
 
     # Create SUPERSEDES edges
     logger.info("Creating %d SUPERSEDES edges...", len(supersessions))

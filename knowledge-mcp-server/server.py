@@ -14,7 +14,7 @@ from common import (
     GRAPH_NAME, KNOWLEDGE_LLM_BACKEND, NAMESPACE, PROJECT_ROOT,
     EMACS_SERVER_NAME, KNOWLEDGE_PROJECT_ROOT,
     get_graph, init_schema, ingest_chunks, query_knowledge, chunk_id,
-    chunk_report, create_topic_links, create_similarity_edges_for_chunks,
+    chunk_report, create_similarity_edges_for_chunks,
     create_cross_role_edges,
     detect_supersession, create_supersedes_edges,
     _resolve_project, _CLASSIFY_PROMPT,
@@ -279,7 +279,6 @@ async def _store_and_queue_llm(content: str, source: str, roles: list[str]) -> l
 
         # Synchronous graph work (fast: embedding + graph writes)
         ingest_chunks(graph, chunks, project=project)
-        create_topic_links(graph, chunks)
         new_ids = [c["id"] for c in chunks]
         create_similarity_edges_for_chunks(graph, new_ids)
         create_cross_role_edges(graph, new_ids)
@@ -326,7 +325,6 @@ async def _store_knowledge_bg(content: str, source: str, roles: list[str]):
                 return
 
             ingest_chunks(graph, chunks, project=project)
-            create_topic_links(graph, chunks)
             new_ids = [c["id"] for c in chunks]
             create_similarity_edges_for_chunks(graph, new_ids)
             create_cross_role_edges(graph, new_ids)
