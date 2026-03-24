@@ -142,43 +142,44 @@ PARSED-ROWS is list of (LINE-TEXT . CELLS)."
 (defun my/agent-shell-align-tables (range)
   "Align markdown tables in the body region of RANGE.
 Intended for use in `agent-shell-section-functions'."
-  (let ((body-start (map-nested-elt range '(:body :start)))
-        (body-end (map-nested-elt range '(:body :end))))
-    (when (and body-start body-end (< body-start body-end))
-      (let* ((body-text (buffer-substring-no-properties body-start body-end))
-             (regions (my/agent-shell--find-table-regions body-text)))
-        (when regions
-          ;; Process regions in reverse order so offsets stay valid
-          (let ((inhibit-read-only t))
-            ;; First remove old table overlays in the body region
-            (dolist (ov (overlays-in body-start body-end))
-              (when (overlay-get ov 'my-agent-shell-table)
-                (delete-overlay ov)))
-            (dolist (region (reverse regions))
-              (let* ((rel-start (car region))
-                     (rel-end (cdr region))
-                     (table-text (substring body-text rel-start rel-end))
-                     (abs-start (+ body-start rel-start))
-                     (abs-end (+ body-start rel-end)))
-                ;; Only align complete tables
-                (when (my/agent-shell--table-complete-p body-text rel-end)
-                  (let ((aligned (my/agent-shell--align-table-string table-text)))
-                    (when (and aligned (not (string= aligned table-text)))
-                      ;; Replace in buffer
-                      (goto-char abs-start)
-                      (delete-region abs-start abs-end)
-                      (insert aligned)
-                      ;; Update body-end for subsequent regions
-                      (let ((delta (- (length aligned) (length table-text))))
-                        (setq body-end (+ body-end delta))))
-                    ;; Apply faces (use current position after potential replacement)
-                    (let* ((final-text (or aligned table-text))
-                           (final-lines (split-string final-text "\n" t))
-                           (parsed-rows (mapcar (lambda (l)
-                                                  (cons l (my/agent-shell--parse-table-row l)))
-                                                final-lines)))
-                      (my/agent-shell--apply-table-faces
-                       (+ body-start rel-start) parsed-rows))))))))))))
+  (unless (and (boundp 'shell-maker--busy) shell-maker--busy)
+    (let ((body-start (map-nested-elt range '(:body :start)))
+          (body-end (map-nested-elt range '(:body :end))))
+      (when (and body-start body-end (< body-start body-end))
+        (let* ((body-text (buffer-substring-no-properties body-start body-end))
+               (regions (my/agent-shell--find-table-regions body-text)))
+          (when regions
+            ;; Process regions in reverse order so offsets stay valid
+            (let ((inhibit-read-only t))
+              ;; First remove old table overlays in the body region
+              (dolist (ov (overlays-in body-start body-end))
+                (when (overlay-get ov 'my-agent-shell-table)
+                  (delete-overlay ov)))
+              (dolist (region (reverse regions))
+                (let* ((rel-start (car region))
+                       (rel-end (cdr region))
+                       (table-text (substring body-text rel-start rel-end))
+                       (abs-start (+ body-start rel-start))
+                       (abs-end (+ body-start rel-end)))
+                  ;; Only align complete tables
+                  (when (my/agent-shell--table-complete-p body-text rel-end)
+                    (let ((aligned (my/agent-shell--align-table-string table-text)))
+                      (when (and aligned (not (string= aligned table-text)))
+                        ;; Replace in buffer
+                        (goto-char abs-start)
+                        (delete-region abs-start abs-end)
+                        (insert aligned)
+                        ;; Update body-end for subsequent regions
+                        (let ((delta (- (length aligned) (length table-text))))
+                          (setq body-end (+ body-end delta))))
+                      ;; Apply faces (use current position after potential replacement)
+                      (let* ((final-text (or aligned table-text))
+                             (final-lines (split-string final-text "\n" t))
+                             (parsed-rows (mapcar (lambda (l)
+                                                    (cons l (my/agent-shell--parse-table-row l)))
+                                                  final-lines)))
+                        (my/agent-shell--apply-table-faces
+                         (+ body-start rel-start) parsed-rows)))))))))))))
 
 (provide 'my-agent-shell-tables)
 ;;; my-agent-shell-tables.el ends here
