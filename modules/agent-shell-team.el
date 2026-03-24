@@ -2142,11 +2142,14 @@ Route the status update directly to the lead agent's queue."
                                     :status st
                                     :commit cmt
                                     :completed-at (float-time))))))
-                       ;; Clean up tracking tables and handle group completion when finished
+                       ;; Clean up tracking tables and handle group completion when finished.
+                       ;; NOTE: We only remove from active-tasks here. The request-to-buffer
+                       ;; and request-to-session mappings are kept so that dismissAgent can
+                       ;; still find agents by request-id after task completion. Those entries
+                       ;; are cleaned up by cleanup-agent when the agent is actually dismissed,
+                       ;; and by assign-task-to-agent which proactively clears stale entries.
                        (when (equal st "finished")
                          (remhash rid agent-shell-team--active-tasks)
-                         (remhash rid agent-shell-team--request-to-buffer)
-                         (remhash rid agent-shell-team--request-to-session)
                          (when-let ((group-id (gethash rid agent-shell-team--request-to-group)))
                            (agent-shell-team--handle-task-completion rid sid nil))))))
       t)))
