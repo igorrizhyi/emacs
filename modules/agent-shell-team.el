@@ -2095,35 +2095,39 @@ Route the status update directly to the lead agent's queue."
                                      status request-id))
       ;; Defer all side effects (notify, deliver, persist, group completion)
       ;; out of the websocket process filter to avoid blocking Emacs.
-      (let ((msg message-text)
-            (sid session-id)
-            (lbuf lead-buf)
-            (rid request-id)
-            (st status)
-            (cmt commit))
+      (let* ((msg message-text)
+             (sid session-id)
+             (lbuf lead-buf)
+             (rid request-id)
+             (st status)
+             (cmt commit)
+             (knowledge-p (or (string-prefix-p "kb-auto-" rid)
+                              (equal "knowledge"
+                                     (plist-get (gethash rid agent-shell-team--active-tasks) :role)))))
         (run-at-time 0 nil
                      (lambda ()
-                       ;; Desktop notification for task lifecycle events
-                       (when (member st '("finished" "blocked"))
-                         (agent-shell-team--notify
-                          (format "Task %s" (capitalize st))
-                          (format "%s" rid)))
-                       (if lbuf
-                           ;; Deliver or queue to lead
-                           (let ((lead-status (agent-shell-team--agent-status lbuf)))
-                             (pcase lead-status
-                               ('idle (agent-shell-team--prompt-agent lbuf msg))
-                               ((or 'busy 'initializing)
-                                (agent-shell-team--queue-message sid lbuf
-                                                                 (list :from "agent" :title "Task Update" :message msg)))
-                               ('dead (agent-shell-team--log sid "WARNING: lead buffer is dead"))))
-                         ;; No lead yet — queue for later delivery
-                         (when sid
-                           (agent-shell-team--log sid "taskUpdate queued pending lead registration")
-                           (let ((existing (gethash sid agent-shell-team--pending-for-lead)))
-                             (puthash sid (append existing (list msg))
-                                      agent-shell-team--pending-for-lead))
-                           (agent-shell-team--start-drain-timer)))
+                       (unless knowledge-p
+                         ;; Desktop notification for task lifecycle events
+                         (when (member st '("finished" "blocked"))
+                           (agent-shell-team--notify
+                            (format "Task %s" (capitalize st))
+                            (format "%s" rid)))
+                         (if lbuf
+                             ;; Deliver or queue to lead
+                             (let ((lead-status (agent-shell-team--agent-status lbuf)))
+                               (pcase lead-status
+                                 ('idle (agent-shell-team--prompt-agent lbuf msg))
+                                 ((or 'busy 'initializing)
+                                  (agent-shell-team--queue-message sid lbuf
+                                                                   (list :from "agent" :title "Task Update" :message msg)))
+                                 ('dead (agent-shell-team--log sid "WARNING: lead buffer is dead"))))
+                           ;; No lead yet — queue for later delivery
+                           (when sid
+                             (agent-shell-team--log sid "taskUpdate queued pending lead registration")
+                             (let ((existing (gethash sid agent-shell-team--pending-for-lead)))
+                               (puthash sid (append existing (list msg))
+                                        agent-shell-team--pending-for-lead))
+                             (agent-shell-team--start-drain-timer))))
                        ;; Persist task status update (skip knowledge tasks)
                        (when sid
                          (let ((role (plist-get (gethash rid agent-shell-team--active-tasks) :role)))
