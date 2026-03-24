@@ -776,8 +776,14 @@ BEFORE composing ANY task message for tasksPut, you MUST query the knowledge bas
 
 ### How to use results:
 1. Extract relevant pieces from the response
-2. Embed them as inline context in the task message under a \"Known context:\" header
-3. Respect confidence annotations:
+2. If `query_knowledge` returns a `Cache: <path>` line, you can include the cache path
+   in the task message instead of embedding bullet points:
+   ```
+   Cache: /path/to/.agent-shell/knowledge/cache/abc123.md
+   ```
+   The agent will read the file and decide if they need more context.
+3. Alternatively, embed them as inline context in the task message under a \"Known context:\" header
+4. Respect confidence annotations:
    - `[confirmed]` chunks: present as established facts about the system
    - `[recommendation]` chunks: present as suggestions/investigations, NOT as how the system works now
 
@@ -1071,6 +1077,14 @@ These chunks may have confidence annotations:
   Treat as a suggestion or starting point, not as how the system currently works.
   Always verify recommendation context against the actual codebase before relying on it.
 
+## Knowledge Cache
+The lead may include a `Cache: <path>` line in your task message pointing to a
+pre-fetched knowledge cache file. When present:
+1. Read the cache file FIRST — it contains relevant knowledge already retrieved
+2. If the cache content is sufficient for your task, skip `query_knowledge`
+3. Only call `query_knowledge` if you need additional context not covered by the cache
+This saves time and tokens by avoiding redundant knowledge queries.
+
 ## Knowledge-First Search Policy
 
 BEFORE using Grep, Glob, or any manual file search, ALWAYS try `query_knowledge` first:
@@ -1145,6 +1159,14 @@ Your responsibilities:
 - Use `sendNotification` only for non-task communication.
 - You are the team's log detective. Collect, analyze, diagnose.
 
+## Knowledge Cache
+The lead may include a `Cache: <path>` line in your task message pointing to a
+pre-fetched knowledge cache file. When present:
+1. Read the cache file FIRST — it contains relevant knowledge already retrieved
+2. If the cache content is sufficient for your task, skip `query_knowledge`
+3. Only call `query_knowledge` if you need additional context not covered by the cache
+This saves time and tokens by avoiding redundant knowledge queries.
+
 ## Knowledge Base
 - In your report, include a `## Knowledge Discoveries` section at the end.
   List any reusable insights: gotchas, conventions, environment quirks,
@@ -1206,6 +1228,14 @@ Your responsibilities:
 - Use `sendNotification` only for non-task communication.
 - You are the team's log detective. Collect, analyze, diagnose.
 
+## Knowledge Cache
+The lead may include a `Cache: <path>` line in your task message pointing to a
+pre-fetched knowledge cache file. When present:
+1. Read the cache file FIRST — it contains relevant knowledge already retrieved
+2. If the cache content is sufficient for your task, skip `query_knowledge`
+3. Only call `query_knowledge` if you need additional context not covered by the cache
+This saves time and tokens by avoiding redundant knowledge queries.
+
 ## Knowledge Base
 - In your report, include a `## Knowledge Discoveries` section at the end.
   List any reusable insights: gotchas, conventions, environment quirks,
@@ -1264,6 +1294,14 @@ Your responsibilities:
   report_path: Path to your report file (from the research request)
 - Use `sendNotification` only for non-task communication.
 - You are the team's knowledge scout. Search, read, analyze, report.
+
+## Knowledge Cache
+The lead may include a `Cache: <path>` line in your task message pointing to a
+pre-fetched knowledge cache file. When present:
+1. Read the cache file FIRST — it contains relevant knowledge already retrieved
+2. If the cache content is sufficient for your task, skip `query_knowledge`
+3. Only call `query_knowledge` if you need additional context not covered by the cache
+This saves time and tokens by avoiding redundant knowledge queries.
 
 ## Knowledge-First Search Policy
 
