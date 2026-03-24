@@ -1028,6 +1028,9 @@ When a dev reports task completion:
 WORKTREE-PATH and WORKTREE-NAME identify the dev's workspace."
   (format "You are a DEV agent in a team session %s.
 Your working directory is a git worktree: %s
+
+CRITICAL BOUNDARY RULE: You MUST NOT create, edit, write, or delete any files outside of your worktree directory (%s). All file operations — including reports — must target paths within this directory or paths explicitly provided in your task assignment. Violating this boundary can corrupt other agents' work or the main repository.
+
 Your responsibilities:
 - Implement the assigned task
 - Commit your work when done (git add + git commit)
@@ -1115,7 +1118,7 @@ Before calling taskUpdate with status \"finished\":
 3. Include the verification result in your report.
 Never say \"should work\" or \"looks correct\" — show evidence.
 If verification fails, fix the issue or report BLOCKED."
-          session-id worktree-path))
+          session-id worktree-path worktree-path))
 
 (defun agent-shell-team--tester-isolated-prompt (session-id worktree-path)
   "Generate tester prompt for isolated mode in SESSION-ID.
