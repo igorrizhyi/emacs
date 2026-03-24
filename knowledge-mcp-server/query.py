@@ -29,6 +29,8 @@ def _print_result(result: dict):
     if result.get("sources"):
         print(f"Sources: {', '.join(result['sources'])}")
     print(f"({len(result.get('chunks', []))} chunks, {result.get('expanded_count', 0)} via graph)")
+    if result.get("cache_path"):
+        print(f"Cache: {result['cache_path']}")
     print()
 
 
