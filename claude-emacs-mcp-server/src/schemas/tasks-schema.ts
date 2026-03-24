@@ -8,6 +8,7 @@ export const tasksPutInputSchema = z.object({
     group_id: z.string().optional().describe('Batch group ID'),
     request_id: z.string().optional().describe('Custom request ID'),
     target: z.string().optional().describe('Buffer name or worktree name of a specific agent to assign this task to'),
+    priority: z.enum(["normal", "interrupt"]).optional().describe('Priority level. "interrupt" delivers to busy agent immediately when they finish current turn'),
   })).describe('Array of tasks to assign'),
 });
 
