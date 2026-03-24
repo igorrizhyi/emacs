@@ -420,7 +420,7 @@ Uses `org-id-uuid' if available, falls back to uuidgen."
   "Return reports directory for SESSION-ID, creating it if needed."
   (let ((dir (expand-file-name
               (format ".agent-shell/reports/%s/" session-id)
-              (or (projectile-project-root) default-directory))))
+              (file-truename (or (projectile-project-root) default-directory)))))
     (unless (file-directory-p dir)
       (make-directory dir t))
     dir))
