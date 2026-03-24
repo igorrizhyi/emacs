@@ -22,6 +22,21 @@ logger = logging.getLogger(__name__)
 
 ENTITY_TYPES = ["component", "concept", "tool", "identifier", "location"]
 
+
+def normalize_entity_name(name: str) -> str:
+    """Normalize an entity name for deduplication.
+
+    - Uppercase
+    - Strip trailing parentheses (e.g. ``DETECT_SUPERSESSION()`` → ``DETECT SUPERSESSION``)
+    - Replace hyphens and underscores with spaces
+    - Collapse whitespace
+    """
+    name = name.upper()
+    name = re.sub(r"\(.*?\)\s*$", "", name)  # strip trailing parens
+    name = name.replace("-", " ").replace("_", " ")
+    name = re.sub(r"\s+", " ", name).strip()
+    return name
+
 TUPLE_DELIMITER = "<|>"
 RECORD_DELIMITER = "##"
 COMPLETION_DELIMITER = "<|COMPLETE|>"
@@ -60,6 +75,7 @@ Use **{record_delim}** as the list delimiter.
 
 Important: Extract ANY notable named thing regardless of type. The types above are hints, \
 not constraints. The value is in entity names and descriptions.
+- Do NOT extract git commit hashes (e.g., c5d4603, bacea92) as entities. They are ephemeral references, not meaningful concepts.
 
 -Examples-
 Example 1:
@@ -107,7 +123,7 @@ def parse_extraction_output(output: str) -> tuple[list[dict], list[dict]]:
 
         if len(attributes) >= 4 and attributes[0].lower() == "entity":
             entities.append({
-                "name": attributes[1].upper(),
+                "name": normalize_entity_name(attributes[1]),
                 "type": attributes[2].lower(),
                 "description": attributes[3],
             })
@@ -117,8 +133,8 @@ def parse_extraction_output(output: str) -> tuple[list[dict], list[dict]]:
             except (ValueError, IndexError):
                 weight = 5.0
             relationships.append({
-                "source": attributes[1].upper(),
-                "target": attributes[2].upper(),
+                "source": normalize_entity_name(attributes[1]),
+                "target": normalize_entity_name(attributes[2]),
                 "description": attributes[3],
                 "weight": weight,
             })

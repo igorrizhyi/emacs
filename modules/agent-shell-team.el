@@ -1320,6 +1320,7 @@ When finished, output <|COMPLETE|> on its own line.
 
 Important: Extract ANY notable named thing regardless of type. The types above are
 hints, not constraints. The value is in entity names and descriptions.
+- Do NOT extract git commit hashes (e.g., c5d4603, bacea92) as entities. They are ephemeral references, not meaningful concepts.
 
 ### Example
 Input text: \"The agent-shell package uses FalkorDB as its graph database.\"
