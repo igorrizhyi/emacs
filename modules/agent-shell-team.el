@@ -1550,8 +1550,9 @@ Only the lead role may call this.  Returns an alist with success/message."
           (let ((wt-name (alist-get 'worktree-name agent))
                 (buf (alist-get 'buffer agent))
                 (role (alist-get 'role agent)))
-            ;; Never dismiss the lead
+            ;; Never dismiss the lead or knowledge agents (singletons)
             (when (and (not (equal role "lead"))
+                       (not (equal role "knowledge"))
                        (not found)
                        (or (and wt-name (string-match-p (regexp-quote target) wt-name))
                            (and (buffer-live-p buf)
@@ -1615,6 +1616,17 @@ Only the lead role may call this.  Returns an alist with success/message."
                                                    (string-match-p (regexp-quote target) (buffer-name buf)))))
                                  t)))
                            all-agents))
+                 (knowledge-match
+                  (cl-some (lambda (agent)
+                             (let ((wt-name (alist-get 'worktree-name agent))
+                                   (buf (alist-get 'buffer agent))
+                                   (role (alist-get 'role agent)))
+                               (when (and (equal role "knowledge")
+                                          (or (and wt-name (string-match-p (regexp-quote target) wt-name))
+                                              (and (buffer-live-p buf)
+                                                   (string-match-p (regexp-quote target) (buffer-name buf)))))
+                                 t)))
+                           all-agents))
                  (active-names
                   (cl-loop for agent in all-agents
                            for role = (alist-get 'role agent)
@@ -1636,6 +1648,8 @@ Only the lead role may call this.  Returns an alist with success/message."
                     "This request-id was previously assigned, but the agent was dismissed or reassigned.")
                    (lead-match
                     "Target matches the lead agent, which cannot be dismissed.")
+                   (knowledge-match
+                    "Target matches the knowledge agent, which is a singleton and cannot be dismissed.")
                    (t nil))))
             `((success . nil)
               (message . ,(format "No agent found matching '%s'. %s%s"
@@ -1986,7 +2000,8 @@ Returns the new agent buffer."
                    session-id role mode directory worktree-path worktree-name
                    :no-focus t)))
       (with-current-buffer buffer
-        (setq agent-shell-team--ephemeral t))
+        (unless (equal role "knowledge")
+          (setq agent-shell-team--ephemeral t)))
       (agent-shell-team--start-drain-timer)
       (agent-shell-team--log session-id
        (format "Auto-spawned %s agent (%s mode%s) buffer=%s"
@@ -2093,10 +2108,15 @@ reached its max agent count, auto-spawn a new agent."
                                              (memq (agent-shell-team--agent-status
                                                     (alist-get 'buffer a))
                                                    '(initializing))))
-                                      role-agents)))
-                                (message "[try-assign] Spawn decision: not-lead=%s under-max=%s(max=%d) no-initializing=%s"
-                                         is-not-lead under-max agent-shell-team-max-agents-per-role (not has-initializing))
-                                (if (and is-not-lead under-max (not has-initializing))
+                                      role-agents))
+                                    ;; For knowledge role: singleton — never spawn if ANY knowledge agent exists
+                                    (is-not-singleton (not (and (equal role "knowledge")
+                                                                (cl-some (lambda (a)
+                                                                           (equal (alist-get 'role a) "knowledge"))
+                                                                         all-agents)))))
+                                (message "[try-assign] Spawn decision: not-lead=%s under-max=%s(max=%d) no-initializing=%s singleton-ok=%s"
+                                         is-not-lead under-max agent-shell-team-max-agents-per-role (not has-initializing) is-not-singleton)
+                                (if (and is-not-lead under-max (not has-initializing) is-not-singleton)
                                     (progn
                                       (agent-shell-team--log session-id
                                        (format "[auto-spawn] No idle %s agent, spawning new one" role))
