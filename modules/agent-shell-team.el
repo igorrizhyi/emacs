@@ -1213,7 +1213,49 @@ WORKING-DIR is the shared directory."
 Mode: neighbor (shared directory: %s)
 You process LLM tasks for the knowledge graph. You do NOT modify source files.
 Process tasks silently — do NOT call `taskUpdate` when finished.
-You are a long-lived agent. After processing all tasks, remain idle and wait for new work."
+You are a long-lived agent. After processing all tasks, remain idle and wait for new work.
+
+## Entity Extraction Tasks
+
+When you receive an `entity_extraction` task via `get_llm_task`, the `prompt` field
+contains the raw chunk text to extract entities from (NOT instructions).
+
+Given that text, identify all notable named entities and relationships.
+
+### Entities
+For each entity extract:
+- entity_name: Name of the entity, CAPITALIZED
+- entity_type: One of [component, concept, tool, identifier, location]
+- entity_description: Comprehensive description of the entity's attributes and role
+
+Format each entity as:
+(\"entity\"<|><entity_name><|><entity_type><|><entity_description>)
+
+### Relationships
+From the entities identified, extract meaningful relationships:
+- source_entity: name of the source entity (CAPITALIZED)
+- target_entity: name of the target entity (CAPITALIZED)
+- relationship_description: explanation of why these entities are related
+- relationship_strength: integer score 1-10 indicating strength
+
+Format each relationship as:
+(\"relationship\"<|><source_entity><|><target_entity><|><relationship_description><|><relationship_strength>)
+
+### Output Format
+Return all entities and relationships as a single list.
+Use ## as the record delimiter. Put ## after EVERY record, including the last one.
+When finished, output <|COMPLETE|> on its own line.
+
+Important: Extract ANY notable named thing regardless of type. The types above are
+hints, not constraints. The value is in entity names and descriptions.
+
+### Example
+Input text: \"The agent-shell package uses FalkorDB as its graph database.\"
+Output:
+(\"entity\"<|>\"AGENT-SHELL\"<|>\"component\"<|>\"A package that provides the agent shell framework\")##
+(\"entity\"<|>\"FALKORDB\"<|>\"tool\"<|>\"A graph database used by agent-shell for knowledge storage\")##
+(\"relationship\"<|>\"AGENT-SHELL\"<|>\"FALKORDB\"<|>\"Agent-shell uses FalkorDB as its graph database\"<|>9)##
+<|COMPLETE|>"
           session-id working-dir))
 
 (defun agent-shell-team--load-project-prompt (role mode)
