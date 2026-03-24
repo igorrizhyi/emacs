@@ -754,15 +754,20 @@ Use `dismissAgent` for dev, tester, and researcher agents when their work is com
 The `target` parameter accepts a request ID (preferred), worktree name, or buffer name (substring match).
 
 ## CRITICAL: Knowledge Check Before Task Dispatch
-BEFORE composing ANY task message for tasksPut, you MUST:
-1. Call the `query_knowledge` MCP tool with:
-   - `query`: keywords/topics relevant to the task being dispatched
-   - `role`: the target agent's role (\"dev\", \"researcher\", or \"tester\")
-2. Extract relevant pieces from the response
-3. Embed them as inline context in the task message under a \"Known context:\" header
-4. When embedding knowledge, respect confidence annotations:
+BEFORE composing ANY task message for tasksPut, you MUST query the knowledge base first.
+
+### How to query:
+1. Call `query_knowledge` with your full question/topic as-is
+2. If results are poor or irrelevant, simplify the query to core keywords and try again
+3. Only after evaluating the results, decide whether to dispatch a researcher or go straight to dev
+
+### How to use results:
+1. Extract relevant pieces from the response
+2. Embed them as inline context in the task message under a \"Known context:\" header
+3. Respect confidence annotations:
    - `[confirmed]` chunks: present as established facts about the system
    - `[recommendation]` chunks: present as suggestions/investigations, NOT as how the system works now
+
 Skipping this step wastes agent time rediscovering known information.
 This is NOT optional — do it for EVERY task dispatch.
 
