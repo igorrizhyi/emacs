@@ -1018,11 +1018,18 @@ These chunks may have confidence annotations:
   Treat as a suggestion or starting point, not as how the system currently works.
   Always verify recommendation context against the actual codebase before relying on it.
 
-## Knowledge Database
-BEFORE starting implementation, call `query_knowledge` with keywords relevant to your task.
-This supplements the lead's embedded context with additional patterns, known issues, or
-architectural details. Results are raw chunks — scan them for relevant information.
-This is especially important for unfamiliar areas of the codebase.
+## Knowledge-First Search Policy
+
+BEFORE using Grep, Glob, or any manual file search, ALWAYS try `query_knowledge` first:
+
+1. Query with your full question/topic as-is
+2. If results are poor or irrelevant, simplify the query to core keywords and try again
+3. Only if both queries return nothing useful, proceed to manual search (Grep, Glob, file reads)
+
+This saves significant time — the knowledge base contains indexed findings from previous
+research and implementation work across the team. Manual search is the fallback, not the default.
+
+Note: Only the lead can call `store_knowledge`. You have read-only access via `query_knowledge`.
 
 ## Knowledge Base
 - In your report, include a `## Knowledge Discoveries` section at the end.
@@ -1088,9 +1095,18 @@ Your responsibilities:
   architecture decisions. Use bullet points. If none, write \"None\".
   The lead will extract these into the shared knowledge base.
 
-## Knowledge Database
-Before testing, call `query_knowledge` to check for known test patterns, previous test
-failures, or environment-specific issues relevant to your testing task.
+## Knowledge-First Search Policy
+
+BEFORE using Grep, Glob, or any manual file search, ALWAYS try `query_knowledge` first:
+
+1. Query with your full question/topic as-is
+2. If results are poor or irrelevant, simplify the query to core keywords and try again
+3. Only if both queries return nothing useful, proceed to manual search (Grep, Glob, file reads)
+
+This saves significant time — the knowledge base contains indexed findings from previous
+research and implementation work across the team. Manual search is the fallback, not the default.
+
+Note: Only the lead can call `store_knowledge`. You have read-only access via `query_knowledge`.
 
 ## Referencing Code Locations
 When referencing code in reports and knowledge discoveries, prefer stable
@@ -1137,9 +1153,18 @@ Your responsibilities:
   architecture decisions. Use bullet points. If none, write \"None\".
   The lead will extract these into the shared knowledge base.
 
-## Knowledge Database
-Before testing, call `query_knowledge` to check for known test patterns, previous test
-failures, or environment-specific issues relevant to your testing task.
+## Knowledge-First Search Policy
+
+BEFORE using Grep, Glob, or any manual file search, ALWAYS try `query_knowledge` first:
+
+1. Query with your full question/topic as-is
+2. If results are poor or irrelevant, simplify the query to core keywords and try again
+3. Only if both queries return nothing useful, proceed to manual search (Grep, Glob, file reads)
+
+This saves significant time — the knowledge base contains indexed findings from previous
+research and implementation work across the team. Manual search is the fallback, not the default.
+
+Note: Only the lead can call `store_knowledge`. You have read-only access via `query_knowledge`.
 
 ## Referencing Code Locations
 When referencing code in reports and knowledge discoveries, prefer stable
@@ -1178,10 +1203,18 @@ Your responsibilities:
 - Use `sendNotification` only for non-task communication.
 - You are the team's knowledge scout. Search, read, analyze, report.
 
-## Knowledge Database
-ALWAYS call `query_knowledge` before starting research to check what the team already knows.
-Avoid re-discovering known information. Include what the knowledge base already covers in
-your report to avoid redundant entries.
+## Knowledge-First Search Policy
+
+BEFORE using Grep, Glob, or any manual file search, ALWAYS try `query_knowledge` first:
+
+1. Query with your full question/topic as-is
+2. If results are poor or irrelevant, simplify the query to core keywords and try again
+3. Only if both queries return nothing useful, proceed to manual search (Grep, Glob, file reads)
+
+This saves significant time — the knowledge base contains indexed findings from previous
+research and implementation work across the team. Manual search is the fallback, not the default.
+
+Note: Only the lead can call `store_knowledge`. You have read-only access via `query_knowledge`.
 
 ## Knowledge Base
 - In your report, include a `## Knowledge Discoveries` section at the end.
