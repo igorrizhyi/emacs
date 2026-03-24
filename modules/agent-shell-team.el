@@ -2723,13 +2723,14 @@ WORKTREE-PATH and WORKTREE-NAME are for isolated mode."
                          role mode session-id worktree-path worktree-name default-directory))
          (config (agent-shell-team--make-config session-id role buf-name)))
     (message "agent-shell-team: about to call agent-shell--start with buffer-name=%s" buf-name)
-    (let ((buffer (agent-shell--start
-                   :config config
-                   :no-focus no-focus
-                   :new-session t
-                   :session-strategy 'new
-                   :outgoing-request-decorator
-                   (agent-shell-team--make-request-decorator system-prompt))))
+    (let ((buffer (let ((my/agent-shell-pending-worktree-path worktree-path))
+                   (agent-shell--start
+                    :config config
+                    :no-focus no-focus
+                    :new-session t
+                    :session-strategy 'new
+                    :outgoing-request-decorator
+                    (agent-shell-team--make-request-decorator system-prompt)))))
       (message "agent-shell-team: agent-shell--start returned buffer=%s (process=%s)"
                buffer (get-buffer-process buffer))
       ;; Register in team session

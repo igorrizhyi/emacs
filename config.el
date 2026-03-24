@@ -1206,6 +1206,11 @@
 (autoload 'agent-shell-team "agent-shell-team" "Start multi-agent team session." t)
 (autoload 'agent-shell-team-status "agent-shell-team" "Team dashboard." t)
 
+(defvar my/agent-shell-pending-worktree-path nil
+  "Dynamic variable carrying worktree-path during agent-shell--start.
+Used by `my/agent-shell-bwrap-prefix' to access the worktree path before
+the buffer-local `agent-shell-team--worktree-path' is set.")
+
 (defun my/agent-shell-bwrap-prefix (buffer)
   "Return bwrap command prefix for sandboxed dev agents.
 If BUFFER has a worktree path (isolated dev agent), return a list of
@@ -1214,7 +1219,8 @@ strings for bubblewrap filesystem sandboxing.  Otherwise return nil
 All paths are resolved to their true filesystem paths to handle
 Fedora atomic's /home -> /var/home symlink."
   (condition-case _err
-      (let ((worktree-path (buffer-local-value 'agent-shell-team--worktree-path buffer)))
+      (let ((worktree-path (or (buffer-local-value 'agent-shell-team--worktree-path buffer)
+                              my/agent-shell-pending-worktree-path)))
         (when worktree-path
           (let* ((worktree (file-truename (expand-file-name worktree-path)))
                  ;; Project root is 3 levels up: .agent-shell/worktrees/<name>
