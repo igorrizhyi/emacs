@@ -1206,7 +1206,73 @@
 (autoload 'agent-shell-team "agent-shell-team" "Start multi-agent team session." t)
 (autoload 'agent-shell-team-status "agent-shell-team" "Team dashboard." t)
 
+(defun my/agent-shell-bwrap-prefix (buffer)
+  "Return bwrap command prefix for sandboxed dev agents.
+If BUFFER has a worktree path (isolated dev agent), return a list of
+strings for bubblewrap filesystem sandboxing.  Otherwise return nil
+\(no sandboxing for lead, researcher, or neighbor agents).
+All paths are resolved to their true filesystem paths to handle
+Fedora atomic's /home -> /var/home symlink."
+  (condition-case _err
+      (let ((worktree-path (buffer-local-value 'agent-shell-team--worktree-path buffer)))
+        (when worktree-path
+          (let* ((worktree (file-truename (expand-file-name worktree-path)))
+                 ;; Project root is 3 levels up: .agent-shell/worktrees/<name>
+                 (project-root (file-truename (expand-file-name "../../.." worktree)))
+                 (git-dir (expand-file-name ".git" project-root))
+                 (reports-dir (expand-file-name ".agent-shell/reports" project-root))
+                 (knowledge-dir (expand-file-name ".agent-shell/knowledge" project-root))
+                 (home (file-truename (expand-file-name "~")))
+                 (claude-data (expand-file-name ".local/share/claude" home))
+                 (claude-config (expand-file-name ".claude" home))
+                 (gitconfig (expand-file-name ".gitconfig" home))
+                 (git-config-dir (expand-file-name ".config/git" home))
+                 (linuxbrew "/var/home/linuxbrew/.linuxbrew"))
+            `("bwrap"
+              ;; System directories (read-only)
+              "--ro-bind" "/usr" "/usr"
+              "--ro-bind" "/lib64" "/lib64"
+              "--ro-bind" "/etc" "/etc"
+              ;; Fedora atomic desktop: /home is a symlink to /var/home.
+              ;; Bind mounts use real paths (/var/home/...) but many tools
+              ;; resolve $HOME as /home/... so we need this symlink inside
+              ;; the sandbox for path resolution to work.
+              "--symlink" "/var/home" "/home"
+              ;; Homebrew (read-only — provides node, claude-agent-acp)
+              "--ro-bind" ,linuxbrew ,linuxbrew
+              ;; Claude data and config (read-only)
+              "--ro-bind" ,claude-data ,claude-data
+              "--ro-bind" ,claude-config ,claude-config
+              ;; Git config (read-only)
+              ,@(when (file-exists-p gitconfig)
+                  (list "--ro-bind" gitconfig gitconfig))
+              ,@(when (file-directory-p git-config-dir)
+                  (list "--ro-bind" git-config-dir git-config-dir))
+              ;; Git common dir (read-only — worktrees reference main .git)
+              "--ro-bind" ,git-dir ,git-dir
+              ;; Worktree (read-write — agent's working directory)
+              "--bind" ,worktree ,worktree
+              ;; Reports directory (read-write — agents write reports here)
+              "--bind" ,reports-dir ,reports-dir
+              ;; Knowledge directory (read-only — agents read knowledge base)
+              ,@(when (file-directory-p knowledge-dir)
+                  (list "--ro-bind" knowledge-dir knowledge-dir))
+              ;; Virtual filesystems
+              "--dev" "/dev"
+              "--proc" "/proc"
+              "--tmpfs" "/tmp"
+              ;; Network access (needed for MCP stdio, API calls)
+              "--share-net"
+              ;; Kill sandboxed process when parent dies
+              "--die-with-parent"
+              ;; Start in the worktree directory
+              "--chdir" ,worktree
+              "--"))))
+    (error nil)))
+
 (after! agent-shell
+  ;; Sandbox dev agents with bubblewrap filesystem isolation
+  (setq agent-shell-command-prefix #'my/agent-shell-bwrap-prefix)
   ;; Disable the header entirely (set to nil); use 'graphical to restore later
   (setq agent-shell-header-style nil)
   ;; Require MCP tools for the stdio server
