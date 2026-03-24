@@ -10,6 +10,7 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 import mcp.types as types
 
+from knowledge_cache import invalidate_cache
 from common import (
     GRAPH_NAME, KNOWLEDGE_LLM_BACKEND, NAMESPACE, PROJECT_ROOT,
     EMACS_SERVER_NAME, KNOWLEDGE_PROJECT_ROOT,
@@ -148,6 +149,7 @@ async def _handle_query(arguments: dict) -> list[types.TextContent]:
     project = arguments.get("project")
 
     result = query_knowledge(graph, query, role=role, top_k=8, mode=mode, project=project)
+    cache_path = result.get("cache_path")
 
     # Skip-synthesis mode: return raw context chunks without LLM answer
     if result.get("context_text") and result.get("response") is None:
@@ -156,6 +158,8 @@ async def _handle_query(arguments: dict) -> list[types.TextContent]:
             parts.append("**Sources:** " + ", ".join(result["sources"]))
         parts.append(f"({len(result['chunks'])} chunks retrieved, {result.get('expanded_count', 0)} via graph expansion)")
         parts.append(f"\n**Context:**\n{result['context_text']}")
+        if cache_path:
+            parts.append(f"\nCache: {cache_path}")
         return [types.TextContent(type="text", text="\n".join(parts))]
 
     # Agent backend: return sources + pending tasks (no synthesis yet)
@@ -165,6 +169,8 @@ async def _handle_query(arguments: dict) -> list[types.TextContent]:
             parts.append("**Sources:** " + ", ".join(result["sources"]))
         parts.append(f"({len(result['chunks'])} chunks retrieved, {result.get('expanded_count', 0)} via graph expansion)")
         parts.append(f"\n**Pending LLM tasks:** {json.dumps(result['pending_llm_tasks'])}")
+        if cache_path:
+            parts.append(f"\nCache: {cache_path}")
         return [types.TextContent(type="text", text="\n".join(parts))]
 
     parts = [result["response"]]
@@ -172,6 +178,8 @@ async def _handle_query(arguments: dict) -> list[types.TextContent]:
         parts.append("\n**Sources:** " + ", ".join(result["sources"]))
     if result.get("chunks"):
         parts.append(f"\n({len(result['chunks'])} chunks retrieved, {result.get('expanded_count', 0)} via graph expansion)")
+    if cache_path:
+        parts.append(f"\nCache: {cache_path}")
 
     return [types.TextContent(type="text", text="\n".join(parts))]
 
@@ -278,10 +286,16 @@ async def _store_and_queue_llm(content: str, source: str, roles: list[str]) -> l
             return []
 
         # Synchronous graph work (fast: embedding + graph writes)
-        ingest_chunks(graph, chunks, project=project)
+        chunk_vectors = ingest_chunks(graph, chunks, project=project)
         new_ids = [c["id"] for c in chunks]
         create_similarity_edges_for_chunks(graph, new_ids)
         create_cross_role_edges(graph, new_ids)
+
+        # Invalidate stale cache entries
+        try:
+            invalidate_cache(PROJECT_ROOT, chunk_vectors)
+        except Exception:
+            logger.debug("Cache invalidation failed", exc_info=True)
 
         task_ids = []
 
@@ -324,10 +338,16 @@ async def _store_knowledge_bg(content: str, source: str, roles: list[str]):
                 logger.info("store_knowledge_bg: no content to store")
                 return
 
-            ingest_chunks(graph, chunks, project=project)
+            chunk_vectors = ingest_chunks(graph, chunks, project=project)
             new_ids = [c["id"] for c in chunks]
             create_similarity_edges_for_chunks(graph, new_ids)
             create_cross_role_edges(graph, new_ids)
+
+            # Invalidate stale cache entries
+            try:
+                invalidate_cache(PROJECT_ROOT, chunk_vectors)
+            except Exception:
+                logger.debug("Cache invalidation failed", exc_info=True)
 
             # Supersession detection — find and mark chunks that replace older ones
             supersessions = detect_supersession(graph, chunks)

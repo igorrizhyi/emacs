@@ -365,10 +365,14 @@ def chunk_knowledge_file(filepath: str, role: str, project: str = None) -> list[
 # ---------------------------------------------------------------------------
 
 
-def ingest_chunks(graph, chunks: list[dict], project: str = None):
-    """Embed chunks and MERGE them into the graph with FOR_ROLE edges."""
+def ingest_chunks(graph, chunks: list[dict], project: str = None) -> list[list[float]]:
+    """Embed chunks and MERGE them into the graph with FOR_ROLE edges.
+
+    Returns the list of embedding vectors (one per chunk) for downstream use
+    (e.g. cache invalidation).
+    """
     if not chunks:
-        return
+        return []
 
     texts = [c["content"] for c in chunks]
     vectors = embed_texts(texts)
@@ -430,6 +434,7 @@ def ingest_chunks(graph, chunks: list[dict], project: str = None):
                     params={"id": chunk["id"], "role": role},
                 )
 
+    return vectors
 
 
 # ---------------------------------------------------------------------------
@@ -1107,6 +1112,14 @@ def query_knowledge(graph, question: str, role: str = None, top_k: int = 8, mode
 
     sources = list({h["source"] for h in hits})
 
+    # Cache the query result (best-effort, reuse q_vec from step 1)
+    cache_path = None
+    try:
+        from knowledge_cache import cache_query_result
+        cache_path = cache_query_result(PROJECT_ROOT, question, q_vec, context_text)
+    except Exception:
+        logger.debug("Cache write failed", exc_info=True)
+
     # Skip synthesis: return raw chunks without LLM processing
     if KNOWLEDGE_SKIP_SYNTHESIS:
         return {
@@ -1115,6 +1128,7 @@ def query_knowledge(graph, question: str, role: str = None, top_k: int = 8, mode
             "sources": sources,
             "expanded_count": len(unique_expanded),
             "context_text": context_text,
+            "cache_path": cache_path,
         }
 
     # Agent backend: queue synthesis task instead of calling LLM
@@ -1133,6 +1147,7 @@ def query_knowledge(graph, question: str, role: str = None, top_k: int = 8, mode
             "sources": sources,
             "expanded_count": len(unique_expanded),
             "pending_llm_tasks": [task_id],
+            "cache_path": cache_path,
         }
 
     messages = [
@@ -1154,4 +1169,5 @@ def query_knowledge(graph, question: str, role: str = None, top_k: int = 8, mode
         "chunks": hits,
         "sources": sources,
         "expanded_count": len(unique_expanded),
+        "cache_path": cache_path,
     }
