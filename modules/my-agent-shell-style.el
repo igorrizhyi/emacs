@@ -234,8 +234,10 @@ Optional FACE overrides the default team message face."
     (overlay-put ov 'face face)
     (overlay-put ov 'line-prefix padding)
     (overlay-put ov 'wrap-prefix padding)
-    (overlay-put ov 'before-string "\n")
-    (overlay-put ov 'after-string "\n")
+    (overlay-put ov 'before-string
+                 (propertize "\n" 'face `(:height 0.3 :background ,(plist-get face :background) :extend t)))
+    (overlay-put ov 'after-string
+                 (propertize "\n" 'face `(:height 0.3 :background ,(plist-get face :background) :extend t)))
     (overlay-put ov 'priority 100)
     (overlay-put ov 'evaporate nil)
     (overlay-put ov 'my-agent-shell-team-msg t)))
