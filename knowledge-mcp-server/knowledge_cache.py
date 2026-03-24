@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 _local = threading.local()
 
 CACHE_SIMILARITY_THRESHOLD = 0.6  # cosine similarity; above this = stale
+CACHE_HIT_THRESHOLD = 0.85  # cosine similarity; above this = same question
 
 
 def _cache_db_path(project_root: str) -> str:
@@ -107,6 +108,55 @@ def cache_query_result(
 
     except Exception:
         logger.exception("Failed to cache query result")
+        return None
+
+
+def lookup_cache(
+    project_root: str,
+    query_embedding: list[float],
+) -> str | None:
+    """Check if a semantically similar query was recently cached.
+
+    Loads all cache entries, computes cosine similarity against the query
+    embedding, and returns the cache file path if the best match exceeds
+    CACHE_HIT_THRESHOLD and the file still exists on disk.
+
+    Returns the cache file path, or None if no hit.
+    """
+    if not project_root:
+        return None
+
+    try:
+        conn = _get_conn(project_root)
+        rows = conn.execute(
+            "SELECT id, file_path, embedding FROM cache_entries"
+        ).fetchall()
+
+        if not rows:
+            return None
+
+        best_sim = 0.0
+        best_path = None
+
+        for row_id, file_path, embedding_json in rows:
+            try:
+                cached_embedding = json.loads(embedding_json)
+            except (json.JSONDecodeError, TypeError):
+                continue
+
+            sim = _cosine_similarity(query_embedding, cached_embedding)
+            if sim > best_sim:
+                best_sim = sim
+                best_path = file_path
+
+        if best_sim >= CACHE_HIT_THRESHOLD and best_path and os.path.exists(best_path):
+            logger.info("Cache hit (sim=%.3f): %s", best_sim, best_path)
+            return best_path
+
+        return None
+
+    except Exception:
+        logger.exception("Failed to lookup cache")
         return None
 
 

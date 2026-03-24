@@ -151,6 +151,10 @@ async def _handle_query(arguments: dict) -> list[types.TextContent]:
     result = query_knowledge(graph, query, role=role, top_k=8, mode=mode, project=project)
     cache_path = result.get("cache_path")
 
+    # Cache hit: return just the cache path, skip everything else
+    if result.get("cache_hit") and cache_path:
+        return [types.TextContent(type="text", text=f"Cache: {cache_path}")]
+
     # Skip-synthesis mode: return raw context chunks without LLM answer
     if result.get("context_text") and result.get("response") is None:
         parts = []

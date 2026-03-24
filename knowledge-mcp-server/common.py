@@ -895,6 +895,22 @@ def query_knowledge(graph, question: str, role: str = None, top_k: int = 8, mode
     # 1. Embed question
     q_vec = embed_texts([question])[0]
 
+    # 1b. Cache hit check — short-circuit if a similar query was recently cached
+    try:
+        from knowledge_cache import lookup_cache
+        cached_path = lookup_cache(PROJECT_ROOT, q_vec)
+        if cached_path:
+            return {
+                "response": None,
+                "chunks": [],
+                "sources": [],
+                "expanded_count": 0,
+                "cache_path": cached_path,
+                "cache_hit": True,
+            }
+    except Exception:
+        logger.debug("Cache lookup failed", exc_info=True)
+
     # 2. Vector KNN search — fetch extra candidates to account for
     #    project filtering and superseded-chunk filtering
     fetch_k = top_k * 3 if project else top_k * 2
