@@ -480,6 +480,33 @@ Otherwise append as a new entry."
         (insert ";; Auto-generated — do not edit\n")
         (pp updated (current-buffer))))))
 
+(defun agent-shell-team--purge-knowledge-tasks ()
+  "Remove all knowledge task entries from persisted task files.
+Filters out entries where :role is \"knowledge\" or :request-id
+starts with \"kb-auto-\".  Rewrites only files that had entries removed."
+  (interactive)
+  (let ((dir (agent-shell-team--tasks-dir))
+        (cleaned 0)
+        (files-modified 0))
+    (dolist (file (directory-files dir t "\\.el$"))
+      (let* ((sid (file-name-sans-extension (file-name-nondirectory file)))
+             (tasks (agent-shell-team--load-tasks sid))
+             (filtered (cl-remove-if
+                        (lambda (task)
+                          (or (equal (plist-get task :role) "knowledge")
+                              (string-prefix-p "kb-auto-"
+                                               (or (plist-get task :request-id) ""))))
+                        tasks))
+             (removed (- (length tasks) (length filtered))))
+        (when (> removed 0)
+          (cl-incf cleaned removed)
+          (cl-incf files-modified)
+          (with-temp-file file
+            (insert ";; Task history for session " sid "\n")
+            (insert ";; Auto-generated — do not edit\n")
+            (pp filtered (current-buffer))))))
+    (message "Purged %d knowledge entries from %d task files" cleaned files-modified)))
+
 (defun agent-shell-team--load-all-sessions ()
   "Scan tasks dir, return ((session-id . tasks-list) ...) sorted by most recent."
   (let ((dir (agent-shell-team--tasks-dir))
@@ -1480,13 +1507,15 @@ Route sendNotification calls between team agents."
               (when-let ((request-id (agent-shell-team--extract-request-id notif-message)))
                 (let ((sid (or (gethash request-id agent-shell-team--request-to-session)
                                agent-shell-team--session-id)))
-                  ;; Persist legacy completion
+                  ;; Persist legacy completion (skip knowledge tasks)
                   (when sid
-                    (agent-shell-team--persist-task
-                     sid
-                     (list :request-id request-id
-                           :status "finished"
-                           :completed-at (float-time))))
+                    (let ((role (plist-get (gethash request-id agent-shell-team--active-tasks) :role)))
+                      (unless (equal role "knowledge")
+                        (agent-shell-team--persist-task
+                         sid
+                         (list :request-id request-id
+                               :status "finished"
+                               :completed-at (float-time))))))
                   (agent-shell-team--handle-task-completion
                    request-id sid (current-buffer)))))
             (agent-shell-team--route-from-acp
@@ -2034,14 +2063,16 @@ Route the status update directly to the lead agent's queue."
                              (puthash sid (append existing (list msg))
                                       agent-shell-team--pending-for-lead))
                            (agent-shell-team--start-drain-timer)))
-                       ;; Persist task status update
+                       ;; Persist task status update (skip knowledge tasks)
                        (when sid
-                         (agent-shell-team--persist-task
-                          sid
-                          (list :request-id rid
-                                :status st
-                                :commit cmt
-                                :completed-at (float-time))))
+                         (let ((role (plist-get (gethash rid agent-shell-team--active-tasks) :role)))
+                           (unless (equal role "knowledge")
+                             (agent-shell-team--persist-task
+                              sid
+                              (list :request-id rid
+                                    :status st
+                                    :commit cmt
+                                    :completed-at (float-time))))))
                        ;; Clean up tracking tables and handle group completion when finished
                        (when (equal st "finished")
                          (remhash rid agent-shell-team--active-tasks)
