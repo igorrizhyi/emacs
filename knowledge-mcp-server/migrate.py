@@ -158,7 +158,10 @@ def migrate_reports(reports_dir: str, project: str = None,
     report_count = 0
     sessions_scanned = 0
 
-    for session_id in sorted(os.listdir(reports_dir)):
+    # Sort session dirs by mtime (oldest first) for correct supersession ordering
+    session_entries = os.listdir(reports_dir)
+    session_entries.sort(key=lambda e: os.path.getmtime(os.path.join(reports_dir, e)))
+    for session_id in session_entries:
         session_path = os.path.join(reports_dir, session_id)
         if not os.path.isdir(session_path):
             print(f"  Skipping non-directory: {session_id}")
@@ -167,10 +170,10 @@ def migrate_reports(reports_dir: str, project: str = None,
         print(f"\n[session: {session_id}]")
         sessions_scanned += 1
 
-        for filename in sorted(os.listdir(session_path)):
-            if not filename.endswith(".md"):
-                print(f"  Skipping non-md: {filename}")
-                continue
+        # Sort report files by mtime (oldest first) for correct supersession ordering
+        report_files = [f for f in os.listdir(session_path) if f.endswith(".md")]
+        report_files.sort(key=lambda f: os.path.getmtime(os.path.join(session_path, f)))
+        for filename in report_files:
             filepath = os.path.join(session_path, filename)
             with open(filepath) as f:
                 content = f.read()
@@ -359,6 +362,61 @@ def migrate_from_graph(source_graph_name: str, project: str):
     print("Done.")
 
 
+def supersession_only():
+    """Load all chunks from graph and run supersession detection only."""
+    graph = get_graph()
+
+    print("Loading all chunks from graph...")
+    res = graph.query(
+        "MATCH (c:Chunk) "
+        "RETURN c.id, c.content, c.embedding, c.source, c.roles, "
+        "       c.type, c.project, c.created_at"
+    )
+    rows = res.result_set
+    print(f"  Loaded {len(rows)} chunks")
+
+    if not rows:
+        print("No chunks found in graph.")
+        return
+
+    # Build chunk dicts and sort by created_at (oldest first)
+    chunks = []
+    for row in rows:
+        cid, content, emb, source, roles, ctype, project, created_at = row
+        chunks.append({
+            "id": cid,
+            "content": content or "",
+            "embedding": list(emb) if emb is not None else None,
+            "source": source or "",
+            "roles": roles or "",
+            "type": ctype or "knowledge",
+            "project": project or "",
+            "created_at": created_at or "",
+        })
+
+    chunks.sort(key=lambda c: c["created_at"])
+    print(f"  Sorted by created_at (oldest: {chunks[0]['created_at']}, "
+          f"newest: {chunks[-1]['created_at']})")
+
+    print("Detecting supersessions (LLM)...")
+    supersessions = detect_supersession(graph, chunks)
+    print(f"  Found {len(supersessions)} supersession(s)")
+
+    if supersessions:
+        create_supersedes_edges(graph, supersessions)
+        print(f"  Created {len(supersessions)} SUPERSEDES edge(s)")
+
+    # Stats
+    sup_count = graph.query(
+        "MATCH ()-[s:SUPERSEDES]->() RETURN count(s)"
+    ).result_set[0][0]
+    print(f"\n--- Supersession-Only Stats ---")
+    print(f"  Total chunks in graph: {len(chunks)}")
+    print(f"  New SUPERSEDES edges: {len(supersessions)}")
+    print(f"  Total SUPERSEDES edges: {sup_count}")
+    print("Done.")
+
+
 def main():
     project_root = os.environ.get("PROJECT_ROOT")
     if project_root:
@@ -422,6 +480,12 @@ def main():
         action="store_true",
         help="Shorthand for --with-entities --with-supersession",
     )
+    parser.add_argument(
+        "--supersession-only",
+        action="store_true",
+        help="Load all existing chunks from graph and run supersession detection only "
+             "(no re-ingest, no topics, no similarity edges)",
+    )
     args = parser.parse_args()
 
     if args.full:
@@ -442,6 +506,10 @@ def main():
         else:
             project = "default"
         print(f"Namespace mode: graph={GRAPH_NAME}, project={project}")
+
+    if args.supersession_only:
+        supersession_only()
+        return
 
     if args.from_graph:
         if not args.namespace:
