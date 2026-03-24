@@ -199,6 +199,11 @@ against both queued and in-flight tasks.")
   "Map request-id to session-id.  Populated at tasksPut time so that
 taskUpdate can resolve the correct session without relying on the global.")
 
+(defvar agent-shell-team--interrupt-queue nil
+  "Alist of (buffer . task-list) for high-priority interrupt tasks.
+Tasks with :priority \"interrupt\" that target a busy agent are stored
+here and delivered immediately when the agent finishes its current turn.")
+
 ;;; Idle inhibit (hypridle / screensaver)
 
 (defvar agent-shell-team--idle-inhibit-cookie nil
@@ -1959,6 +1964,7 @@ Return the number of tasks actually enqueued, or signal an error if
                  (message (or (map-elt task 'message) (map-elt task "message")))
                  (group-id (or (map-elt task 'group_id) (map-elt task "group_id")))
                  (target (or (map-elt task 'target) (map-elt task "target")))
+                 (priority (or (map-elt task 'priority) (map-elt task "priority")))
                  (caller-request-id (or (map-elt task 'request_id) (map-elt task "request_id")))
                  (request-id (or caller-request-id
                                  (agent-shell-team--generate-request-id)))
@@ -2003,6 +2009,7 @@ Return the number of tasks actually enqueued, or signal an error if
                                   :request-id request-id
                                   :group-id group-id
                                   :target target
+                                  :priority priority
                                   :session-id session-id
                                   :report-path report-path)))
                 ;; Persist to disk (skip for knowledge — they're long-lived and silent)
@@ -2283,12 +2290,30 @@ reached its max agent count, auto-spawn a new agent."
                              (not (gethash (alist-get 'buffer targeted-agent) just-assigned)))
                         (agent-shell-team--assign-task-to-agent targeted-agent task)
                         (puthash (alist-get 'buffer targeted-agent) t just-assigned))
-                       ;; Targeted assignment: agent found but busy (or just-assigned) — wait for it
+                       ;; Targeted assignment: agent found but busy (or just-assigned)
                        ((and targeted-agent
                              (or (memq (agent-shell-team--agent-status (alist-get 'buffer targeted-agent))
                                        '(busy initializing))
                                  (gethash (alist-get 'buffer targeted-agent) just-assigned)))
-                        (push task remaining))
+                        (if (equal (plist-get task :priority) "interrupt")
+                            ;; Interrupt priority: queue for immediate delivery when agent goes idle
+                            (let* ((buf (alist-get 'buffer targeted-agent))
+                                   (existing (assq buf agent-shell-team--interrupt-queue)))
+                              (if existing
+                                  (setcdr existing (append (cdr existing) (list task)))
+                                (push (cons buf (list task)) agent-shell-team--interrupt-queue))
+                              (agent-shell-team--log session-id
+                               (format "[assign] Interrupt task %s queued for %s (agent busy)"
+                                       (plist-get task :request-id) (buffer-name buf)))
+                              ;; Notify lead that interrupt is queued
+                              (when-let ((lead-buf (agent-shell-team--get-lead session-id)))
+                                (agent-shell-team--queue-message
+                                 session-id lead-buf
+                                 (list :from "system" :title "Interrupt Queued"
+                                       :message (format "[request-id: %s] queued for immediate delivery when agent finishes current turn"
+                                                        (plist-get task :request-id))))))
+                          ;; Normal priority: re-queue as before
+                          (push task remaining)))
                        ;; Targeted assignment: agent gone — clear target for reassignment
                        (target
                         (agent-shell-team--log session-id
@@ -2633,6 +2658,31 @@ Called after usage_update notification arrives.  Only acts when:
   (lambda (&rest _)
     (agent-shell-team--maybe-auto-compact)))
 
+(defun agent-shell-team--find-agent-by-buffer (buf)
+  "Find the agent alist entry for BUF across all sessions."
+  (catch 'found
+    (maphash (lambda (_session-id agents)
+               (dolist (agent agents)
+                 (when (eq (alist-get 'buffer agent) buf)
+                   (throw 'found agent))))
+             agent-shell-team--sessions)
+    nil))
+
+(defun agent-shell-team--deliver-interrupt-tasks (&rest _)
+  "Deliver interrupt-priority tasks when an agent finishes its turn.
+Added as :after advice on `shell-maker-finish-output'."
+  (when-let* ((buf (current-buffer))
+              (tasks (alist-get buf agent-shell-team--interrupt-queue)))
+    ;; Remove from interrupt queue first
+    (setf (alist-get buf agent-shell-team--interrupt-queue nil 'remove) nil)
+    ;; Deliver each task via normal assignment (agent is now idle)
+    (dolist (task tasks)
+      (let ((agent (agent-shell-team--find-agent-by-buffer buf)))
+        (when agent
+          (agent-shell-team--assign-task-to-agent agent task))))))
+
+(advice-add 'shell-maker-finish-output :after #'agent-shell-team--deliver-interrupt-tasks)
+
 (defun agent-shell-team--start-drain-timer ()
   "Start periodic drain timer."
   (unless agent-shell-team--drain-timer
@@ -2699,6 +2749,21 @@ Also detects agents stuck in busy state with no ACP output for
              (when (eq (agent-shell-team--agent-status buffer) 'idle)
                (agent-shell-team--drain-queue buffer)))
            agent-shell-team--message-queue)
+  ;; --- Safety net: deliver interrupt tasks for any idle agents ---
+  (let ((delivered nil))
+    (dolist (entry agent-shell-team--interrupt-queue)
+      (let ((buf (car entry))
+            (tasks (cdr entry)))
+        (when (and (buffer-live-p buf)
+                   (eq (agent-shell-team--agent-status buf) 'idle)
+                   tasks)
+          (push buf delivered)
+          (dolist (task tasks)
+            (let ((agent (agent-shell-team--find-agent-by-buffer buf)))
+              (when agent
+                (agent-shell-team--assign-task-to-agent agent task)))))))
+    (dolist (buf delivered)
+      (setf (alist-get buf agent-shell-team--interrupt-queue nil 'remove) nil)))
   ;; Try to assign pending tasks (errors must not kill the drain timer)
   (when agent-shell-team--task-queue
     (message "[check-all-queues] Task queue has %d items, calling try-assign-tasks"
@@ -2715,6 +2780,7 @@ Also detects agents stuck in busy state with no ACP output for
   (when (and (zerop (hash-table-count agent-shell-team--message-queue))
              (zerop (hash-table-count agent-shell-team--pending-for-lead))
              (null agent-shell-team--task-queue)
+             (null agent-shell-team--interrupt-queue)
              (zerop (hash-table-count agent-shell-team--idle-inhibit-tracked)))
     (message "[check-all-queues] All queues empty, stopping drain timer")
     (agent-shell-team--stop-drain-timer)))
@@ -2730,8 +2796,9 @@ Also removes the git worktree if the agent was in isolated mode."
       ;; Mark agent idle (remove busy sentinel file) before unregistering
       (agent-shell-team--mark-agent-idle (buffer-name (current-buffer)))
       (agent-shell-team--unregister-agent (current-buffer))
-      ;; Clean up any queued messages and activity tracking for this buffer
+      ;; Clean up any queued messages, interrupt tasks, and activity tracking for this buffer
       (remhash (current-buffer) agent-shell-team--message-queue)
+      (setf (alist-get (current-buffer) agent-shell-team--interrupt-queue nil 'remove) nil)
       (remhash (current-buffer) agent-shell-team--last-activity)
       (remhash (current-buffer) agent-shell-team--last-compact-time)
       ;; Remove worktree if it exists
