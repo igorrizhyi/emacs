@@ -1297,8 +1297,16 @@ Given that text, identify all notable named entities and relationships.
 ### Entities
 For each entity extract:
 - entity_name: Name of the entity, CAPITALIZED
-- entity_type: One of [component, concept, tool, identifier, location]
+- entity_type: One of [component, concept, tool, identifier, location, theme]
 - entity_description: Comprehensive description of the entity's attributes and role
+
+Entity type descriptions:
+- component: A software module, package, library, or service
+- concept: An abstract idea, pattern, or methodology
+- tool: A specific tool, database, or external dependency
+- identifier: A function name, variable, configuration key, or code symbol
+- location: A file path, directory, URL, or endpoint
+- theme: A broad topic or area that this knowledge relates to (e.g., \"task persistence\", \"agent lifecycle\", \"graph search\", \"MCP protocol\")
 
 Format each entity as:
 (\"entity\"<|><entity_name><|><entity_type><|><entity_description>)

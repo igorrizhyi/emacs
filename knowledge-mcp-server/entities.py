@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 # Constants & Config
 # ---------------------------------------------------------------------------
 
-ENTITY_TYPES = ["component", "concept", "tool", "identifier", "location"]
+ENTITY_TYPES = ["component", "concept", "tool", "identifier", "location", "theme"]
 
 
 def normalize_entity_name(name: str) -> str:
@@ -72,6 +72,14 @@ Format each relationship as:
 Use **{record_delim}** as the list delimiter.
 
 4. When finished, output {completion_delim}
+
+Entity type descriptions:
+- component: A software module, package, library, or service
+- concept: An abstract idea, pattern, or methodology
+- tool: A specific tool, database, or external dependency
+- identifier: A function name, variable, configuration key, or code symbol
+- location: A file path, directory, URL, or endpoint
+- theme: A broad topic or area that this knowledge relates to (e.g., "task persistence", "agent lifecycle", "graph search", "MCP protocol")
 
 Important: Extract ANY notable named thing regardless of type. The types above are hints, \
 not constraints. The value is in entity names and descriptions.
