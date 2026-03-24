@@ -24,8 +24,6 @@ from entities import (
     extract_and_store_entities,
     merge_and_upsert_entities, merge_and_upsert_relationships,
     parse_extraction_output,
-    ENTITY_EXTRACTION_PROMPT, ENTITY_TYPES,
-    TUPLE_DELIMITER, RECORD_DELIMITER, COMPLETION_DELIMITER,
 )
 from llm_queue import (
     queue_llm_task, get_llm_task as _get_llm_task,
@@ -294,19 +292,13 @@ async def _store_and_queue_llm(content: str, source: str, roles: list[str]) -> l
             create_supersedes_edges(graph, supersessions)
 
         # Entity extraction: queue one task per chunk
-        entity_types_str = ", ".join(ENTITY_TYPES)
+        # The prompt field contains only the chunk text; extraction
+        # instructions live in the knowledge agent's system prompt.
         for chunk in chunks:
-            prompt = ENTITY_EXTRACTION_PROMPT.format(
-                entity_types=entity_types_str,
-                tuple_delim=TUPLE_DELIMITER,
-                record_delim=RECORD_DELIMITER,
-                completion_delim=COMPLETION_DELIMITER,
-                input_text=chunk["content"],
-            )
             tid = queue_llm_task(
                 PROJECT_ROOT,
                 "entity_extraction",
-                prompt,
+                chunk["content"],
                 context={"chunk_ids": [chunk["id"]]},
             )
             task_ids.append(tid)
