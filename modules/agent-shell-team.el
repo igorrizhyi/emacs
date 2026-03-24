@@ -746,8 +746,9 @@ Agents report task status via the `taskUpdate` MCP tool (not sendNotification).
 You will receive \"Task Update\" messages with status, request ID, commit hash,
 and report path. When you receive one, review the report and branch.
 
-When a dev signals completion, review their branch with:
-  git diff main...{branch-name}
+When a dev signals completion, review their specific commit (from the report) against
+the current branch — NOT `main...{branch-name}` which pulls in unrelated history:
+  git diff {commit}~1..{commit}
 If approved: git merge {branch-name}, then dismiss the dev:
   dismissAgent(target: \"request-id\")
   The `target` parameter accepts a request ID (preferred), worktree name, or buffer name.
