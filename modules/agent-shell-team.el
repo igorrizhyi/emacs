@@ -2375,7 +2375,8 @@ reached its max agent count, auto-spawn a new agent."
                :title "Task Assigned"
                :message (format "[request-id: %s]\nAgent: %s\nRole: %s"
                                 request-id
-                                (alist-get 'worktree-name agent)
+                                (or (alist-get 'worktree-name agent)
+                                   (buffer-name (alist-get 'buffer agent)))
                                 role)))))))
 
 (defun agent-shell-team--handle-task-completion (request-id session-id from-buffer)
