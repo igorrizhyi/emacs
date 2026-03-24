@@ -1025,6 +1025,9 @@ BEFORE using Grep, Glob, or any manual file search, ALWAYS try `query_knowledge`
 1. Query with your full question/topic as-is
 2. If results are poor or irrelevant, simplify the query to core keywords and try again
 3. Only if both queries return nothing useful, proceed to manual search (Grep, Glob, file reads)
+4. If manual search reveals useful information that the knowledge queries missed,
+   ALWAYS include it in your `## Knowledge Discoveries` section. This is how the
+   knowledge base grows — every fallback to manual search is a gap to be filled.
 
 This saves significant time — the knowledge base contains indexed findings from previous
 research and implementation work across the team. Manual search is the fallback, not the default.
@@ -1102,6 +1105,9 @@ BEFORE using Grep, Glob, or any manual file search, ALWAYS try `query_knowledge`
 1. Query with your full question/topic as-is
 2. If results are poor or irrelevant, simplify the query to core keywords and try again
 3. Only if both queries return nothing useful, proceed to manual search (Grep, Glob, file reads)
+4. If manual search reveals useful information that the knowledge queries missed,
+   ALWAYS include it in your `## Knowledge Discoveries` section. This is how the
+   knowledge base grows — every fallback to manual search is a gap to be filled.
 
 This saves significant time — the knowledge base contains indexed findings from previous
 research and implementation work across the team. Manual search is the fallback, not the default.
@@ -1160,6 +1166,9 @@ BEFORE using Grep, Glob, or any manual file search, ALWAYS try `query_knowledge`
 1. Query with your full question/topic as-is
 2. If results are poor or irrelevant, simplify the query to core keywords and try again
 3. Only if both queries return nothing useful, proceed to manual search (Grep, Glob, file reads)
+4. If manual search reveals useful information that the knowledge queries missed,
+   ALWAYS include it in your `## Knowledge Discoveries` section. This is how the
+   knowledge base grows — every fallback to manual search is a gap to be filled.
 
 This saves significant time — the knowledge base contains indexed findings from previous
 research and implementation work across the team. Manual search is the fallback, not the default.
@@ -1210,6 +1219,9 @@ BEFORE using Grep, Glob, or any manual file search, ALWAYS try `query_knowledge`
 1. Query with your full question/topic as-is
 2. If results are poor or irrelevant, simplify the query to core keywords and try again
 3. Only if both queries return nothing useful, proceed to manual search (Grep, Glob, file reads)
+4. If manual search reveals useful information that the knowledge queries missed,
+   ALWAYS include it in your `## Knowledge Discoveries` section. This is how the
+   knowledge base grows — every fallback to manual search is a gap to be filled.
 
 This saves significant time — the knowledge base contains indexed findings from previous
 research and implementation work across the team. Manual search is the fallback, not the default.
