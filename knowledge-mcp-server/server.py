@@ -16,7 +16,7 @@ from common import (
     get_graph, init_schema, ingest_chunks, query_knowledge, chunk_id,
     chunk_report, create_topic_links, create_similarity_edges_for_chunks,
     create_cross_role_edges,
-    detect_supersession, detect_supersession_queued, create_supersedes_edges,
+    detect_supersession, create_supersedes_edges,
     _resolve_project, _CLASSIFY_PROMPT,
     CLASSIFICATION_MODEL,
 )
@@ -266,9 +266,9 @@ def _build_chunks(content: str, source: str, roles_str: str, project: str = None
 async def _store_and_queue_llm(content: str, source: str, roles: list[str]) -> list[str]:
     """Synchronous graph work + queue LLM tasks for agent backend.
 
-    Does chunking, embedding, graph writes synchronously, then queues
-    entity extraction and supersession classification tasks.
-    Returns list of task UUIDs.
+    Does chunking, embedding, graph writes, and supersession detection
+    synchronously, then queues entity extraction tasks for agents.
+    Returns list of entity extraction task UUIDs.
     """
     async with _store_lock:
         graph = await _ensure_graph()
@@ -288,11 +288,10 @@ async def _store_and_queue_llm(content: str, source: str, roles: list[str]) -> l
 
         task_ids = []
 
-        # Supersession: same-source fast path + queue cross-source
-        same_source_results, supersession_task_ids = detect_supersession_queued(graph, chunks)
-        if same_source_results:
-            create_supersedes_edges(graph, same_source_results)
-        task_ids.extend(supersession_task_ids)
+        # Supersession detection — run inline via litellm (same as openai backend)
+        supersessions = detect_supersession(graph, chunks)
+        if supersessions:
+            create_supersedes_edges(graph, supersessions)
 
         # Entity extraction: queue one task per chunk
         entity_types_str = ", ".join(ENTITY_TYPES)
@@ -407,27 +406,6 @@ async def _handle_submit_llm_result(arguments: dict) -> list[types.TextContent]:
                 type="text",
                 text=f"Entity extraction task {task_id} completed: {entity_count} entities, {rel_count} relationships.",
             )]
-
-        elif task_type == "supersession_classification":
-            graph = await _ensure_graph()
-            # Parse the JSON classification result
-            classification = json.loads(result_text)
-            new_id = context.get("new_id")
-            old_id = context.get("old_id")
-
-            if classification.get("type") in ("SUPERSEDES", "CONTRADICTS", "DUPLICATE"):
-                create_supersedes_edges(graph, [(new_id, old_id, classification)])
-                cleanup_task(PROJECT_ROOT, task_id)
-                return [types.TextContent(
-                    type="text",
-                    text=f"Supersession task {task_id} completed: {classification['type']} edge created ({new_id} -> {old_id}).",
-                )]
-            else:
-                cleanup_task(PROJECT_ROOT, task_id)
-                return [types.TextContent(
-                    type="text",
-                    text=f"Supersession task {task_id} completed: classified as {classification.get('type', 'DIFFERENT')}, no edge created.",
-                )]
 
         else:
             cleanup_task(PROJECT_ROOT, task_id)
