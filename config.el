@@ -1244,18 +1244,29 @@ Fedora atomic's /home -> /var/home symlink."
               ;; resolve $HOME as /home/... so we need this symlink inside
               ;; the sandbox for path resolution to work.
               "--symlink" "/var/home" "/home"
+              ;; /bin and /sbin are symlinks to /usr/bin and /usr/sbin on Fedora.
+              ;; Node.js execAsync uses /bin/sh, so these must exist in the sandbox.
+              "--symlink" "usr/bin" "/bin"
+              "--symlink" "usr/sbin" "/sbin"
               ;; Homebrew (read-only — provides node, claude-agent-acp)
               "--ro-bind" ,linuxbrew ,linuxbrew
               ;; Claude data and config (read-only)
               "--ro-bind" ,claude-data ,claude-data
-              "--ro-bind" ,claude-config ,claude-config
+              "--bind" ,claude-config ,claude-config
+              ;; MCP settings (read-only — tells Claude Code about available MCP servers)
+              ,@(let ((mcp-json (expand-file-name ".mcp.json" home)))
+                  (when (file-exists-p mcp-json)
+                    (list "--ro-bind" mcp-json mcp-json)))
+              ;; Doom Emacs config (read-only — project root for agent-shell)
+              "--ro-bind" ,(expand-file-name ".config/doom" home)
+                          ,(expand-file-name ".config/doom" home)
               ;; Git config (read-only)
               ,@(when (file-exists-p gitconfig)
                   (list "--ro-bind" gitconfig gitconfig))
               ,@(when (file-directory-p git-config-dir)
                   (list "--ro-bind" git-config-dir git-config-dir))
-              ;; Git common dir (read-only — worktrees reference main .git)
-              "--ro-bind" ,git-dir ,git-dir
+              ;; Git common dir (rw — agents need to update refs, logs for branch/commit)
+              "--bind" ,git-dir ,git-dir
               ;; Worktree (read-write — agent's working directory)
               "--bind" ,worktree ,worktree
               ;; Reports directory (read-write — agents write reports here)
@@ -1267,6 +1278,11 @@ Fedora atomic's /home -> /var/home symlink."
               "--dev" "/dev"
               "--proc" "/proc"
               "--tmpfs" "/tmp"
+              ;; DNS resolver (Fedora uses systemd-resolved via symlink from /etc/resolv.conf)
+              "--ro-bind" "/run/systemd/resolve" "/run/systemd/resolve"
+              ;; Emacs server sockets (rw — emacsclient needs write access to Unix socket)
+              "--bind" ,(format "/run/user/%d/emacs" (user-uid))
+                       ,(format "/run/user/%d/emacs" (user-uid))
               ;; Network access (needed for MCP stdio, API calls)
               "--share-net"
               ;; Kill sandboxed process when parent dies
