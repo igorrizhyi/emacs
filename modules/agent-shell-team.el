@@ -1830,7 +1830,8 @@ Return the number of tasks actually enqueued, or signal an error if
              ;; 3. Normal enqueue
              (t
               (let* ((reports-dir (agent-shell-team--reports-dir session-id))
-                     (report-path (expand-file-name (concat request-id ".md") reports-dir))
+                     (report-path (unless (equal role "knowledge")
+                                    (expand-file-name (concat request-id ".md") reports-dir)))
                      (entry (list :role role
                                   :message message
                                   :request-id request-id
@@ -1838,18 +1839,19 @@ Return the number of tasks actually enqueued, or signal an error if
                                   :target target
                                   :session-id session-id
                                   :report-path report-path)))
-                ;; Persist to disk
+                ;; Persist to disk (skip for knowledge — they're long-lived and silent)
                 (plist-put entry :created-at (float-time))
-                (agent-shell-team--persist-task
-                 session-id
-                 (list :request-id request-id
-                       :role role
-                       :message (truncate-string-to-width (or message "") 200 nil nil "...")
-                       :group-id group-id
-                       :target target
-                       :session-id session-id
-                       :status "queued"
-                       :created-at (plist-get entry :created-at)))
+                (unless (equal role "knowledge")
+                  (agent-shell-team--persist-task
+                   session-id
+                   (list :request-id request-id
+                         :role role
+                         :message (truncate-string-to-width (or message "") 200 nil nil "...")
+                         :group-id group-id
+                         :target target
+                         :session-id session-id
+                         :status "queued"
+                         :created-at (plist-get entry :created-at))))
                 ;; Register in group tracker if group_id is present
                 (when group-id
                   (let ((group (or (gethash group-id agent-shell-team--task-groups)
@@ -2186,8 +2188,11 @@ reached its max agent count, auto-spawn a new agent."
          (session-id (plist-get task :session-id))
          (role (plist-get task :role))
          (message (plist-get task :message))
-         (enriched (format "%s\n\n[Request ID: %s]\nWrite your detailed report to: %s\nReference this Request ID in your completion notification."
-                           message request-id report-path)))
+         (enriched (if report-path
+                      (format "%s\n\n[Request ID: %s]\nWrite your detailed report to: %s\nReference this Request ID in your completion notification."
+                              message request-id report-path)
+                    (format "%s\n\n[Request ID: %s]\nReference this Request ID in your completion notification."
+                            message request-id))))
     (agent-shell-team--log session-id
                            (format "[assign] %s -> %s (request: %s)"
                                    (plist-get task :role)
@@ -2202,14 +2207,15 @@ reached its max agent count, auto-spawn a new agent."
              (copy-hash-table agent-shell-team--request-to-buffer))
     (puthash request-id buf agent-shell-team--request-to-buffer)
     (puthash request-id task agent-shell-team--active-tasks)
-    ;; Persist assignment
-    (let ((wt-name (alist-get 'worktree-name agent)))
-      (agent-shell-team--persist-task
-       session-id
-       (list :request-id request-id
-             :status "assigned"
-             :agent-worktree wt-name
-             :assigned-at (float-time))))
+    ;; Persist assignment (skip for knowledge — not shown in sidebar)
+    (unless (equal role "knowledge")
+      (let ((wt-name (alist-get 'worktree-name agent)))
+        (agent-shell-team--persist-task
+         session-id
+         (list :request-id request-id
+               :status "assigned"
+               :agent-worktree wt-name
+               :assigned-at (float-time)))))
     (agent-shell-team--prompt-agent
      buf (format "Task Assignment -- %s" enriched))))
 
