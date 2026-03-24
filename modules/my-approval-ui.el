@@ -92,6 +92,14 @@ Checklist :items are plists (:id :label :checked).
 Choice :items are plists (:id :label :selected).
 :decisions is a list of (:decision :reaction) plists.")
 
+;;; ---- Internal Guards --------------------------------------------------------
+
+(defvar my/approval--in-window-change nil
+  "Non-nil while `my/approval--on-window-selection-change' is executing.")
+
+(defvar my/approval--render-timer nil
+  "Timer for debounced render scheduling.")
+
 ;;; ---- Buffer-local State -----------------------------------------------------
 
 (defvar-local my/approval--request-index 0
@@ -574,16 +582,18 @@ Supports **bold**, *italic*, `code`, and table rows (lines starting with |)."
   "Display the approval buffer in a side window with HEIGHT lines."
   (let* ((buf (my/approval--get-or-create-buffer))
          (win (get-buffer-window buf t)))
-    (when win (delete-window win))
-    (let ((new-win (display-buffer-in-side-window
-                    buf
-                    `((side . bottom)
-                      (slot . 0)
-                      (window-height . ,height)
-                      (dedicated . t)))))
-      (when new-win
-        (my/approval--set-window-params new-win))
-      new-win)))
+    (if (and win (window-live-p win) (= (window-height win) height))
+        win  ; reuse existing window at the right size
+      (when win (delete-window win))
+      (let ((new-win (display-buffer-in-side-window
+                      buf
+                      `((side . bottom)
+                        (slot . 0)
+                        (window-height . ,height)
+                        (dedicated . t)))))
+        (when new-win
+          (my/approval--set-window-params new-win))
+        new-win))))
 
 (defun my/approval-toggle-collapse ()
   "Toggle between expanded and collapsed approval window."
@@ -1005,21 +1015,31 @@ REQUEST keys: :request-id :title :description :type
 
 ;;; ---- Auto-refresh on window focus -------------------------------------------
 
+(defun my/approval--schedule-render ()
+  "Debounced refresh: coalesce rapid calls into a single render."
+  (when my/approval--render-timer
+    (cancel-timer my/approval--render-timer))
+  (setq my/approval--render-timer
+        (run-at-time 0.05 nil
+                     (lambda ()
+                       (setq my/approval--render-timer nil)
+                       (my/approval--maybe-refresh-from-disk)
+                       (my/approval--render)))))
+
 (defun my/approval--on-window-selection-change (_frame)
   "Refresh from disk when the approval window gains focus.
 Auto-expand if collapsed and there are pending requests."
-  (when (and (eq major-mode 'my/approval-mode)
-             my/approval--requests)
-    (when (and my/approval--collapsed
-               (or (null my/approval--manual-collapse-time)
-                   (> (- (float-time) my/approval--manual-collapse-time) 2.0)))
-      (setq my/approval--collapsed nil
-            header-line-format (propertize " Approval Queue" 'face 'bold))
-      (let ((new-win (my/approval--display-window my/approval-window-height)))
-        (when new-win
-          (select-window new-win))))
-    (my/approval--maybe-refresh-from-disk)
-    (my/approval--render)))
+  (unless my/approval--in-window-change
+    (let ((my/approval--in-window-change t))
+      (when (and (eq major-mode 'my/approval-mode)
+                 my/approval--requests)
+        (when (and my/approval--collapsed
+                   (or (null my/approval--manual-collapse-time)
+                       (> (- (float-time) my/approval--manual-collapse-time) 2.0)))
+          (setq my/approval--collapsed nil
+                header-line-format (propertize " Approval Queue" 'face 'bold))
+          (my/approval--display-window my/approval-window-height))
+        (my/approval--schedule-render)))))
 
 (add-hook 'window-selection-change-functions #'my/approval--on-window-selection-change)
 
