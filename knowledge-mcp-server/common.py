@@ -106,7 +106,6 @@ def init_schema(graph):
     # Unique constraints (FalkorDB doesn't support IF NOT EXISTS for constraints)
     for stmt in (
         "CREATE CONSTRAINT FOR (c:Chunk) REQUIRE c.id IS UNIQUE",
-        "CREATE CONSTRAINT FOR (t:Topic) REQUIRE t.name IS UNIQUE",
         "CREATE CONSTRAINT FOR (r:Role) REQUIRE r.name IS UNIQUE",
     ):
         try:
@@ -431,26 +430,6 @@ def ingest_chunks(graph, chunks: list[dict], project: str = None):
                     params={"id": chunk["id"], "role": role},
                 )
 
-
-# ---------------------------------------------------------------------------
-# Topic linking
-# ---------------------------------------------------------------------------
-
-
-def create_topic_links(graph, chunks: list[dict]):
-    """Create Topic nodes from section names and link chunks via HAS_TOPIC."""
-    for chunk in chunks:
-        section = chunk.get("section", "").strip()
-        if not section:
-            continue
-        graph.query(
-            """
-            MATCH (c:Chunk {id: $id})
-            MERGE (t:Topic {name: $topic})
-            MERGE (c)-[:HAS_TOPIC]->(t)
-            """,
-            params={"id": chunk["id"], "topic": section},
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -1023,7 +1002,7 @@ def query_knowledge(graph, question: str, role: str = None, top_k: int = 8, mode
         exp = graph.query(
             f"""
             UNWIND $ids AS hid
-            MATCH (c1:Chunk {{id: hid}})-[:RELATED_TO|HAS_TOPIC*1..1]-(c2:Chunk)
+            MATCH (c1:Chunk {{id: hid}})-[:RELATED_TO]-(c2:Chunk)
             WHERE NOT c2.id IN $ids {proj_filter}
             OPTIONAL MATCH (superseder:Chunk)-[:SUPERSEDES]->(c2)
             WITH c2 WHERE superseder IS NULL
