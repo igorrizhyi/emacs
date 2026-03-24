@@ -86,6 +86,14 @@ without prompting for confirmation."
   :type 'integer
   :group 'agent-shell-team)
 
+(defcustom agent-shell-team-role-models '(("knowledge" . "sonnet"))
+  "Alist mapping role name strings to Claude model ID strings.
+Each entry is (ROLE . MODEL-ID) where MODEL-ID is a short name
+like \"sonnet\", \"haiku\", \"opus\", or \"default\".
+Roles not listed here fall back to `agent-shell-anthropic-default-model-id'."
+  :type '(alist :key-type string :value-type string)
+  :group 'agent-shell-team)
+
 ;;; Faces for doom-modeline role badges
 
 (defface agent-shell-team-role-lead-face
@@ -2732,7 +2740,9 @@ SESSION-ID, ROLE, and BUFFER-NAME customize the config."
    :icon-name "anthropic.png"
    :welcome-function #'agent-shell-emacs-mcp--welcome-message
    :client-maker #'agent-shell-emacs-mcp--make-client
-   :default-model-id (lambda () agent-shell-anthropic-default-model-id)
+   :default-model-id (let ((model (or (cdr (assoc role agent-shell-team-role-models))
+                               agent-shell-anthropic-default-model-id)))
+                       (lambda () model))
    :default-session-mode-id (lambda () (or (and agent-shell-team-skip-permissions "bypassPermissions")
                                             agent-shell-anthropic-default-session-mode-id))
    :install-instructions "See https://github.com/zed-industries/claude-code-acp for installation."))
