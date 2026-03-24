@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import os
 import sys
+from datetime import datetime, timedelta, timezone
 
 from falkordb import FalkorDB
 
@@ -362,8 +363,12 @@ def migrate_from_graph(source_graph_name: str, project: str):
     print("Done.")
 
 
-def supersession_only():
-    """Load all chunks from graph and run supersession detection only."""
+def supersession_only(days: int = 7):
+    """Load all chunks from graph and run supersession detection only.
+
+    Only chunks created within the last *days* days are checked for
+    supersession (use ``days=0`` to check all chunks).
+    """
     graph = get_graph()
 
     print("Loading all chunks from graph...")
@@ -398,8 +403,22 @@ def supersession_only():
     print(f"  Sorted by created_at (oldest: {chunks[0]['created_at']}, "
           f"newest: {chunks[-1]['created_at']})")
 
+    # Filter to recent chunks only (ISO timestamp string comparison)
+    if days > 0:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        recent_chunks = [c for c in chunks if c["created_at"] >= cutoff]
+        print(f"  --days {days}: cutoff={cutoff}")
+        print(f"  Chunks within window: {len(recent_chunks)}/{len(chunks)}")
+    else:
+        recent_chunks = chunks
+        print(f"  --days 0: checking all {len(chunks)} chunks")
+
+    if not recent_chunks:
+        print("No recent chunks to check for supersession.")
+        return
+
     print("Detecting supersessions (LLM)...")
-    supersessions = detect_supersession(graph, chunks)
+    supersessions = detect_supersession(graph, recent_chunks)
     print(f"  Found {len(supersessions)} supersession(s)")
 
     if supersessions:
@@ -486,6 +505,13 @@ def main():
         help="Load all existing chunks from graph and run supersession detection only "
              "(no re-ingest, no topics, no similarity edges)",
     )
+    parser.add_argument(
+        "--days",
+        type=int,
+        default=7,
+        help="Only check chunks created in the last N days for supersession "
+             "(used with --supersession-only, 0 = all chunks, default: 7)",
+    )
     args = parser.parse_args()
 
     if args.full:
@@ -508,7 +534,7 @@ def main():
         print(f"Namespace mode: graph={GRAPH_NAME}, project={project}")
 
     if args.supersession_only:
-        supersession_only()
+        supersession_only(days=args.days)
         return
 
     if args.from_graph:
