@@ -2360,10 +2360,12 @@ reached its max agent count, auto-spawn a new agent."
       (when-let ((lead-buf (agent-shell-team--get-lead session-id)))
         (agent-shell-team--queue-message
          session-id lead-buf
-         (format "Task Assigned [request-id: %s]\nAgent: %s\nRole: %s"
-                 request-id
-                 (alist-get 'worktree-name agent)
-                 role))))))
+         (list :from "system"
+               :title "Task Assigned"
+               :message (format "[request-id: %s]\nAgent: %s\nRole: %s"
+                                request-id
+                                (alist-get 'worktree-name agent)
+                                role)))))))
 
 (defun agent-shell-team--handle-task-completion (request-id session-id from-buffer)
   "Mark REQUEST-ID as complete.  If its group is fully done, notify lead.
