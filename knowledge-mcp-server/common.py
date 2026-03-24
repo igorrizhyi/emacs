@@ -793,21 +793,34 @@ def detect_supersession(graph, new_chunks: list[dict]) -> list[tuple[str, str, d
 
 
 def create_supersedes_edges(graph, supersessions: list[tuple[str, str, dict]]):
-    """Create SUPERSEDES edges from detection results."""
+    """Create SUPERSEDES edges from detection results using batched UNWIND queries."""
+    if not supersessions:
+        return
     now = datetime.now(timezone.utc).isoformat()
-    for new_id, old_id, classification in supersessions:
-        graph.query(
-            "MATCH (new:Chunk {id: $new_id}), (old:Chunk {id: $old_id}) "
-            "MERGE (new)-[s:SUPERSEDES]->(old) "
-            "SET s.reason = $reason, s.type = $type, s.detected_at = $ts",
-            params={
+    batch_size = 500
+    total = len(supersessions)
+    written = 0
+    cypher = (
+        "UNWIND $batch AS row "
+        "MATCH (new:Chunk {id: row.new_id}), (old:Chunk {id: row.old_id}) "
+        "MERGE (new)-[s:SUPERSEDES]->(old) "
+        "SET s.reason = row.reason, s.type = row.type, s.detected_at = row.ts"
+    )
+    for i in range(0, total, batch_size):
+        chunk = supersessions[i : i + batch_size]
+        batch = [
+            {
                 "new_id": new_id,
                 "old_id": old_id,
                 "reason": classification.get("reason", ""),
                 "type": classification.get("type", "SUPERSEDES"),
                 "ts": now,
-            },
-        )
+            }
+            for new_id, old_id, classification in chunk
+        ]
+        graph.query(cypher, params={"batch": batch})
+        written += len(batch)
+        logger.info("SUPERSEDES batch %d: %d/%d edges written", i // batch_size + 1, written, total)
 
 
 # ---------------------------------------------------------------------------
