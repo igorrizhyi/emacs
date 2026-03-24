@@ -2040,11 +2040,22 @@ Route the status update directly to the lead agent's queue."
                                 return (alist-get 'worktree-name agent))))
            (agent-role (when (and agent-buf (buffer-live-p agent-buf))
                          (buffer-local-value 'agent-shell-team--role agent-buf)))
-           (message-text (format "Task Update [%s] — %s\nRequest ID: %s%s%s%s%s\n\n%s"
+           (agent-branch
+            (ignore-errors
+              (when (and agent-buf (buffer-live-p agent-buf))
+                (let ((wt-path (buffer-local-value 'agent-shell-team--worktree-path agent-buf)))
+                  (when (and wt-path (file-directory-p wt-path))
+                    (let ((branch (string-trim
+                                   (shell-command-to-string
+                                    (format "git -C %s branch --show-current"
+                                            (shell-quote-argument wt-path))))))
+                      (unless (string-empty-p branch) branch)))))))
+           (message-text (format "Task Update [%s] — %s\nRequest ID: %s%s%s%s%s%s\n\n%s"
                                  status
                                  request-id
                                  request-id
                                  (if commit (format "\nCommit: %s" commit) "")
+                                 (if agent-branch (format "\nBranch: %s" agent-branch) "")
                                  (if report-path (format "\nReport: %s" report-path) "")
                                  (if agent-wt (format "\nAgent: %s" agent-wt) "")
                                  (if agent-role (format "\nRole: %s" agent-role) "")
