@@ -1100,19 +1100,23 @@ def query_knowledge(graph, question: str, role: str = None, top_k: int = 8, mode
             for rid in researcher_ids:
                 confidence[rid] = "recommendation"
 
-    # 6. Build context for LLM
-    context_parts = []
-    for h in hits:
-        conf = confidence.get(h["id"])
-        if conf:
-            proj_label = f"{h['project']}: " if h.get("project") else ""
-            context_parts.append(f"[{conf}: {proj_label}{h['source']} / {h['section']}] {h['content']}")
-        else:
-            proj_label = f"from {h['project']}: " if h.get("project") else ""
-            context_parts.append(f"[{proj_label}{h['source']} / {h['section']}] {h['content']}")
+    # 6. Build context for LLM — merge all chunks sorted by relevance
     for ec in unique_expanded:
-        proj_label = f"from {ec['project']}: " if ec.get("project") else ""
-        context_parts.append(f"[expanded: {proj_label}{ec['source']} / {ec['section']}] {ec['content']}")
+        ec['_expanded'] = True
+    all_chunks = hits + unique_expanded
+    all_chunks.sort(key=lambda x: x.get('score', 1.0))
+
+    context_parts = []
+    for chunk in all_chunks:
+        conf = confidence.get(chunk["id"])
+        proj_label_prefix = f"{chunk['project']}: " if chunk.get("project") else ""
+        proj_label_from = f"from {chunk['project']}: " if chunk.get("project") else ""
+        if chunk.get('_expanded'):
+            context_parts.append(f"[expanded: {proj_label_from}{chunk['source']} / {chunk['section']}] {chunk['content']}")
+        elif conf:
+            context_parts.append(f"[{conf}: {proj_label_prefix}{chunk['source']} / {chunk['section']}] {chunk['content']}")
+        else:
+            context_parts.append(f"[{proj_label_from}{chunk['source']} / {chunk['section']}] {chunk['content']}")
 
     context_text = "\n\n".join(context_parts)
 
