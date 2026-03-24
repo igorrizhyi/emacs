@@ -5,6 +5,8 @@ import json
 import logging
 import os
 import re
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
 from falkordb import FalkorDB
@@ -623,6 +625,8 @@ SUPERSESSION_CANDIDATE_THRESHOLD = 0.25  # cosine distance — tuned for text-em
 
 CLASSIFICATION_MODEL = os.environ.get("GRAPHRAG_CLASSIFY_MODEL", "gpt-4o-mini")
 
+SUPERSESSION_CONCURRENCY = int(os.environ.get("GRAPHRAG_SUPERSESSION_CONCURRENCY", "15"))
+
 _CLASSIFY_PROMPT = """\
 You are comparing two knowledge chunks. Classify the relationship.
 
@@ -648,6 +652,28 @@ def _roles_overlap(roles_a: str, roles_b: str) -> bool:
     return bool(set_a & set_b)
 
 
+def _classify_pair(new_id: str, new_content: str, old_id: str, old_content: str) -> tuple[str, str, dict | None]:
+    """Call LLM to classify a (new, old) chunk pair. Returns (new_id, old_id, classification_or_None)."""
+    try:
+        prompt = _CLASSIFY_PROMPT.format(
+            existing=old_content[:500],
+            new=new_content[:500],
+        )
+        llm_resp = completion(
+            model=CLASSIFICATION_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"},
+        )
+        raw = llm_resp.choices[0].message.content.strip()
+        classification = json.loads(raw)
+        if classification.get("type") in ("SUPERSEDES", "CONTRADICTS", "DUPLICATE"):
+            return (new_id, old_id, classification)
+        return (new_id, old_id, None)
+    except Exception as e:
+        logger.debug("LLM classify failed for %s vs %s: %s", new_id, old_id, e)
+        return (new_id, old_id, None)
+
+
 def detect_supersession(graph, new_chunks: list[dict]) -> list[tuple[str, str, dict]]:
     """Find existing chunks that new chunks might supersede.
 
@@ -655,14 +681,20 @@ def detect_supersession(graph, new_chunks: list[dict]) -> list[tuple[str, str, d
     1. Find very similar existing chunks (cosine distance < threshold)
     2. Skip chunks with non-overlapping roles (different audience = both valid)
     3. Same-source fast path: auto-classify as SUPERSEDES without LLM
-    4. Cross-source: ask LLM to classify
+    4. Cross-source: ask LLM to classify (parallelized with ThreadPoolExecutor)
 
     Returns list of (new_id, old_id, classification_dict) tuples.
     """
     results = []
-    logger.debug("detect_supersession: checking %d new chunks (threshold=%.2f)", len(new_chunks), SUPERSESSION_CANDIDATE_THRESHOLD)
+    llm_tasks = []  # (new_id, new_content, old_id, old_content) for parallel LLM calls
+    total = len(new_chunks)
+    t_start = time.monotonic()
+    same_source_count = 0
 
-    for chunk in new_chunks:
+    print(f"[supersession] Starting supersession detection on {total} chunks "
+          f"(threshold={SUPERSESSION_CANDIDATE_THRESHOLD:.2f}, concurrency={SUPERSESSION_CONCURRENCY})")
+
+    for i, chunk in enumerate(new_chunks, 1):
         cid = chunk["id"]
         # Fetch the embedding we just stored
         res = graph.query(
@@ -688,7 +720,8 @@ def detect_supersession(graph, new_chunks: list[dict]) -> list[tuple[str, str, d
             },
         )
 
-        logger.debug("  chunk %s: %d neighbors within threshold", cid, len(neighbours.result_set))
+        candidate_count = len(neighbours.result_set)
+        chunk_llm_count = 0
 
         for row in neighbours.result_set:
             old_id, old_content, old_source, old_roles, score = row
@@ -703,29 +736,58 @@ def detect_supersession(graph, new_chunks: list[dict]) -> list[tuple[str, str, d
                     "type": "SUPERSEDES",
                     "reason": f"Same source ({old_source}), distance={score:.3f}",
                 }))
+                same_source_count += 1
                 continue
 
-            # Cross-source: ask LLM to classify
-            try:
-                prompt = _CLASSIFY_PROMPT.format(
-                    existing=old_content[:500],
-                    new=chunk["content"][:500],
-                )
-                llm_resp = completion(
-                    model=CLASSIFICATION_MODEL,
-                    messages=[{"role": "user", "content": prompt}],
-                    response_format={"type": "json_object"},
-                )
-                raw = llm_resp.choices[0].message.content.strip()
-                classification = json.loads(raw)
-                # Only keep actionable classifications
-                if classification.get("type") in ("SUPERSEDES", "CONTRADICTS", "DUPLICATE"):
-                    results.append((cid, old_id, classification))
-            except Exception:
-                # LLM failure is non-fatal — skip this candidate
-                continue
+            # Cross-source: queue for parallel LLM classification
+            llm_tasks.append((cid, chunk["content"], old_id, old_content))
+            chunk_llm_count += 1
 
-    logger.info("detect_supersession: checked %d chunks, found %d candidates (threshold=%.2f)", len(new_chunks), len(results), SUPERSESSION_CANDIDATE_THRESHOLD)
+        # Progress logging every 100 chunks or at the end
+        if i % 100 == 0 or i == total:
+            elapsed = time.monotonic() - t_start
+            rate = i / elapsed if elapsed > 0 else 0
+            eta = (total - i) / rate if rate > 0 else 0
+            print(f"[supersession] Scanned {i}/{total} chunks — "
+                  f"{same_source_count} same-source, {len(llm_tasks)} LLM pairs queued — "
+                  f"elapsed {elapsed:.0f}s, ETA {eta:.0f}s")
+
+    print(f"[supersession] Scan complete: {same_source_count} same-source supersessions, "
+          f"{len(llm_tasks)} cross-source pairs to classify via LLM")
+
+    # --- Parallel LLM classification ---
+    if llm_tasks:
+        t_llm_start = time.monotonic()
+        llm_done = 0
+        llm_hits = 0
+        print(f"[supersession] Starting {len(llm_tasks)} LLM calls with concurrency={SUPERSESSION_CONCURRENCY}...")
+
+        with ThreadPoolExecutor(max_workers=SUPERSESSION_CONCURRENCY) as pool:
+            futures = {
+                pool.submit(_classify_pair, new_id, new_content, old_id, old_content): (new_id, old_id)
+                for new_id, new_content, old_id, old_content in llm_tasks
+            }
+            for future in as_completed(futures):
+                new_id, old_id, classification = future.result()
+                llm_done += 1
+                if classification is not None:
+                    results.append((new_id, old_id, classification))
+                    llm_hits += 1
+                    print(f"[supersession]   LLM hit: {new_id} -> {old_id} = {classification.get('type')} "
+                          f"({classification.get('reason', '')[:60]})")
+
+                if llm_done % 50 == 0 or llm_done == len(llm_tasks):
+                    elapsed_llm = time.monotonic() - t_llm_start
+                    rate = llm_done / elapsed_llm if elapsed_llm > 0 else 0
+                    eta = (len(llm_tasks) - llm_done) / rate if rate > 0 else 0
+                    print(f"[supersession] LLM progress: {llm_done}/{len(llm_tasks)} — "
+                          f"hits so far: {llm_hits} — elapsed {elapsed_llm:.0f}s, ETA {eta:.0f}s")
+
+    total_elapsed = time.monotonic() - t_start
+    print(f"[supersession] Done: {len(results)} supersessions found in {total_elapsed:.1f}s "
+          f"(same-source: {same_source_count}, LLM: {len(results) - same_source_count})")
+    logger.info("detect_supersession: checked %d chunks, found %d candidates (threshold=%.2f)",
+                len(new_chunks), len(results), SUPERSESSION_CANDIDATE_THRESHOLD)
     return results
 
 
