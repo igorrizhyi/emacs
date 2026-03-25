@@ -5,11 +5,10 @@ No LLM calls — uses cosine similarity between chunk and entity embeddings
 to create HAS_ENTITY edges.
 
 Usage:
-    python backfill_entities.py --dry-run           # count unlinked chunks
-    python backfill_entities.py --graph my_graph     # target one graph
-    python backfill_entities.py                      # process all graphs
-    python backfill_entities.py --threshold 0.6      # stricter similarity
-    python backfill_entities.py --max-entities 3     # fewer links per chunk
+    python backfill_entities.py --dry-run                              # count unlinked chunks
+    python backfill_entities.py --project-root /path/to/project        # target project graph
+    python backfill_entities.py --namespace my_ns --threshold 0.6      # namespace graph, stricter
+    python backfill_entities.py --max-entities 3                       # fewer links per chunk
 """
 
 import argparse
@@ -21,14 +20,13 @@ import time
 import numpy as np
 from falkordb import FalkorDB
 
+from common import set_graph_name, FALKORDB_HOST, FALKORDB_PORT
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
 logger = logging.getLogger(__name__)
-
-FALKORDB_HOST = os.environ.get("FALKORDB_HOST", "127.0.0.1")
-FALKORDB_PORT = int(os.environ.get("FALKORDB_PORT", "6380"))
 
 ENTITIES_QUERY = "MATCH (e:Entity) WHERE e.embedding IS NOT NULL RETURN e.name, e.embedding"
 UNLINKED_CHUNKS_QUERY = (
@@ -43,14 +41,6 @@ MERGE_EDGE_QUERY = (
 
 def get_db() -> FalkorDB:
     return FalkorDB(host=FALKORDB_HOST, port=FALKORDB_PORT)
-
-
-def discover_graphs(db: FalkorDB, target_graph: str | None) -> list[str]:
-    """Return list of graph names to process."""
-    if target_graph:
-        return [target_graph]
-    all_graphs = db.list_graphs()
-    return [g for g in all_graphs if g.startswith("knowledge_")]
 
 
 def load_entities(graph) -> tuple[list[str], np.ndarray | None]:
@@ -196,10 +186,12 @@ def main():
         help="Count unlinked chunks without creating edges.",
     )
     parser.add_argument(
-        "--graph",
-        type=str,
-        default=None,
-        help="Target a specific graph name (default: all knowledge_* graphs).",
+        "--project-root",
+        help="Project root for graph name derivation (overrides PROJECT_ROOT env var).",
+    )
+    parser.add_argument(
+        "--namespace",
+        help="Namespace for shared graph.",
     )
     parser.add_argument(
         "--threshold",
@@ -221,46 +213,36 @@ def main():
     )
     args = parser.parse_args()
 
+    project_root = args.project_root or os.environ.get("PROJECT_ROOT", "")
+    if project_root or args.namespace:
+        set_graph_name(project_root, namespace=args.namespace)
+
+    # Re-import GRAPH_NAME after set_graph_name may have updated it
+    from common import GRAPH_NAME
+
     db = get_db()
-    graphs = discover_graphs(db, args.graph)
 
-    if not graphs:
-        logger.warning("No graphs found to process.")
-        sys.exit(0)
+    logger.info("Processing graph: %s", GRAPH_NAME)
 
-    logger.info("Graphs to process: %s", graphs)
-
-    all_stats = []
     start = time.time()
-
-    for graph_name in graphs:
-        stats = backfill_graph(
-            db, graph_name, args.threshold, args.max_entities, args.batch_size, args.dry_run
-        )
-        all_stats.append(stats)
-
+    stats = backfill_graph(
+        db, GRAPH_NAME, args.threshold, args.max_entities, args.batch_size, args.dry_run
+    )
     elapsed = time.time() - start
 
     # Summary
     print("\n=== Backfill Summary ===")
-    total_unlinked = sum(s["total_unlinked"] for s in all_stats)
-    total_processed = sum(s["processed"] for s in all_stats)
-    total_edges = sum(s["edges_created"] for s in all_stats)
-    total_skipped = sum(s["skipped_no_match"] for s in all_stats)
+    print(
+        f"  {stats['graph']}: {stats['total_entities']} entities, "
+        f"{stats['total_unlinked']} unlinked chunks, "
+        f"{stats['processed']} linked, {stats['edges_created']} edges, "
+        f"{stats['skipped_no_match']} no-match"
+    )
 
-    for s in all_stats:
-        print(
-            f"  {s['graph']}: {s['total_entities']} entities, "
-            f"{s['total_unlinked']} unlinked chunks, "
-            f"{s['processed']} linked, {s['edges_created']} edges, "
-            f"{s['skipped_no_match']} no-match"
-        )
-
-    print(f"\nTotal: {total_unlinked} unlinked chunks across {len(graphs)} graph(s)")
     if not args.dry_run:
-        print(f"Linked: {total_processed} chunks, {total_edges} edges created")
-        if total_skipped:
-            print(f"Skipped: {total_skipped} chunks had no entities above threshold")
+        print(f"Linked: {stats['processed']} chunks, {stats['edges_created']} edges created")
+        if stats["skipped_no_match"]:
+            print(f"Skipped: {stats['skipped_no_match']} chunks had no entities above threshold")
     print(f"Time: {elapsed:.1f}s")
 
 
