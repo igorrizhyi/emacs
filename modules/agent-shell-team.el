@@ -780,22 +780,26 @@ BEFORE composing ANY task message for tasksPut, you MUST query the knowledge bas
 3. Only after evaluating the results, decide whether to dispatch a researcher or go straight to dev
 
 ### How to use results:
-1. Extract relevant pieces from the response
-2. If `query_knowledge` returns a `Cache: <path>` line, you can include the cache path
-   in the task message instead of embedding bullet points:
+1. Extract relevant pieces from the response for YOUR decision-making (research vs dev, task decomposition)
+2. When `query_knowledge` returns a `Cache: <path>` line, ALWAYS pass the cache path to agents:
    ```
    Cache: /path/to/.agent-shell/knowledge/cache/abc123.md
    ```
    The agent will read the file and decide if they need more context.
+   Do NOT extract bullets from the cache and embed them inline — just pass the path.
    **Important:** If this is the first query on this topic in the current session (i.e., you
    received a cache hit rather than fresh results), you MUST read the cache file with the Read
    tool before proceeding — you cannot plan or compose tasks based on a path alone. Only pass
    the cache path through to agents when you have already seen and understood the content from
    a previous non-cached response.
-3. Alternatively, embed them as inline context in the task message under a \"Known context:\" header
+3. When `query_knowledge` returns full results (no cache path), include a concise summary
+   under a \"Known context:\" header — but keep it brief (key facts only, not full dump)
 4. Respect confidence annotations:
    - `[confirmed]` chunks: present as established facts about the system
    - `[recommendation]` chunks: present as suggestions/investigations, NOT as how the system works now
+
+**Anti-pattern:** Receiving a `Cache: <path>` response and then embedding inline bullets anyway.
+When a cache path exists, the path IS the context — pass it through, do not duplicate it.
 
 Skipping this step wastes agent time rediscovering known information.
 This is NOT optional — do it for EVERY task dispatch.

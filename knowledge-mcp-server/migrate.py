@@ -408,22 +408,13 @@ def supersession_only(days: int = 7):
 
 
 def main():
-    project_root = os.environ.get("PROJECT_ROOT")
-    if project_root:
-        base_dir = project_root
-    else:
-        base_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
-
-    default_knowledge_dir = os.path.join(base_dir, ".agent-shell", "knowledge")
-    default_reports_dir = os.path.join(base_dir, ".agent-shell", "reports")
-
     parser = argparse.ArgumentParser(
         description="Migrate markdown knowledge files into FalkorDB hybrid vector+graph store"
     )
     parser.add_argument(
         "--knowledge-dir",
-        default=default_knowledge_dir,
-        help=f"Path to knowledge directory (default: {default_knowledge_dir})",
+        default=None,
+        help="Path to knowledge directory (default: <base>/.agent-shell/knowledge)",
     )
     parser.add_argument(
         "--clean",
@@ -437,12 +428,14 @@ def main():
     )
     parser.add_argument(
         "--reports-dir",
-        default=default_reports_dir,
-        help=f"Path to reports directory (default: {default_reports_dir})",
+        default=None,
+        help="Path to reports directory (default: <base>/.agent-shell/reports)",
     )
     parser.add_argument(
         "--project-root",
-        help="Project root for graph name derivation (overrides PROJECT_ROOT env var)",
+        help="Project root — used for graph name derivation AND as base directory "
+             "for default --knowledge-dir / --reports-dir paths. "
+             "Overrides PROJECT_ROOT env var.",
     )
     parser.add_argument(
         "--namespace",
@@ -489,7 +482,20 @@ def main():
         args.with_entities = True
         args.with_supersession = True
 
-    graph_root = args.project_root or project_root
+    # Resolve base directory: --project-root > PROJECT_ROOT env > script parent
+    graph_root = args.project_root or os.environ.get("PROJECT_ROOT")
+    if graph_root:
+        base_dir = graph_root
+    else:
+        base_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
+
+    # Apply defaults for knowledge/reports dirs based on base_dir
+    if args.knowledge_dir is None:
+        args.knowledge_dir = os.path.join(base_dir, ".agent-shell", "knowledge")
+    if args.reports_dir is None:
+        args.reports_dir = os.path.join(base_dir, ".agent-shell", "reports")
+
+    # Set graph name
     if graph_root:
         set_graph_name(graph_root, namespace=args.namespace)
     elif args.namespace:
