@@ -252,6 +252,17 @@ Optional FACE overrides the default team message face."
                 (m-end (match-end 0)))
             (unless (cl-some (lambda (ov) (overlay-get ov 'my-agent-shell-team-msg))
                              (overlays-in m-start m-end))
+              ;; Extend m-start backward to cover the `Claude >` prompt
+              (let ((prompt-start (save-excursion
+                                    (goto-char m-start)
+                                    (forward-line 0) ; beginning of line with «TEAM»
+                                    ;; If «TEAM» is at line start, prompt is on previous line
+                                    (when (= (point) m-start)
+                                      (forward-line -1))
+                                    (when (looking-at (regexp-quote (shell-maker-prompt shell-maker--config)))
+                                      (match-beginning 0)))))
+                (when prompt-start
+                  (setq m-start prompt-start)))
               ;; Hide start marker AND the following newline so the
               ;; Claude> prompt line doesn't get the purple background.
               (let* ((hide-end (save-excursion
