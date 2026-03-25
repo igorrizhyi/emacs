@@ -1275,24 +1275,15 @@ Cancels any pending preview timer before scheduling a new one."
   (interactive)
   (let ((session-id (get-text-property (line-beginning-position) 'my/sidebar-session)))
     (when session-id
-      (let* ((sym (intern (format "session-%s" session-id)))
-             (inhibit-read-only t)
-             (currently-hidden (memq sym buffer-invisibility-spec)))
-        (if currently-hidden
-            (progn
-              (remove-from-invisibility-spec sym)
-              (cl-pushnew session-id my/team-sidebar--expanded-sessions :test #'equal)
-              (setq my/team-sidebar--manually-collapsed
-                    (delete session-id my/team-sidebar--manually-collapsed)))
-          (add-to-invisibility-spec sym)
-          (setq my/team-sidebar--expanded-sessions
-                (delete session-id my/team-sidebar--expanded-sessions))
-          (cl-pushnew session-id my/team-sidebar--manually-collapsed :test #'equal))
-        ;; Update the toggle indicator
-        (save-excursion
-          (beginning-of-line)
-          (when (looking-at "[▸▾]")
-            (replace-match (if currently-hidden "▾" "▸"))))))))
+      (if (member session-id my/team-sidebar--expanded-sessions)
+          (progn
+            (setq my/team-sidebar--expanded-sessions
+                  (delete session-id my/team-sidebar--expanded-sessions))
+            (cl-pushnew session-id my/team-sidebar--manually-collapsed :test #'equal))
+        (cl-pushnew session-id my/team-sidebar--expanded-sessions :test #'equal)
+        (setq my/team-sidebar--manually-collapsed
+              (delete session-id my/team-sidebar--manually-collapsed)))
+      (my/team-sidebar--render))))
 
 ;;; ---- Inline Prompt Mode -----------------------------------------------------
 
