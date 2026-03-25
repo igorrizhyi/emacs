@@ -236,8 +236,6 @@ Optional FACE overrides the default team message face."
     (overlay-put ov 'wrap-prefix padding)
     (overlay-put ov 'before-string
                  (propertize "\n" 'face `(:height 0.3 :background ,(plist-get face :background) :extend t)))
-    (overlay-put ov 'after-string
-                 (propertize "\n" 'face `(:height 0.3 :background ,(plist-get face :background) :extend t)))
     (overlay-put ov 'priority 100)
     (overlay-put ov 'evaporate nil)
     (overlay-put ov 'my-agent-shell-team-msg t)))
@@ -260,27 +258,35 @@ Optional FACE overrides the default team message face."
                                  (goto-char content-start)
                                  (skip-chars-forward "\n")
                                  (point)))
-                     (ov-ms (make-overlay m-start hide-end nil t nil)))
+                     (ov-ms (make-overlay m-start hide-end nil t nil))
+                     ;; Detect role from content to pick per-role face
+                     (text (buffer-substring-no-properties hide-end content-end))
+                     (role (when (string-match "\nRole: \\(\\w+\\)" text)
+                             (match-string 1 text)))
+                     (face (pcase role
+                             ("dev" my/agent-shell-team-message-dev-face)
+                             (_ my/agent-shell-team-message-face))))
                 (overlay-put ov-ms 'invisible t)
                 (overlay-put ov-ms 'my-agent-shell-team-msg t)
-                ;; Detect role from content to pick per-role face
-                (let* ((text (buffer-substring-no-properties hide-end content-end))
-                       (role (when (string-match "\nRole: \\(\\w+\\)" text)
-                               (match-string 1 text)))
-                       (face (pcase role
-                               ("dev" my/agent-shell-team-message-dev-face)
-                               (_ my/agent-shell-team-message-face))))
-                  ;; Style the content body (starting after the hidden newline)
-                  (my/agent-shell--apply-team-message-overlay hide-end content-end face)))
-              ;; Hide end marker + trailing newlines
-              (let* ((hide-start content-end)
-                     (hide-end (save-excursion
-                                 (goto-char m-end)
-                                 (skip-chars-forward "\n")
-                                 (point)))
-                     (ov-me (make-overlay hide-start hide-end nil t nil)))
-                (overlay-put ov-me 'invisible t)
-                (overlay-put ov-me 'my-agent-shell-team-msg t)))))))))
+                ;; Style the content body (starting after the hidden newline)
+                (my/agent-shell--apply-team-message-overlay hide-end content-end face)
+                ;; Hide end marker + trailing newlines;
+                ;; attach bottom padding here (after-string on the content
+                ;; overlay gets swallowed because this invisible overlay
+                ;; starts at the same position).
+                (let* ((end-hide-start content-end)
+                       (end-hide-end (save-excursion
+                                       (goto-char m-end)
+                                       (skip-chars-forward "\n")
+                                       (point)))
+                       (ov-me (make-overlay end-hide-start end-hide-end nil t nil)))
+                  (overlay-put ov-me 'invisible t)
+                  (overlay-put ov-me 'after-string
+                               (propertize "\n" 'face
+                                           `(:height 0.3
+                                             :background ,(plist-get face :background)
+                                             :extend t)))
+                  (overlay-put ov-me 'my-agent-shell-team-msg t))))))))))
 
 (defun my/agent-shell--maybe-style-context ()
   "Post-command hook: style markers in agent-shell buffers."
