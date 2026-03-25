@@ -787,6 +787,11 @@ BEFORE composing ANY task message for tasksPut, you MUST query the knowledge bas
    Cache: /path/to/.agent-shell/knowledge/cache/abc123.md
    ```
    The agent will read the file and decide if they need more context.
+   **Important:** If this is the first query on this topic in the current session (i.e., you
+   received a cache hit rather than fresh results), you MUST read the cache file with the Read
+   tool before proceeding — you cannot plan or compose tasks based on a path alone. Only pass
+   the cache path through to agents when you have already seen and understood the content from
+   a previous non-cached response.
 3. Alternatively, embed them as inline context in the task message under a \"Known context:\" header
 4. Respect confidence annotations:
    - `[confirmed]` chunks: present as established facts about the system
