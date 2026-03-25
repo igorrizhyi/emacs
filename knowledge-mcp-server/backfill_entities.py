@@ -1,23 +1,25 @@
 #!/usr/bin/env python3
-"""Backfill entity extraction on chunks that have no HAS_ENTITY edges.
+"""Link existing chunks to existing entities via embedding similarity.
+
+No LLM calls — uses cosine similarity between chunk and entity embeddings
+to create HAS_ENTITY edges.
 
 Usage:
     python backfill_entities.py --dry-run           # count unlinked chunks
-    python backfill_entities.py --graph my_graph     # backfill one graph
-    python backfill_entities.py                      # backfill all graphs
-    python backfill_entities.py --batch-size 10      # custom batch size
+    python backfill_entities.py --graph my_graph     # target one graph
+    python backfill_entities.py                      # process all graphs
+    python backfill_entities.py --threshold 0.6      # stricter similarity
+    python backfill_entities.py --max-entities 3     # fewer links per chunk
 """
 
 import argparse
-import asyncio
 import logging
 import os
 import sys
 import time
 
+import numpy as np
 from falkordb import FalkorDB
-
-from entities import extract_and_store_entities
 
 logging.basicConfig(
     level=logging.INFO,
@@ -28,8 +30,14 @@ logger = logging.getLogger(__name__)
 FALKORDB_HOST = os.environ.get("FALKORDB_HOST", "127.0.0.1")
 FALKORDB_PORT = int(os.environ.get("FALKORDB_PORT", "6380"))
 
+ENTITIES_QUERY = "MATCH (e:Entity) WHERE e.embedding IS NOT NULL RETURN e.name, e.embedding"
 UNLINKED_CHUNKS_QUERY = (
-    "MATCH (c:Chunk) WHERE NOT (c)-[:HAS_ENTITY]->() RETURN c.id, c.content"
+    "MATCH (c:Chunk) WHERE NOT (c)-[:HAS_ENTITY]->() "
+    "AND c.embedding IS NOT NULL RETURN c.id, c.embedding"
+)
+MERGE_EDGE_QUERY = (
+    "MATCH (c:Chunk {id: $cid}), (e:Entity {name: $name}) "
+    "MERGE (c)-[:HAS_ENTITY]->(e)"
 )
 
 
@@ -42,81 +50,150 @@ def discover_graphs(db: FalkorDB, target_graph: str | None) -> list[str]:
     if target_graph:
         return [target_graph]
     all_graphs = db.list_graphs()
-    # Filter to knowledge_ prefixed graphs (our convention)
     return [g for g in all_graphs if g.startswith("knowledge_")]
 
 
-def get_unlinked_chunks(db: FalkorDB, graph_name: str) -> list[dict]:
-    """Query for chunks without HAS_ENTITY edges."""
-    graph = db.select_graph(graph_name)
-    result = graph.query(UNLINKED_CHUNKS_QUERY)
-    chunks = []
+def load_entities(graph) -> tuple[list[str], np.ndarray | None]:
+    """Load entity names and embeddings. Returns (names, embedding_matrix)."""
+    result = graph.query(ENTITIES_QUERY)
+    names = []
+    embeddings = []
     for row in result.result_set:
-        chunk_id, content = row[0], row[1]
-        if chunk_id and content:
-            chunks.append({"id": chunk_id, "content": content})
-    return chunks
+        name, embedding = row[0], row[1]
+        if name and embedding:
+            names.append(name)
+            embeddings.append(embedding)
+    if not embeddings:
+        return names, None
+    return names, np.array(embeddings, dtype=np.float32)
 
 
-async def backfill_graph(
-    db: FalkorDB, graph_name: str, batch_size: int, dry_run: bool
+def load_unlinked_chunks(graph) -> tuple[list[str], list[np.ndarray]]:
+    """Load chunk IDs and embeddings for chunks without HAS_ENTITY edges."""
+    result = graph.query(UNLINKED_CHUNKS_QUERY)
+    ids = []
+    embeddings = []
+    for row in result.result_set:
+        chunk_id, embedding = row[0], row[1]
+        if chunk_id and embedding:
+            ids.append(chunk_id)
+            embeddings.append(np.array(embedding, dtype=np.float32))
+    return ids, embeddings
+
+
+def compute_top_entities(
+    chunk_vec: np.ndarray,
+    entity_matrix: np.ndarray,
+    entity_norms: np.ndarray,
+    entity_names: list[str],
+    threshold: float,
+    max_entities: int,
+) -> list[tuple[str, float]]:
+    """Return top entity matches for a chunk vector above the threshold."""
+    chunk_norm = np.linalg.norm(chunk_vec)
+    if chunk_norm == 0:
+        return []
+    similarities = entity_matrix @ chunk_vec / (entity_norms * chunk_norm)
+    # Get indices above threshold
+    above = np.where(similarities >= threshold)[0]
+    if len(above) == 0:
+        return []
+    # Sort by similarity descending, take top N
+    top_idx = above[np.argsort(-similarities[above])[:max_entities]]
+    return [(entity_names[i], float(similarities[i])) for i in top_idx]
+
+
+def backfill_graph(
+    db: FalkorDB,
+    graph_name: str,
+    threshold: float,
+    max_entities: int,
+    batch_size: int,
+    dry_run: bool,
 ) -> dict:
-    """Backfill entities for one graph. Returns stats dict."""
+    """Link chunks to entities for one graph. Returns stats dict."""
     stats = {
         "graph": graph_name,
+        "total_entities": 0,
         "total_unlinked": 0,
         "processed": 0,
-        "entities": 0,
-        "relationships": 0,
-        "errors": 0,
+        "edges_created": 0,
+        "skipped_no_match": 0,
     }
-
-    chunks = get_unlinked_chunks(db, graph_name)
-    stats["total_unlinked"] = len(chunks)
-
-    if dry_run:
-        logger.info("[%s] DRY RUN: %d chunks without entities", graph_name, len(chunks))
-        return stats
-
-    if not chunks:
-        logger.info("[%s] All chunks already have entities", graph_name)
-        return stats
-
-    logger.info("[%s] Processing %d unlinked chunks in batches of %d",
-                graph_name, len(chunks), batch_size)
 
     graph = db.select_graph(graph_name)
 
-    for i in range(0, len(chunks), batch_size):
-        batch = chunks[i : i + batch_size]
+    entity_names, entity_matrix = load_entities(graph)
+    stats["total_entities"] = len(entity_names)
+
+    if entity_matrix is None or len(entity_names) == 0:
+        logger.warning("[%s] No entities with embeddings found", graph_name)
+        return stats
+
+    # Precompute entity norms for efficiency
+    entity_norms = np.linalg.norm(entity_matrix, axis=1)
+    # Avoid division by zero
+    entity_norms = np.where(entity_norms == 0, 1e-10, entity_norms)
+
+    logger.info("[%s] Loaded %d entities with embeddings", graph_name, len(entity_names))
+
+    chunk_ids, chunk_embeddings = load_unlinked_chunks(graph)
+    stats["total_unlinked"] = len(chunk_ids)
+
+    if not chunk_ids:
+        logger.info("[%s] All chunks already linked to entities", graph_name)
+        return stats
+
+    if dry_run:
+        logger.info(
+            "[%s] DRY RUN: %d unlinked chunks, %d entities available",
+            graph_name, len(chunk_ids), len(entity_names),
+        )
+        return stats
+
+    logger.info(
+        "[%s] Processing %d unlinked chunks (threshold=%.2f, max_entities=%d)",
+        graph_name, len(chunk_ids), threshold, max_entities,
+    )
+
+    for i in range(0, len(chunk_ids), batch_size):
+        batch_ids = chunk_ids[i : i + batch_size]
+        batch_vecs = chunk_embeddings[i : i + batch_size]
         batch_num = i // batch_size + 1
-        total_batches = (len(chunks) + batch_size - 1) // batch_size
+        total_batches = (len(chunk_ids) + batch_size - 1) // batch_size
+        batch_edges = 0
 
-        logger.info("[%s] Batch %d/%d (%d chunks)",
-                    graph_name, batch_num, total_batches, len(batch))
+        for cid, cvec in zip(batch_ids, batch_vecs):
+            matches = compute_top_entities(
+                cvec, entity_matrix, entity_norms, entity_names, threshold, max_entities
+            )
+            if not matches:
+                stats["skipped_no_match"] += 1
+                continue
 
-        try:
-            ent_count, rel_count = await extract_and_store_entities(graph, batch)
-            stats["processed"] += len(batch)
-            stats["entities"] += ent_count
-            stats["relationships"] += rel_count
-            logger.info("[%s] Batch %d: %d entities, %d relationships",
-                        graph_name, batch_num, ent_count, rel_count)
-        except Exception:
-            stats["errors"] += 1
-            logger.exception("[%s] Batch %d failed", graph_name, batch_num)
+            for ename, _score in matches:
+                graph.query(MERGE_EDGE_QUERY, {"cid": cid, "name": ename})
+                stats["edges_created"] += 1
+                batch_edges += 1
+
+            stats["processed"] += 1
+
+        logger.info(
+            "[%s] Batch %d/%d: %d edges created",
+            graph_name, batch_num, total_batches, batch_edges,
+        )
 
     return stats
 
 
-async def main():
+def main():
     parser = argparse.ArgumentParser(
-        description="Backfill entity extraction on chunks without HAS_ENTITY edges."
+        description="Link chunks to entities via embedding similarity (no LLM calls)."
     )
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Count unlinked chunks without extracting entities.",
+        help="Count unlinked chunks without creating edges.",
     )
     parser.add_argument(
         "--graph",
@@ -125,10 +202,22 @@ async def main():
         help="Target a specific graph name (default: all knowledge_* graphs).",
     )
     parser.add_argument(
+        "--threshold",
+        type=float,
+        default=0.5,
+        help="Cosine similarity threshold for linking (default: 0.5).",
+    )
+    parser.add_argument(
+        "--max-entities",
+        type=int,
+        default=5,
+        help="Maximum entities to link per chunk (default: 5).",
+    )
+    parser.add_argument(
         "--batch-size",
         type=int,
-        default=20,
-        help="Number of chunks to process per batch (default: 20).",
+        default=50,
+        help="Chunks to process per batch for progress logging (default: 50).",
     )
     args = parser.parse_args()
 
@@ -145,7 +234,9 @@ async def main():
     start = time.time()
 
     for graph_name in graphs:
-        stats = await backfill_graph(db, graph_name, args.batch_size, args.dry_run)
+        stats = backfill_graph(
+            db, graph_name, args.threshold, args.max_entities, args.batch_size, args.dry_run
+        )
         all_stats.append(stats)
 
     elapsed = time.time() - start
@@ -154,23 +245,24 @@ async def main():
     print("\n=== Backfill Summary ===")
     total_unlinked = sum(s["total_unlinked"] for s in all_stats)
     total_processed = sum(s["processed"] for s in all_stats)
-    total_entities = sum(s["entities"] for s in all_stats)
-    total_rels = sum(s["relationships"] for s in all_stats)
-    total_errors = sum(s["errors"] for s in all_stats)
+    total_edges = sum(s["edges_created"] for s in all_stats)
+    total_skipped = sum(s["skipped_no_match"] for s in all_stats)
 
     for s in all_stats:
-        print(f"  {s['graph']}: {s['total_unlinked']} unlinked, "
-              f"{s['processed']} processed, {s['entities']} entities, "
-              f"{s['relationships']} relationships, {s['errors']} errors")
+        print(
+            f"  {s['graph']}: {s['total_entities']} entities, "
+            f"{s['total_unlinked']} unlinked chunks, "
+            f"{s['processed']} linked, {s['edges_created']} edges, "
+            f"{s['skipped_no_match']} no-match"
+        )
 
     print(f"\nTotal: {total_unlinked} unlinked chunks across {len(graphs)} graph(s)")
     if not args.dry_run:
-        print(f"Processed: {total_processed} chunks -> "
-              f"{total_entities} entities, {total_rels} relationships")
-        if total_errors:
-            print(f"Errors: {total_errors} batch(es) failed")
+        print(f"Linked: {total_processed} chunks, {total_edges} edges created")
+        if total_skipped:
+            print(f"Skipped: {total_skipped} chunks had no entities above threshold")
     print(f"Time: {elapsed:.1f}s")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
