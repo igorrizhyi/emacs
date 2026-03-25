@@ -292,12 +292,17 @@ Optional FACE overrides the default team message face."
                                        (point)))
                        (ov-me (make-overlay end-hide-start end-hide-end nil t nil)))
                   (overlay-put ov-me 'invisible t)
-                  (overlay-put ov-me 'after-string
-                               (propertize "\n" 'face
-                                           `(:height 0.3
-                                             :background ,(plist-get face :background)
-                                             :extend t)))
-                  (overlay-put ov-me 'my-agent-shell-team-msg t))))))))))
+                  (overlay-put ov-me 'my-agent-shell-team-msg t)
+                  ;; Bottom padding: separate non-invisible zero-width overlay
+                  ;; so the after-string actually renders (invisible overlays
+                  ;; suppress display strings).
+                  (let ((ov-pad (make-overlay end-hide-end end-hide-end nil nil nil)))
+                    (overlay-put ov-pad 'after-string
+                                 (propertize "\n" 'face
+                                             `(:height 0.3
+                                               :background ,(plist-get face :background)
+                                               :extend t)))
+                    (overlay-put ov-pad 'my-agent-shell-team-msg t)))))))))))
 
 (defun my/agent-shell--maybe-style-context ()
   "Post-command hook: style markers in agent-shell buffers."
