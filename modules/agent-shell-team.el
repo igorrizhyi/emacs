@@ -139,9 +139,6 @@ Generated eagerly at load time so MCP handlers always have a valid session.")
 (defvar-local agent-shell-team--role nil
   "Role: dev, lead, tester, researcher, or knowledge.")
 
-(defvar-local agent-shell-team--reserved-p nil
-  "When non-nil, this agent is reserved and should not receive new tasks.")
-
 (defvar-local agent-shell-team--mode nil
   "Mode: isolated or neighbor.")
 
@@ -787,26 +784,28 @@ BEFORE composing ANY task message for tasksPut, you MUST query the knowledge bas
 3. Only after evaluating the results, decide whether to dispatch a researcher or go straight to dev
 
 ### How to use results:
-1. Extract relevant pieces from the response for YOUR decision-making (research vs dev, task decomposition)
-2. When `query_knowledge` returns a `Cache: <path>` line, ALWAYS pass the cache path to agents:
+1. Use the knowledge response for YOUR decision-making (research vs dev, task decomposition)
+2. **For task messages to agents:** ALWAYS pass the `Cache: <path>` line — never rephrase or
+   embed knowledge DB content as inline bullets. The knowledge DB is the source of truth;
+   agents can read it directly. Your job is to pass the path, not to summarize the DB.
    ```
    Cache: /path/to/.agent-shell/knowledge/cache/abc123.md
    ```
-   The agent will read the file and decide if they need more context.
-   Do NOT extract bullets from the cache and embed them inline — just pass the path.
    **Important:** If this is the first query on this topic in the current session (i.e., you
    received a cache hit rather than fresh results), you MUST read the cache file with the Read
    tool before proceeding — you cannot plan or compose tasks based on a path alone. Only pass
    the cache path through to agents when you have already seen and understood the content from
    a previous non-cached response.
-3. When `query_knowledge` returns full results (no cache path), include a concise summary
-   under a \"Known context:\" header — but keep it brief (key facts only, not full dump)
-4. Respect confidence annotations:
-   - `[confirmed]` chunks: present as established facts about the system
-   - `[recommendation]` chunks: present as suggestions/investigations, NOT as how the system works now
+3. **Only embed inline context** (under a \"Known context:\" header) for information that is
+   NOT from the knowledge DB: user instructions, your own reasoning, fresh researcher findings
+   not yet stored, or decisions you made during task decomposition.
+4. Respect confidence annotations when making decisions:
+   - `[confirmed]` chunks: treat as established facts
+   - `[recommendation]` chunks: treat as suggestions, NOT how the system works now
 
-**Anti-pattern:** Receiving a `Cache: <path>` response and then embedding inline bullets anyway.
-When a cache path exists, the path IS the context — pass it through, do not duplicate it.
+**Rule of thumb:** If the info came from `query_knowledge`, pass the cache path.
+If the info came from the user or your own analysis, embed it inline.
+Never rephrase DB content — that's redundant work and the DB version is more complete.
 
 Skipping this step wastes agent time rediscovering known information.
 This is NOT optional — do it for EVERY task dispatch.
@@ -1029,6 +1028,24 @@ markdown has content. If it does:
 
 The `## Notes` section contains additional context from the user — read it but do not clear it.
 Notes are included in the approval response message automatically.
+
+## Reserved Agents
+Agents can be marked as `reserved` by the user via the sidebar. Reserved agents:
+- Are **excluded from auto-assignment** — they will NOT receive tasks from the general queue
+- **Cannot be dismissed** without `force:true` — you will get a refusal message
+- **Accept targeted tasks** — use the `target` parameter in `tasksPut` to route tasks to them
+- **Return to reserved** after completing a targeted task (not idle)
+
+### When you see a dismiss refusal for a reserved agent:
+The agent has prior context from a previous task. If a new bug/fix/task appears that
+shares the same area of the codebase, route it to this agent using `target` — it already
+has the context and will be faster than a fresh agent.
+
+### How to work with reserved agents:
+1. When dispatching a follow-up task related to a reserved agent's prior work, use
+   `target: \"<worktree-name>\"` or `target: \"<request-id>\"` to route directly to it
+2. Do NOT try to dismiss reserved agents — the user reserved them intentionally
+3. If you need the agent for unrelated work, ask the user to unreserve it first
 
 ## Review Rigor
 When a dev reports task completion:
