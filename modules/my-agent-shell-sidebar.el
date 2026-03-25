@@ -42,6 +42,7 @@
 (declare-function agent-shell-team--queue-message "agent-shell-team")
 (declare-function agent-shell-team--start-drain-timer "agent-shell-team")
 (defvar agent-shell--state)
+(defvar agent-shell-team--reserved-p)
 (defvar agent-shell-team--role)
 (declare-function agent-shell--format-number-compact "agent-shell-usage")
 (declare-function agent-shell--update-usage-from-notification "agent-shell-usage")
@@ -83,6 +84,11 @@
 (defface my/team-sidebar-status-dead
   '((t :foreground "#ff3333"))
   "Face for dead status.")
+
+(defface my/team-sidebar-status-reserved
+  '((t :foreground "#aa88ff"))
+  "Face for reserved agent status indicator."
+  :group 'my/team-sidebar)
 
 (defface my/team-sidebar-history-header
   '((t :weight bold :foreground "#806000"))
@@ -763,6 +769,7 @@ Returns a string hash; cheap to compute."
     ('pending (propertize "◎" 'face 'my/team-sidebar-status-pending))
     ('initializing (propertize "○" 'face 'my/team-sidebar-status-init))
     ('dead  (propertize "✕" 'face 'my/team-sidebar-status-dead))
+    ('reserved (propertize "◆" 'face 'my/team-sidebar-status-reserved))
     (_      "?")))
 
 (defun my/team-sidebar--insert-foreign-agents ()
@@ -865,6 +872,11 @@ Returns t if anything was inserted, nil otherwise."
                                      (with-current-buffer buffer
                                        (my-agent-shell-sprite--pending-p)))
                                 'pending
+                              status))
+                    (status (if (and buffer
+                                     (buffer-live-p buffer)
+                                     (buffer-local-value 'agent-shell-team--reserved-p buffer))
+                                'reserved
                               status))
                     (indicator (my/team-sidebar--status-indicator status)))
                (insert (format "  %s %-10s %s  %s\n"
@@ -971,6 +983,7 @@ Returns t if anything was inserted, nil otherwise."
     (define-key map "k" #'my/team-sidebar-prev-item)
     (define-key map (kbd "<up>") #'my/team-sidebar-prev-item)
     (define-key map (kbd "<down>") #'my/team-sidebar-next-item)
+    (define-key map "r" #'my/team-sidebar-toggle-reserve)
     (define-key map (kbd "<tab>") #'my/team-sidebar-toggle-section)
     map)
   "Keymap for `my/team-sidebar-mode'.")
@@ -1004,6 +1017,7 @@ Returns t if anything was inserted, nil otherwise."
     "k" #'my/team-sidebar-prev-item
     (kbd "<up>") #'my/team-sidebar-prev-item
     (kbd "<down>") #'my/team-sidebar-next-item
+    "r" #'my/team-sidebar-toggle-reserve
     (kbd "<tab>") #'my/team-sidebar-toggle-section))
 
 ;; Open sidebar in normal state (not motion state from special-mode parent)
@@ -1230,6 +1244,33 @@ Cancels any pending preview timer before scheduling a new one."
           (kill-buffer buf))
         (my/team-sidebar-refresh))))
    (t (message "No agent or pending task on this line."))))
+
+(defun my/team-sidebar-toggle-reserve ()
+  "Toggle reserved status for agent at point."
+  (interactive)
+  (let ((agent (my/team-sidebar--agent-at-point)))
+    (if (not agent)
+        (message "No agent at point")
+      (let* ((buf (alist-get 'buffer agent))
+             (role (alist-get 'role agent))
+             (status (if (fboundp 'agent-shell-team--agent-status)
+                         (agent-shell-team--agent-status buf)
+                       'dead)))
+        (when (member role '("lead" "knowledge"))
+          (user-error "Cannot reserve %s agents" role))
+        (cond
+         ((and buf (buffer-live-p buf)
+               (buffer-local-value 'agent-shell-team--reserved-p buf))
+          (with-current-buffer buf
+            (setq agent-shell-team--reserved-p nil))
+          (message "Agent unreserved: %s" (buffer-name buf)))
+         ((memq status '(idle busy))
+          (with-current-buffer buf
+            (setq agent-shell-team--reserved-p t))
+          (message "Agent reserved: %s" (buffer-name buf)))
+         (t
+          (user-error "Cannot reserve agent in %s state" status)))
+        (my/team-sidebar-refresh)))))
 
 (defun my/team-sidebar-cancel-pending-task ()
   "Cancel the pending task at point and notify the lead."

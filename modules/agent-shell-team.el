@@ -139,6 +139,9 @@ Generated eagerly at load time so MCP handlers always have a valid session.")
 (defvar-local agent-shell-team--role nil
   "Role: dev, lead, tester, researcher, or knowledge.")
 
+(defvar-local agent-shell-team--reserved-p nil
+  "When non-nil, this agent is reserved and should not receive new tasks.")
+
 (defvar-local agent-shell-team--mode nil
   "Mode: isolated or neighbor.")
 
