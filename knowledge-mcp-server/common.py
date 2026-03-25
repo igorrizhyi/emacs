@@ -1020,7 +1020,10 @@ def query_knowledge(graph, question: str, role: str = None, top_k: int = 8, mode
     expanded_chunks = []
     if hit_ids:
         proj_filter = "AND c2.project = $project" if project else ""
-        exp = graph.query(
+        query_params = {"ids": hit_ids, **({"project": project} if project else {})}
+
+        # RELATED_TO traversal (fast, no fan-out issues)
+        exp_related = graph.query(
             f"""
             UNWIND $ids AS hid
             MATCH (c1:Chunk {{id: hid}})-[:RELATED_TO]-(c2:Chunk)
@@ -1030,19 +1033,37 @@ def query_knowledge(graph, question: str, role: str = None, top_k: int = 8, mode
             RETURN DISTINCT c2.id AS id, c2.content AS content,
                    c2.source AS source, c2.section AS section,
                    c2.project AS project
-            UNION
+            """,
+            params=query_params,
+        )
+        for row in exp_related.result_set:
+            expanded_chunks.append(
+                {"id": row[0], "content": row[1], "source": row[2], "section": row[3], "project": row[4]}
+            )
+
+        # HAS_ENTITY traversal — filter out hub entities (>100 connections)
+        # and cap results to prevent combinatorial explosion.
+        # Uses count-based fan-out check (standard openCypher, safe for FalkorDB).
+        exp_entity = graph.query(
+            f"""
             UNWIND $ids AS hid
-            MATCH (c1:Chunk {{id: hid}})-[:HAS_ENTITY]->(e:Entity)<-[:HAS_ENTITY]-(c2:Chunk)
+            MATCH (c1:Chunk {{id: hid}})-[:HAS_ENTITY]->(e:Entity)
+            WITH DISTINCT e
+            MATCH (e)<-[:HAS_ENTITY]-(any:Chunk)
+            WITH e, count(any) AS fan_out
+            WHERE fan_out <= 100
+            MATCH (e)<-[:HAS_ENTITY]-(c2:Chunk)
             WHERE NOT c2.id IN $ids {proj_filter}
             OPTIONAL MATCH (superseder:Chunk)-[:SUPERSEDES]->(c2)
             WITH c2 WHERE superseder IS NULL
             RETURN DISTINCT c2.id AS id, c2.content AS content,
                    c2.source AS source, c2.section AS section,
                    c2.project AS project
+            LIMIT 30
             """,
-            params={"ids": hit_ids, **({"project": project} if project else {})},
+            params=query_params,
         )
-        for row in exp.result_set:
+        for row in exp_entity.result_set:
             expanded_chunks.append(
                 {"id": row[0], "content": row[1], "source": row[2], "section": row[3], "project": row[4]}
             )
