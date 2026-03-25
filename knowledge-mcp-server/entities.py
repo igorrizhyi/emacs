@@ -6,6 +6,7 @@ merges duplicates, and upserts into FalkorDB.
 
 import asyncio
 import logging
+import os
 import re
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
@@ -36,6 +37,13 @@ def normalize_entity_name(name: str) -> str:
     name = name.replace("-", " ").replace("_", " ")
     name = re.sub(r"\s+", " ", name).strip()
     return name
+
+def _normalize_path_name(raw_name: str) -> str:
+    """Extract basename from file-path-like names before general normalization."""
+    if '/' in raw_name or '\\' in raw_name:
+        return os.path.basename(raw_name)
+    return raw_name
+
 
 TUPLE_DELIMITER = "<|>"
 RECORD_DELIMITER = "##"
@@ -140,9 +148,13 @@ def parse_extraction_output(output: str) -> tuple[list[dict], list[dict]]:
         attributes = [a.strip().strip('"') for a in match.group(1).split(TUPLE_DELIMITER)]
 
         if len(attributes) >= 4 and attributes[0].lower() == "entity":
+            raw_name = attributes[1]
+            entity_type = attributes[2].lower()
+            if entity_type == "location":
+                raw_name = _normalize_path_name(raw_name)
             entities.append({
-                "name": normalize_entity_name(attributes[1]),
-                "type": attributes[2].lower(),
+                "name": normalize_entity_name(raw_name),
+                "type": entity_type,
                 "description": attributes[3],
             })
         elif len(attributes) >= 5 and attributes[0].lower() == "relationship":
@@ -151,8 +163,8 @@ def parse_extraction_output(output: str) -> tuple[list[dict], list[dict]]:
             except (ValueError, IndexError):
                 weight = 5.0
             relationships.append({
-                "source": normalize_entity_name(attributes[1]),
-                "target": normalize_entity_name(attributes[2]),
+                "source": normalize_entity_name(_normalize_path_name(attributes[1])),
+                "target": normalize_entity_name(_normalize_path_name(attributes[2])),
                 "description": attributes[3],
                 "weight": weight,
             })
@@ -188,6 +200,38 @@ async def extract_entities_from_chunk(chunk_content: str) -> tuple[list[dict], l
 # ---------------------------------------------------------------------------
 
 
+def _fuzzy_merge_groups(grouped: dict[str, list[dict]]) -> dict[str, list[dict]]:
+    """Merge entity groups whose names have a containment relationship.
+
+    If one name is a substring of another, their groups are merged under the
+    longer (more specific) name.  E.g. "MCP SERVER" merges into
+    "KNOWLEDGE MCP SERVER".
+    """
+    names = list(grouped.keys())
+    merged: dict[str, list[dict]] = {}
+    used: set[str] = set()
+
+    for i, name_a in enumerate(names):
+        if name_a in used:
+            continue
+        group = list(grouped[name_a])
+        canonical = name_a
+        for j in range(i + 1, len(names)):
+            name_b = names[j]
+            if name_b in used:
+                continue
+            if name_a in name_b or name_b in name_a:
+                group.extend(grouped[name_b])
+                used.add(name_b)
+                # Keep the longer (more specific) name as canonical
+                if len(name_b) > len(canonical):
+                    canonical = name_b
+        merged[canonical] = group
+        used.add(name_a)
+
+    return merged
+
+
 async def merge_and_upsert_entities(
     graph, all_entities: list[dict], chunk_map: dict
 ) -> int:
@@ -204,6 +248,8 @@ async def merge_and_upsert_entities(
     grouped: dict[str, list[dict]] = defaultdict(list)
     for ent in all_entities:
         grouped[ent["name"]].append(ent)
+
+    grouped = _fuzzy_merge_groups(grouped)
 
     now = datetime.now(timezone.utc).isoformat()
     texts_to_embed = []
