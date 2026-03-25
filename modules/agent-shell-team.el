@@ -1443,6 +1443,16 @@ When finished, output <|COMPLETE|> on its own line.
 Important: Extract ANY notable named thing regardless of type. The types above are
 hints, not constraints. The value is in entity names and descriptions.
 - Do NOT extract git commit hashes (e.g., c5d4603, bacea92) as entities. They are ephemeral references, not meaningful concepts.
+- Do NOT extract programming language constructs or primitives (e.g., let*, defvar, nil, t, lambda, async/await)
+- Do NOT extract generic variable names that are common across codebases (e.g., face, status, buffer, config, data, result)
+- Do NOT extract property values or flags (e.g., invisible t, :extend t, force true)
+- Do NOT extract formatting details (e.g., bold markers, heading levels, indentation patterns)
+- Do NOT extract specific line number references (e.g., 'line 790', 'lines 2283-2329')
+
+- Prefer ONE entity per feature/concept rather than splitting into sub-entities. For example, extract 'RESERVED AGENT STATUS' as one entity, not separate entities for 'reserved status detection', 'reserved dismiss guard', 'reserved sidebar UI', etc.
+- For relationships, use the relationship description to capture sub-aspects rather than creating separate entities.
+
+- Use the FULL 1-10 range for relationship_strength. Reserve 9-10 for direct dependencies (A uses B, A contains B). Use 5-7 for related concepts. Use 1-4 for loose associations.
 
 ### Example
 Input text: \"The agent-shell package uses FalkorDB as its graph database.\"
