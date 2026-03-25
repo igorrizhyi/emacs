@@ -439,6 +439,8 @@ Supports **bold**, *italic*, `code`, and table rows (lines starting with |)."
             (while (and (< pos (length result))
                         (not (memq (aref result pos) '(?* ?`))))
               (setq pos (1+ pos)))
+            (when (= pos start)
+              (setq pos (1+ pos)))
             (push (substring result start pos) segments)))))
       (apply #'concat (nreverse segments)))))
 
@@ -1038,7 +1040,8 @@ Auto-expand if collapsed and there are pending requests."
                        (> (- (float-time) my/approval--manual-collapse-time) 2.0)))
           (setq my/approval--collapsed nil
                 header-line-format (propertize " Approval Queue" 'face 'bold))
-          (my/approval--display-window my/approval-window-height))
+          (let ((new-win (my/approval--display-window my/approval-window-height)))
+            (when new-win (select-window new-win))))
         (my/approval--schedule-render)))))
 
 (add-hook 'window-selection-change-functions #'my/approval--on-window-selection-change)
