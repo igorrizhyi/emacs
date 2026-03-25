@@ -628,6 +628,9 @@ WORKTREE-NAME is the worktree name (for isolated mode)."
 
 ;;; Agent status
 
+(defvar-local agent-shell-team--reserved-p nil
+  "When non-nil, this agent is reserved and excluded from auto-assignment and dismiss.")
+
 (defun agent-shell-team--buffer-ready-p (buffer)
   "Check if BUFFER has a live comint process (ready for shell-maker-submit)."
   (and (buffer-live-p buffer)
@@ -641,6 +644,7 @@ WORKTREE-NAME is the worktree name (for isolated mode)."
    ((not (agent-shell-team--buffer-ready-p buffer)) 'initializing)
    ((not (buffer-local-value 'agent-shell-team--init-finished-p buffer)) 'initializing)
    ((agent-shell-team--buffer-busy-p buffer) 'busy)
+   ((buffer-local-value 'agent-shell-team--reserved-p buffer) 'reserved)
    (t 'idle)))
 
 (defun agent-shell-team--buffer-busy-p (buffer)
@@ -1780,27 +1784,39 @@ Only the lead role may call this.  Returns an alist with success/message."
                            (and (buffer-live-p buf)
                                 (eq buf (gethash target agent-shell-team--request-to-buffer)))))
               (let ((status (agent-shell-team--agent-status buf)))
-                (if (and (memq status '(busy initializing))
-                         (not force))
-                    ;; Refuse to dismiss busy/initializing agents without force
-                    (let ((current-request-id nil))
-                      (maphash (lambda (k v)
-                                 (when (eq v buf)
-                                   (setq current-request-id k)))
-                               agent-shell-team--request-to-buffer)
-                      (setq found 'refused)
-                      (agent-shell-team--log session-id
-                       (format "[dismissAgent] REFUSED: %s (%s) is %s, request: %s"
-                               role (buffer-name buf) status current-request-id)))
-                  ;; OK to dismiss
+                (cond
+                 ;; Refuse to dismiss reserved agents without force
+                 ((and (eq status 'reserved) (not force))
+                  (setq found 'refused-reserved)
+                  (agent-shell-team--log session-id
+                   (format "[dismissAgent] REFUSED: %s (%s) is reserved"
+                           role (buffer-name buf))))
+                 ;; Refuse to dismiss busy/initializing agents without force
+                 ((and (memq status '(busy initializing))
+                       (not force))
+                  (let ((current-request-id nil))
+                    (maphash (lambda (k v)
+                               (when (eq v buf)
+                                 (setq current-request-id k)))
+                             agent-shell-team--request-to-buffer)
+                    (setq found 'refused)
+                    (agent-shell-team--log session-id
+                     (format "[dismissAgent] REFUSED: %s (%s) is %s, request: %s"
+                             role (buffer-name buf) status current-request-id))))
+                 ;; OK to dismiss
+                 (t
                   (setq found t)
                   (agent-shell-team--log session-id
                    (format "[dismissAgent] Cleaning up %s (%s)" role (buffer-name buf)))
                   (let ((b buf) (sid session-id) (wt (alist-get 'worktree agent)))
                     (run-at-time 0 nil
                                  (lambda ()
-                                   (agent-shell-team--cleanup-agent b sid wt)))))))))
+                                   (agent-shell-team--cleanup-agent b sid wt))))))))))
         (cond
+         ((eq found 'refused-reserved)
+          `((success . nil)
+            (message . ,(format "Agent '%s' is reserved (has prior task context). Use `target` parameter to route related tasks to this agent. Use force:true to dismiss anyway."
+                                target))))
          ((eq found 'refused)
           (let ((current-request-id nil)
                 (status nil))
@@ -2291,9 +2307,9 @@ reached its max agent count, auto-spawn a new agent."
                                               (and wt (string-match-p (regexp-quote target) wt)))))))
                                (agent-shell-team--get-agents-by-role session-id role)))))
                       (cond
-                       ;; Targeted assignment: agent found and idle — assign directly
+                       ;; Targeted assignment: agent found and idle/reserved — assign directly
                        ((and targeted-agent
-                             (eq (agent-shell-team--agent-status (alist-get 'buffer targeted-agent)) 'idle)
+                             (memq (agent-shell-team--agent-status (alist-get 'buffer targeted-agent)) '(idle reserved))
                              (not (gethash (alist-get 'buffer targeted-agent) just-assigned)))
                         (agent-shell-team--assign-task-to-agent targeted-agent task)
                         (puthash (alist-get 'buffer targeted-agent) t just-assigned))
@@ -2410,7 +2426,10 @@ reached its max agent count, auto-spawn a new agent."
                       (format "%s\n\n[Request ID: %s]\nWrite your detailed report to: %s\nReference this Request ID in your completion notification."
                               message request-id report-path)
                     (format "%s\n\n[Request ID: %s]\nReference this Request ID in your completion notification."
-                            message request-id))))
+                            message request-id)))
+         (enriched (if (buffer-local-value 'agent-shell-team--reserved-p buf)
+                       (concat enriched "\n\n[Reserved Agent] You are a reserved agent. After completing this task, do NOT look for more work. Simply report completion and wait.")
+                     enriched)))
     (agent-shell-team--log session-id
                            (format "[assign] %s -> %s (request: %s)"
                                    (plist-get task :role)
