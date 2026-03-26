@@ -1981,9 +1981,7 @@ Only the lead role may call this.  Returns an alist with success/message."
 (defun agent-shell-team--cleanup-agent (buffer session-id worktree-path)
   "Clean up BUFFER: unregister from session, kill buffer, optionally remove worktree."
   (let ((agent-role (and (buffer-live-p buffer)
-                         (buffer-local-value 'agent-shell-team--role buffer)))
-        (agent-wt-name (and (buffer-live-p buffer)
-                            (buffer-local-value 'agent-shell-team--worktree-name buffer))))
+                         (buffer-local-value 'agent-shell-team--role buffer))))
   (agent-shell-team--log session-id
    (format "[cleanup] Killing agent buffer %s%s"
            (if (buffer-live-p buffer) (buffer-name buffer) "(already dead)")
