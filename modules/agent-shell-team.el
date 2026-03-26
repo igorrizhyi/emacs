@@ -2334,7 +2334,8 @@ reached its max agent count, auto-spawn a new agent."
                                    (and (buffer-live-p buf)
                                         (or (string-match-p (regexp-quote target) (buffer-name buf))
                                             (let ((wt (alist-get 'worktree-name a)))
-                                              (and wt (string-match-p (regexp-quote target) wt)))))))
+                                              (and wt (string-match-p (regexp-quote target) wt)))
+                                            (eq buf (gethash target agent-shell-team--request-to-buffer))))))
                                (agent-shell-team--get-agents-by-role session-id role)))))
                       (cond
                        ;; Targeted assignment: agent found and idle/reserved — assign directly
