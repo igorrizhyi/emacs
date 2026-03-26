@@ -2840,6 +2840,9 @@ Also detects agents stuck in busy state with no ACP output for
 (defun agent-shell-team--buffer-kill-hook ()
   "Clean up team registration when buffer is killed.
 Also removes the git worktree if the agent was in isolated mode."
+  (message "[agent-shell-team] buffer-kill-hook fired for %s\nBacktrace:\n%s"
+           (buffer-name)
+           (backtrace-to-string (backtrace-frames 'agent-shell-team--buffer-kill-hook)))
   (when agent-shell-team--session-id
     ;; Capture worktree path BEFORE unregister removes the agent from sessions
     (let ((worktree-path agent-shell-team--worktree-path))
