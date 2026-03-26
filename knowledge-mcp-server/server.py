@@ -148,7 +148,13 @@ async def _handle_query(arguments: dict) -> list[types.TextContent]:
     mode = arguments.get("mode", "summary")
     project = arguments.get("project")
 
-    result = query_knowledge(graph, query, role=role, top_k=8, mode=mode, project=project)
+    try:
+        result = await asyncio.wait_for(
+            asyncio.to_thread(query_knowledge, graph, query, role=role, top_k=8, mode=mode, project=project),
+            timeout=30.0,
+        )
+    except asyncio.TimeoutError:
+        return [types.TextContent(type="text", text="Error: Query timed out")]
     cache_path = result.get("cache_path")
 
     # Cache hit: return just the cache path, skip everything else
