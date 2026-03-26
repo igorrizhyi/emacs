@@ -10,6 +10,7 @@ import os
 import re
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
+from difflib import SequenceMatcher
 
 import litellm
 
@@ -43,6 +44,83 @@ def _normalize_path_name(raw_name: str) -> str:
     if '/' in raw_name or '\\' in raw_name:
         return os.path.basename(raw_name)
     return raw_name
+
+
+FUZZY_MATCH_THRESHOLD = 0.85
+
+
+def find_existing_match(
+    name: str, entity_type: str, existing_entities: list[dict]
+) -> str | None:
+    """Find the best fuzzy match for *name* among existing entities of the same type.
+
+    Returns the existing entity's name if the best match exceeds
+    ``FUZZY_MATCH_THRESHOLD``, otherwise ``None``.
+    """
+    best_score = 0.0
+    best_name: str | None = None
+    for existing in existing_entities:
+        if existing["type"] != entity_type:
+            continue
+        score = SequenceMatcher(None, name, existing["name"]).ratio()
+        if score > best_score:
+            best_score = score
+            best_name = existing["name"]
+    if best_score >= FUZZY_MATCH_THRESHOLD and best_name is not None:
+        return best_name
+    return None
+
+
+def _fetch_existing_entities(graph) -> list[dict]:
+    """Query FalkorDB for all existing Entity nodes (name + type)."""
+    result = graph.query("MATCH (e:Entity) RETURN e.name, e.type")
+    entities = []
+    for row in result.result_set:
+        entities.append({"name": row[0], "type": row[1]})
+    return entities
+
+
+def _apply_fuzzy_remapping(
+    all_entities: list[dict],
+    all_relationships: list[dict],
+    chunk_map: dict[str, set[str]],
+    existing_entities: list[dict],
+) -> None:
+    """Remap new entity names to existing ones when a fuzzy match is found.
+
+    Mutates *all_entities*, *all_relationships*, and *chunk_map* in place.
+    """
+    remap: dict[str, str] = {}
+
+    for ent in all_entities:
+        name = ent["name"]
+        if name in remap:
+            continue
+        match = find_existing_match(name, ent["type"], existing_entities)
+        if match and match != name:
+            remap[name] = match
+            logger.debug("Fuzzy dedup: remapping %r -> %r", name, match)
+
+    if not remap:
+        return
+
+    # Remap entity names
+    for ent in all_entities:
+        old = ent["name"]
+        if old in remap:
+            ent["name"] = remap[old]
+
+    # Remap relationship source/target
+    for rel in all_relationships:
+        if rel["source"] in remap:
+            rel["source"] = remap[rel["source"]]
+        if rel["target"] in remap:
+            rel["target"] = remap[rel["target"]]
+
+    # Remap chunk_map keys
+    for old_name, new_name in remap.items():
+        if old_name in chunk_map:
+            chunk_map[new_name] = chunk_map.get(new_name, set()) | chunk_map.pop(old_name)
 
 
 TUPLE_DELIMITER = "<|>"
@@ -389,6 +467,12 @@ async def extract_and_store_entities(
             chunk_map[ent["name"]].add(chunk["id"])
         all_entities.extend(entities)
         all_relationships.extend(relationships)
+
+    # Fuzzy-match new entities against existing graph nodes to consolidate
+    # near-duplicates (e.g. "KNOWLEDGE SERVER" vs "KNOWLEDGE MCP SERVER").
+    existing_entities = _fetch_existing_entities(graph)
+    if existing_entities:
+        _apply_fuzzy_remapping(all_entities, all_relationships, chunk_map, existing_entities)
 
     entity_count = await merge_and_upsert_entities(graph, all_entities, chunk_map)
     rel_count = await merge_and_upsert_relationships(graph, all_relationships)
