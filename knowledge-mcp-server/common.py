@@ -914,21 +914,26 @@ def query_knowledge(graph, question: str, role: str = None, top_k: int = 8, mode
     # 2. Vector KNN search — fetch extra candidates to account for
     #    project filtering and superseded-chunk filtering
     fetch_k = top_k * 3 if project else top_k * 2
-    knn = graph.query(
-        """
-        CALL db.idx.vector.queryNodes('Chunk', 'embedding', $k, vecf32($vec))
-        YIELD node, score
-        OPTIONAL MATCH (superseder:Chunk)-[:SUPERSEDES]->(node)
-        WITH node, score WHERE superseder IS NULL
-        RETURN node.id AS id, node.content AS content,
-               node.source AS source, node.section AS section,
-               node.roles AS roles, score, node.project AS project
-        """,
-        params={"k": fetch_k, "vec": q_vec},
-    )
+    try:
+        knn = graph.query(
+            """
+            CALL db.idx.vector.queryNodes('Chunk', 'embedding', $k, vecf32($vec))
+            YIELD node, score
+            OPTIONAL MATCH (superseder:Chunk)-[:SUPERSEDES]->(node)
+            WITH node, score WHERE superseder IS NULL
+            RETURN node.id AS id, node.content AS content,
+                   node.source AS source, node.section AS section,
+                   node.roles AS roles, score, node.project AS project
+            """,
+            params={"k": fetch_k, "vec": q_vec},
+            timeout=5000,
+        )
+    except Exception:
+        logger.warning("KNN vector search timed out or failed", exc_info=True)
+        knn = None
 
     hits = []
-    for row in knn.result_set:
+    for row in (knn.result_set if knn else []):
         score = row[5]
         node_project = row[6]
         # Filter out low-relevance hits (cosine distance > threshold)
@@ -983,21 +988,26 @@ def query_knowledge(graph, question: str, role: str = None, top_k: int = 8, mode
     seen_ids = {h["id"] for h in hits}
 
     # 2c. Direct entity vector search — find chunks via matching entities
+    #     Uses fan-out protection to skip hub entities (>100 connections)
     try:
         entity_proj_filter = "AND c.project = $project" if project else ""
         entity_query = f"""
         CALL db.idx.vector.queryNodes('Entity', 'embedding', $k, vecf32($vec))
         YIELD node, score
         WHERE score <= $threshold
+        MATCH (node)<-[:HAS_ENTITY]-(any:Chunk)
+        WITH node, count(any) AS fan_out
+        WHERE fan_out <= 100
         MATCH (node)<-[:HAS_ENTITY]-(c:Chunk)
         {entity_proj_filter}
         OPTIONAL MATCH (superseder:Chunk)-[:SUPERSEDES]->(c)
         WITH c WHERE superseder IS NULL
         RETURN DISTINCT c.id AS id, c.content AS content, c.source AS source,
                c.section AS section, c.project AS project, c.roles AS roles
+        LIMIT 20
         """
         entity_params = {"k": 5, "vec": q_vec, "threshold": SCORE_THRESHOLD, **({"project": project} if project else {})}
-        entity_result = graph.query(entity_query, entity_params)
+        entity_result = graph.query(entity_query, entity_params, timeout=5000)
         for row in entity_result.result_set:
             cid = row[0]
             if cid not in seen_ids:
@@ -1022,51 +1032,60 @@ def query_knowledge(graph, question: str, role: str = None, top_k: int = 8, mode
         proj_filter = "AND c2.project = $project" if project else ""
         query_params = {"ids": hit_ids, **({"project": project} if project else {})}
 
-        # RELATED_TO traversal (fast, no fan-out issues)
-        exp_related = graph.query(
-            f"""
-            UNWIND $ids AS hid
-            MATCH (c1:Chunk {{id: hid}})-[:RELATED_TO]-(c2:Chunk)
-            WHERE NOT c2.id IN $ids {proj_filter}
-            OPTIONAL MATCH (superseder:Chunk)-[:SUPERSEDES]->(c2)
-            WITH c2 WHERE superseder IS NULL
-            RETURN DISTINCT c2.id AS id, c2.content AS content,
-                   c2.source AS source, c2.section AS section,
-                   c2.project AS project
-            """,
-            params=query_params,
-        )
-        for row in exp_related.result_set:
-            expanded_chunks.append(
-                {"id": row[0], "content": row[1], "source": row[2], "section": row[3], "project": row[4]}
+        # RELATED_TO traversal
+        try:
+            exp_related = graph.query(
+                f"""
+                UNWIND $ids AS hid
+                MATCH (c1:Chunk {{id: hid}})-[:RELATED_TO]-(c2:Chunk)
+                WHERE NOT c2.id IN $ids {proj_filter}
+                OPTIONAL MATCH (superseder:Chunk)-[:SUPERSEDES]->(c2)
+                WITH c2 WHERE superseder IS NULL
+                RETURN DISTINCT c2.id AS id, c2.content AS content,
+                       c2.source AS source, c2.section AS section,
+                       c2.project AS project
+                LIMIT 50
+                """,
+                params=query_params,
+                timeout=5000,
             )
+            for row in exp_related.result_set:
+                expanded_chunks.append(
+                    {"id": row[0], "content": row[1], "source": row[2], "section": row[3], "project": row[4]}
+                )
+        except Exception:
+            logger.warning("RELATED_TO expansion timed out or failed", exc_info=True)
 
         # HAS_ENTITY traversal — filter out hub entities (>100 connections)
         # and cap results to prevent combinatorial explosion.
         # Uses count-based fan-out check (standard openCypher, safe for FalkorDB).
-        exp_entity = graph.query(
-            f"""
-            UNWIND $ids AS hid
-            MATCH (c1:Chunk {{id: hid}})-[:HAS_ENTITY]->(e:Entity)
-            WITH DISTINCT e
-            MATCH (e)<-[:HAS_ENTITY]-(any:Chunk)
-            WITH e, count(any) AS fan_out
-            WHERE fan_out <= 100
-            MATCH (e)<-[:HAS_ENTITY]-(c2:Chunk)
-            WHERE NOT c2.id IN $ids {proj_filter}
-            OPTIONAL MATCH (superseder:Chunk)-[:SUPERSEDES]->(c2)
-            WITH c2 WHERE superseder IS NULL
-            RETURN DISTINCT c2.id AS id, c2.content AS content,
-                   c2.source AS source, c2.section AS section,
-                   c2.project AS project
-            LIMIT 30
-            """,
-            params=query_params,
-        )
-        for row in exp_entity.result_set:
-            expanded_chunks.append(
-                {"id": row[0], "content": row[1], "source": row[2], "section": row[3], "project": row[4]}
+        try:
+            exp_entity = graph.query(
+                f"""
+                UNWIND $ids AS hid
+                MATCH (c1:Chunk {{id: hid}})-[:HAS_ENTITY]->(e:Entity)
+                WITH DISTINCT e
+                MATCH (e)<-[:HAS_ENTITY]-(any:Chunk)
+                WITH e, count(any) AS fan_out
+                WHERE fan_out <= 100
+                MATCH (e)<-[:HAS_ENTITY]-(c2:Chunk)
+                WHERE NOT c2.id IN $ids {proj_filter}
+                OPTIONAL MATCH (superseder:Chunk)-[:SUPERSEDES]->(c2)
+                WITH c2 WHERE superseder IS NULL
+                RETURN DISTINCT c2.id AS id, c2.content AS content,
+                       c2.source AS source, c2.section AS section,
+                       c2.project AS project
+                LIMIT 30
+                """,
+                params=query_params,
+                timeout=5000,
             )
+            for row in exp_entity.result_set:
+                expanded_chunks.append(
+                    {"id": row[0], "content": row[1], "source": row[2], "section": row[3], "project": row[4]}
+                )
+        except Exception:
+            logger.warning("HAS_ENTITY expansion timed out or failed", exc_info=True)
 
     # Deduplicate expanded, filter by vector relevance, and cap
     seen = set(seen_ids)
@@ -1113,6 +1132,7 @@ def query_knowledge(graph, question: str, role: str = None, top_k: int = 8, mode
                 RETURN cid, count(d) > 0 AS has_dev_link
                 """,
                 params={"ids": researcher_ids},
+                timeout=5000,
             )
             for row in res.result_set:
                 confidence[row[0]] = "confirmed" if row[1] else "recommendation"
