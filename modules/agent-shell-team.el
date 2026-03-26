@@ -61,7 +61,7 @@
 (declare-function my/team-sidebar--show "my-agent-shell-sidebar")
 (declare-function agent-shell-namespace--format-peers-for-prompt "agent-shell-namespace")
 
-;;; Containerized tester command prefix
+;;; Devcontainer command prefix
 
 (setq agent-shell-command-prefix
       (lambda (buffer)
@@ -69,9 +69,15 @@
           (with-current-buffer buffer
             (when (and (bound-and-true-p agent-shell-team--role)
                        (equal agent-shell-team--role "tester")
-                       (bound-and-true-p agent-shell-team--worktree-name))
-              (list "podman" "exec" "-i"
-                    (format "tester-%s" agent-shell-team--worktree-name)))))))
+                       (bound-and-true-p agent-shell-team--worktree-path))
+              (let ((config-path (expand-file-name
+                                  (format ".devcontainer/%s/devcontainer.json"
+                                          agent-shell-team--role)
+                                  agent-shell-team--worktree-path)))
+                (when (file-exists-p config-path)
+                  (list "devcontainer" "exec"
+                        "--workspace-folder" agent-shell-team--worktree-path
+                        "--config" config-path))))))))
 
 ;;; Customization
 
@@ -1987,61 +1993,24 @@ Only the lead role may call this.  Returns an alist with success/message."
                                   (or reason "No specific reason identified.")
                                   agents-str)))))))))))
 
-;;; Containerized tester pod management
+;;; Devcontainer lifecycle
 
-(defun agent-shell-team--start-tester-pod (worktree-name worktree-path)
-  "Start a Podman pod with infrastructure for tester WORKTREE-NAME.
-Creates a pod with FalkorDB and starts the tester container with the
-worktree bind-mounted at /workspace."
-  (let ((pod-name (format "tester-%s" worktree-name))
-        (api-key (getenv "ANTHROPIC_API_KEY")))
-    ;; 1. Create pod with host networking (for MCP WebSocket access)
-    (message "[tester-pod] Creating pod %s..." pod-name)
-    (let ((exit-code (call-process "podman" nil nil nil
-                                   "pod" "create"
-                                   "--name" pod-name
-                                   "--network=host")))
-      (unless (zerop exit-code)
-        (error "[tester-pod] Failed to create pod %s (exit %d)" pod-name exit-code)))
-    ;; 2. Start FalkorDB in the pod
-    (message "[tester-pod] Starting FalkorDB in pod %s..." pod-name)
-    (let ((exit-code (call-process "podman" nil nil nil
-                                   "run" "-d"
-                                   "--pod" pod-name
-                                   "--name" (format "%s-falkordb" pod-name)
-                                   "-e" "REDIS_ARGS=--save 60 1 --appendonly no"
-                                   "falkordb/falkordb:latest")))
-      (unless (zerop exit-code)
-        (error "[tester-pod] Failed to start FalkorDB in pod %s (exit %d)" pod-name exit-code)))
-    ;; 3. Start tester container in the pod
-    (message "[tester-pod] Starting tester container in pod %s..." pod-name)
-    (let ((exit-code (call-process "podman" nil nil nil
-                                   "run" "-d"
-                                   "--pod" pod-name
-                                   "--name" pod-name
-                                   "--userns=keep-id"
-                                   "-v" (format "%s:/workspace:Z" worktree-path)
-                                   "-e" (format "ANTHROPIC_API_KEY=%s" (or api-key ""))
-                                   "-e" (format "EMACS_INSTANCE_ID=%d" (emacs-pid))
-                                   "-e" (format "EMACS_SERVER_NAME=%s" server-name)
-                                   "agent-tester:latest")))
-      (unless (zerop exit-code)
-        (error "[tester-pod] Failed to start tester container in pod %s (exit %d)" pod-name exit-code)))
-    (message "[tester-pod] Pod %s started successfully" pod-name)))
-
-(defun agent-shell-team--stop-tester-pod (worktree-name)
-  "Stop and remove the Podman pod for tester WORKTREE-NAME."
-  (let ((pod-name (format "tester-%s" worktree-name)))
-    (message "[tester-pod] Removing pod %s..." pod-name)
-    (call-process "podman" nil nil nil "pod" "rm" "-f" pod-name)
-    (message "[tester-pod] Pod %s removed" pod-name)))
+(defun agent-shell-team--stop-devcontainer (role worktree-path)
+  "Stop the devcontainer for ROLE at WORKTREE-PATH if one is configured."
+  (let ((config-path (expand-file-name
+                       (format ".devcontainer/%s/devcontainer.json" role)
+                       worktree-path)))
+    (when (file-exists-p config-path)
+      (message "[devcontainer] Stopping container for %s at %s..." role worktree-path)
+      (call-process "devcontainer" nil nil nil
+                    "down" "--workspace-folder" worktree-path
+                    "--config" config-path)
+      (message "[devcontainer] Container stopped for %s" role))))
 
 (defun agent-shell-team--cleanup-agent (buffer session-id worktree-path)
   "Clean up BUFFER: unregister from session, kill buffer, optionally remove worktree."
   (let ((agent-role (and (buffer-live-p buffer)
-                         (buffer-local-value 'agent-shell-team--role buffer)))
-        (agent-wt-name (and (buffer-live-p buffer)
-                            (buffer-local-value 'agent-shell-team--worktree-name buffer))))
+                         (buffer-local-value 'agent-shell-team--role buffer))))
   (agent-shell-team--log session-id
    (format "[cleanup] Killing agent buffer %s%s"
            (if (buffer-live-p buffer) (buffer-name buffer) "(already dead)")
@@ -2102,9 +2071,9 @@ worktree bind-mounted at /workspace."
     (with-current-buffer buffer
       (setq agent-shell-team--cleanup-in-progress t))
     (kill-buffer buffer))
-  ;; Stop tester pod before worktree removal (pod bind-mounts the worktree)
-  (when (and (equal agent-role "tester") agent-wt-name)
-    (agent-shell-team--stop-tester-pod agent-wt-name))
+  ;; Stop devcontainer before worktree removal (container bind-mounts the worktree)
+  (when (and agent-role worktree-path)
+    (agent-shell-team--stop-devcontainer agent-role worktree-path))
   ;; Remove worktree if it exists
   (when (and worktree-path (file-directory-p worktree-path))
     (let ((default-directory (file-name-parent-directory worktree-path)))
@@ -2407,9 +2376,6 @@ Returns the new agent buffer."
       ("neighbor"
        (message "[auto-spawn] Neighbor mode, using directory=%s" default-directory)
        (setq directory default-directory)))
-    ;; Start containerized infrastructure for testers
-    (when (equal role "tester")
-      (agent-shell-team--start-tester-pod worktree-name worktree-path))
     (message "[auto-spawn] Calling start-agent for role=%s mode=%s dir=%s" role mode directory)
     (let ((buffer (agent-shell-team--start-agent
                    session-id role mode directory worktree-path worktree-name
@@ -2979,11 +2945,10 @@ Also removes the git worktree if the agent was in isolated mode."
       (setf (alist-get (current-buffer) agent-shell-team--interrupt-queue nil 'remove) nil)
       (remhash (current-buffer) agent-shell-team--last-activity)
       (remhash (current-buffer) agent-shell-team--last-compact-time)
-      ;; Stop tester pod before worktree removal (pod bind-mounts the worktree)
+      ;; Stop devcontainer before worktree removal (container bind-mounts the worktree)
       (when (and (bound-and-true-p agent-shell-team--role)
-                 (equal agent-shell-team--role "tester")
-                 (bound-and-true-p agent-shell-team--worktree-name))
-        (agent-shell-team--stop-tester-pod agent-shell-team--worktree-name))
+                 (bound-and-true-p agent-shell-team--worktree-path))
+        (agent-shell-team--stop-devcontainer agent-shell-team--role agent-shell-team--worktree-path))
       ;; Remove worktree if it exists
       (when (and worktree-path (file-directory-p worktree-path))
         (let ((default-directory (file-name-parent-directory worktree-path)))
