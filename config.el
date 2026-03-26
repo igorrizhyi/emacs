@@ -41,6 +41,15 @@
 (after! lsp-mode
   (add-to-list 'lsp-file-watch-ignored-directories "[/\\\\]\\.agent-shell\\'"))
 
+;; Auto-revert agent-shell files modified by agent processes
+(defun my/auto-revert-agent-shell-files ()
+  "Enable `auto-revert-mode' for files under .agent-shell/."
+  (when (and buffer-file-name
+             (string-match-p "/\\.agent-shell/" buffer-file-name))
+    (auto-revert-mode 1)))
+
+(add-hook 'find-file-hook #'my/auto-revert-agent-shell-files)
+
 (add-hook 'markdown-mode-hook
   (lambda ()
     (when (and buffer-file-name
