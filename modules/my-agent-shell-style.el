@@ -109,6 +109,8 @@
     (overlay-put ov 'face face)
     (overlay-put ov 'line-prefix padding)
     (overlay-put ov 'wrap-prefix padding)
+    (overlay-put ov 'before-string
+                 (propertize "\n" 'face '(:height 0.3 :background "#1a2a37" :extend t)))
     (overlay-put ov 'after-string (propertize "\n" 'face face))
     (overlay-put ov 'evaporate nil)
     (overlay-put ov 'my-agent-shell-context t)))
