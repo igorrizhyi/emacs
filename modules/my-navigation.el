@@ -136,6 +136,31 @@ Does nothing if there are no changes in the buffer."
 (with-eval-after-load 'yasnippet
   (global-set-key (kbd "C-<tab>") #'my/switch-to-buffer-filtered))
 
+(defun my/switch-to-last-buffer-filtered ()
+  "Switch to the most recent buffer that passes `consult-buffer-filter'.
+Excludes the current buffer and any buffer matching the filter patterns."
+  (interactive)
+  (let* ((filter-patterns (append (bound-and-true-p consult-buffer-filter)
+                                  '("\\*claude" "\\*mistty")))
+         (current (current-buffer))
+         (target
+          (cl-find-if
+           (lambda (buf)
+             (and (not (eq buf current))
+                  (not (minibufferp buf))
+                  (let ((name (buffer-name buf)))
+                    (not (cl-some (lambda (pat) (string-match-p pat name))
+                                  filter-patterns)))))
+           (buffer-list))))
+    (if target
+        (switch-to-buffer target)
+      (message "No eligible buffer to switch to"))))
+
+(map! :g "C-w" #'my/switch-to-last-buffer-filtered
+      :n "C-w" #'my/switch-to-last-buffer-filtered
+      :i "C-w" #'my/switch-to-last-buffer-filtered
+      :v "C-w" #'my/switch-to-last-buffer-filtered)
+
 ;; Python structural navigation with { and }
 (with-eval-after-load 'python
   (defun my/python-nav-up-list-backward ()
