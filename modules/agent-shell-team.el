@@ -157,6 +157,10 @@ Generated eagerly at load time so MCP handlers always have a valid session.")
 (defvar-local agent-shell-team--init-finished-p nil
   "Non-nil after ACP initialization has completed for this agent buffer.")
 
+(defvar-local agent-shell-team--cleanup-in-progress nil
+  "When non-nil, `agent-shell-team--kill-guard' allows the buffer to be killed.
+Set by `agent-shell-team--cleanup-agent' before calling `kill-buffer'.")
+
 ;;; Global registry
 
 (defvar agent-shell-team--sessions (make-hash-table :test 'equal)
@@ -569,6 +573,21 @@ session-id (filename sans extension) if found, nil otherwise."
    :command (list "notify-send" "-u" "normal" title message)
    :noquery t))
 
+;;; Kill guard — prevent external code from silently killing team buffers
+
+(defun agent-shell-team--kill-guard ()
+  "Return nil to block unauthorized kills of agent-shell team buffers.
+Added to `kill-buffer-query-functions' (buffer-local) during registration.
+Authorized kills:
+  - `agent-shell-team--cleanup-in-progress' is t (programmatic cleanup)
+  - Interactive invocation (user explicitly chose to kill)"
+  (cond
+   (agent-shell-team--cleanup-in-progress t)
+   ((called-interactively-p 'any) t)
+   (t
+    (message "agent-shell-team: blocked external kill of %s" (buffer-name))
+    nil)))
+
 ;;; Registry functions
 
 (defun agent-shell-team--register-agent (session-id buffer role mode &optional worktree worktree-name)
@@ -590,7 +609,8 @@ WORKTREE-NAME is the worktree name (for isolated mode)."
       (setq agent-shell-team--role role
             agent-shell-team--mode mode
             agent-shell-team--worktree-path worktree
-            agent-shell-team--worktree-name worktree-name))))
+            agent-shell-team--worktree-name worktree-name)
+      (add-hook 'kill-buffer-query-functions #'agent-shell-team--kill-guard nil t))))
 
 (defun agent-shell-team--unregister-agent (buffer)
   "Remove BUFFER from its team session registry."
@@ -1985,6 +2005,8 @@ Only the lead role may call this.  Returns an alist with success/message."
   (when (buffer-live-p buffer)
     (agent-shell-team--mark-agent-idle (buffer-name buffer))
     (agent-shell-team--unregister-agent buffer)
+    (with-current-buffer buffer
+      (setq agent-shell-team--cleanup-in-progress t))
     (kill-buffer buffer))
   ;; Remove worktree if it exists
   (when (and worktree-path (file-directory-p worktree-path))
