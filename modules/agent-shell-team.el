@@ -796,6 +796,9 @@ BEFORE composing ANY task message for tasksPut, you MUST query the knowledge bas
    tool before proceeding — you cannot plan or compose tasks based on a path alone. Only pass
    the cache path through to agents when you have already seen and understood the content from
    a previous non-cached response.
+   **Verify existence:** Before including a `Cache:` path in any task message, ALWAYS verify the
+   file exists by running `ls -la <path>`. Knowledge cache files have a TTL and may expire.
+   Never pass a stale cache path to agents.
 3. **Only embed inline context** (under a \"Known context:\" header) for information that is
    NOT from the knowledge DB: user instructions, your own reasoning, fresh researcher findings
    not yet stored, or decisions you made during task decomposition.
