@@ -2603,17 +2603,10 @@ Use for background context like team roster updates and announcements."
                          :prompt content-blocks)
                :buffer buffer
                :on-success (lambda (_acp-response)
-                             (when (buffer-live-p buffer)
-                               (with-current-buffer buffer
-                                 (shell-maker-finish-output
-                                  :config shell-maker--config
-                                  :success t))))
-               :on-failure (lambda (_acp-error &optional _raw-message)
-                             (when (buffer-live-p buffer)
-                               (with-current-buffer buffer
-                                 (shell-maker-finish-output
-                                  :config shell-maker--config
-                                  :success nil))))))))))))
+                             (message "[agent-shell-team] silent prompt delivered to %s" buffer))
+               :on-failure (lambda (acp-error &optional _raw-message)
+                             (message "[agent-shell-team] silent prompt failed for %s: %s"
+                                      buffer acp-error))))))))))
 
 ;;; Message queue & drain
 
