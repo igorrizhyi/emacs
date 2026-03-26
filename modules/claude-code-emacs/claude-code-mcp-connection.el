@@ -65,7 +65,7 @@
   :type 'string
   :group 'claude-code-mcp)
 
-(defcustom claude-code-mcp-max-connection-attempts 10
+(defcustom claude-code-mcp-max-connection-attempts 3
   "Maximum number of connection attempts."
   :type 'integer
   :group 'claude-code-mcp)
@@ -299,7 +299,8 @@ This function is called when an MCP server shuts down."
       (message "MCP: Connection info gone for %s, aborting connect" conn-key))
      ((>= attempts claude-code-mcp-max-connection-attempts)
       (message "Failed to connect to MCP server after %d attempts for project %s"
-               claude-code-mcp-max-connection-attempts project-root))
+               claude-code-mcp-max-connection-attempts project-root)
+      (remhash conn-key claude-code-mcp-project-connections))
      (t
       (setcdr (assoc 'connection-attempts info) (1+ attempts))
       (message "Attempting to connect to MCP server (attempt %d/%d) for project %s..."
