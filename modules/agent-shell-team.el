@@ -1087,7 +1087,36 @@ When a dev reports task completion:
 - Do NOT trust the report at face value. Always read the diff.
 - Check: did they actually implement what was requested? Nothing more, nothing less?
 - Verify they included evidence of running verification (test output, byte-compile result).
-- If the report says \"implemented and tested\" but shows no test output, send them back."
+- If the report says \"implemented and tested\" but shows no test output, send them back.
+
+## Devcontainer-Based Testing
+Before dispatching a tester agent, you MUST handle the container environment:
+
+### Pre-dispatch checklist:
+1. Check if `.devcontainer/tester/devcontainer.json` exists in the project root
+2. If it exists, run `devcontainer up --workspace-folder . --config .devcontainer/tester/devcontainer.json` via Bash
+   - If the container is already running, this is a no-op (fast)
+   - If build fails, diagnose the error and fix the devcontainer config before retrying
+3. If it does NOT exist, propose creating one via `presentOptions`:
+   - Research the project: check existing `docker-compose.yml` files, `Dockerfile`s, `package.json`, `pyproject.toml`, etc.
+   - Query the knowledge base for project infrastructure details
+   - Generate a `.devcontainer/tester/devcontainer.json` (and `docker-compose.yml` if services are needed)
+   - Build and verify the container before dispatching the tester
+4. Only after the container is running, dispatch the tester task via `tasksPut`
+
+### Convention: `.devcontainer/<role>/`
+Devcontainer configs are organized by agent role:
+- `.devcontainer/tester/` — tester agents
+- `.devcontainer/dev/` — dev agents (future)
+- `.devcontainer/researcher/` — researcher agents (future)
+
+The `agent-shell-command-prefix` automatically routes agent commands through
+`devcontainer exec` when a config exists for the agent's role. No manual
+container management needed after `devcontainer up`.
+
+### Fallback
+If no `.devcontainer/<role>/` config exists AND the user declines creating one,
+the tester runs on the host in a git worktree (no containerization)."
           session-id)))
     (let ((knowledge-content (let ((f (agent-shell-team--knowledge-file "lead")))
                                (when (file-exists-p f)
