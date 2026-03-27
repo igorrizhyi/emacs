@@ -1223,6 +1223,11 @@
 Used by `my/agent-shell-bwrap-prefix' to access the worktree path before
 the buffer-local `agent-shell-team--worktree-path' is set.")
 
+(defvar my/agent-shell-pending-role nil
+  "Dynamic variable carrying role during agent-shell--start.
+Used by `agent-shell-command-prefix' to determine role before
+the buffer-local `agent-shell-team--role' is set.")
+
 (defun my/agent-shell-bwrap-prefix (buffer)
   "Return bwrap command prefix for sandboxed dev agents.
 If BUFFER has a worktree path (isolated dev agent), return a list of
@@ -1309,7 +1314,9 @@ Fedora atomic's /home -> /var/home symlink."
 
 (after! agent-shell
   ;; Sandbox dev agents with bubblewrap filesystem isolation
-  (setq agent-shell-command-prefix #'my/agent-shell-bwrap-prefix)
+  ;; Only set bwrap prefix if agent-shell-team hasn't overwritten it
+  (unless (featurep 'agent-shell-team)
+    (setq agent-shell-command-prefix #'my/agent-shell-bwrap-prefix))
   ;; Disable the header entirely (set to nil); use 'graphical to restore later
   (setq agent-shell-header-style nil)
   ;; Require MCP tools for the stdio server

@@ -41,6 +41,7 @@
 ;; Defined in config.el — declared here so the byte-compiler treats it as
 ;; dynamically-scoped when let-bound in `agent-shell-team--start-agent'.
 (defvar my/agent-shell-pending-worktree-path)
+(defvar my/agent-shell-pending-role)
 
 ;; Override: resolve through worktrees to always get the MAIN repo root.
 ;; The upstream version uses --show-toplevel which returns the worktree's own
@@ -66,18 +67,25 @@
 (setq agent-shell-command-prefix
       (lambda (buffer)
         (when (buffer-live-p buffer)
-          (with-current-buffer buffer
-            (when (and (bound-and-true-p agent-shell-team--role)
-                       (equal agent-shell-team--role "tester")
-                       (bound-and-true-p agent-shell-team--worktree-path))
+          (let ((role (or (buffer-local-value 'agent-shell-team--role buffer)
+                         my/agent-shell-pending-role))
+                (wt-path (or (buffer-local-value 'agent-shell-team--worktree-path buffer)
+                             my/agent-shell-pending-worktree-path)))
+            (cond
+             ;; Tester with devcontainer config → devcontainer exec
+             ((and (equal role "tester") wt-path)
               (let ((config-path (expand-file-name
-                                  (format ".devcontainer/%s/devcontainer.json"
-                                          agent-shell-team--role)
-                                  agent-shell-team--worktree-path)))
+                                  ".devcontainer/tester/devcontainer.json"
+                                  wt-path)))
                 (when (file-exists-p config-path)
                   (list "devcontainer" "exec"
-                        "--workspace-folder" agent-shell-team--worktree-path
-                        "--config" config-path))))))))
+                        "--workspace-folder" wt-path
+                        "--config" config-path))))
+             ;; Dev with worktree → bwrap sandboxing
+             ((and (equal role "dev") wt-path)
+              (my/agent-shell-bwrap-prefix buffer))
+             ;; Everything else (lead, researcher, knowledge) → no prefix
+             (t nil))))))
 
 ;;; Customization
 
@@ -3005,7 +3013,8 @@ WORKTREE-PATH and WORKTREE-NAME are for isolated mode."
                          role mode session-id worktree-path worktree-name default-directory))
          (config (agent-shell-team--make-config session-id role buf-name)))
     (message "agent-shell-team: about to call agent-shell--start with buffer-name=%s" buf-name)
-    (let ((buffer (let ((my/agent-shell-pending-worktree-path worktree-path))
+    (let ((buffer (let ((my/agent-shell-pending-worktree-path worktree-path)
+                        (my/agent-shell-pending-role role))
                    (agent-shell--start
                     :config config
                     :no-focus no-focus
