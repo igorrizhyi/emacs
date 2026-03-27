@@ -1183,39 +1183,69 @@ Before dispatching a tester agent, you MUST handle the container environment:
    - Build and verify the container before dispatching the tester
 4. Only after the container is running, dispatch the tester task via `tasksPut`
 
-### Required devcontainer.json fields
-Every `.devcontainer/<role>/devcontainer.json` MUST include:
+### Required devcontainer setup
+Every `.devcontainer/<role>/` MUST provide:
 
-1. **claude-agent-acp bind-mount** — mount the host ACP binary read-only into the container:
-   ```json
-   \"mounts\": [
-     \"source=${localEnv:HOME}/.local/bin/claude-agent-acp,target=/usr/local/bin/claude-agent-acp,type=bind,readonly\",
-     \"source=${localEnv:HOME}/.claude,target=/root/.claude,type=bind\"
-   ]
-   ```
-   Notes:
-   - agent-shell spawns `claude-agent-acp` (not the Claude CLI). The binary is a self-contained
-     Bun-compiled ELF that serves as both ACP server and Claude CLI. No Node.js needed in the container.
-   - `~/.claude` is mounted WRITABLE (no `readonly`) — OAuth token refresh and debug logs need write access.
+1. **claude-agent-acp binary** — bind-mount the host ACP binary into the container.
+   agent-shell spawns `claude-agent-acp` (not the Claude CLI). The binary is a self-contained
+   Bun-compiled ELF that serves as both ACP server and Claude CLI. No Node.js needed in the container.
 
-2. **Host networking** for MCP connectivity:
-   ```json
-   \"runArgs\": [\"--network=host\", \"--userns=keep-id\"]
-   ```
-   **docker-compose caveat**: For docker-compose-based devcontainers, `runArgs` like
-   `--network=host` do NOT apply. Instead, set `network_mode: host` in the docker-compose
-   service definition (typically `docker-compose.override.yml`):
-   ```yaml
-   services:
-     devcontainer:
-       network_mode: host
-   ```
+2. **~/.claude credentials** — bind-mount `~/.claude` WRITABLE into the container at
+   `$HOME/.claude` (where `$HOME` is the container user's home, e.g. `/code` not `/root`).
+   OAuth token refresh and debug logs need write access.
+
+3. **glibc compatibility** — if using Alpine/musl images, add `gcompat` to the Dockerfile
+   (`apk add gcompat`). The `claude-agent-acp` binary is dynamically linked against glibc.
+
+4. **Host networking** for MCP WebSocket connectivity (`network_mode: host`).
+
+5. **SELinux `:z` flag** (Fedora/RHEL) — bind mounts need SELinux relabeling.
+
+#### docker-compose devcontainers (preferred)
+For docker-compose-based setups, put mounts and networking in `docker-compose.override.yml`,
+NOT in `devcontainer.json`:
+- `devcontainer.json` `mounts` syntax does NOT support SELinux `:z` relabeling
+- `devcontainer.json` `runArgs` like `--network=host` do NOT apply to compose services
+
+Example `docker-compose.override.yml`:
+```yaml
+services:
+  tests:
+    network_mode: host
+    userns_mode: keep-id
+    volumes:
+      - ${HOME}/.local/bin/claude-agent-acp:/usr/local/bin/claude-agent-acp:ro,z
+      - ${HOME}/.claude:/code/.claude:z
+```
+
+Example `devcontainer.json` (mounts array empty — handled by compose):
+```json
+{
+  \"dockerComposeFile\": [\"../../docker-compose.yml\", \"docker-compose.override.yml\"],
+  \"service\": \"tests\",
+  \"workspaceFolder\": \"/code\",
+  \"overrideCommand\": false,
+  \"shutdownAction\": \"stopCompose\",
+  \"mounts\": []
+}
+```
+
+#### Single-container devcontainers (no docker-compose)
+When not using docker-compose, put mounts in `devcontainer.json`:
+```json
+\"mounts\": [
+  \"source=${localEnv:HOME}/.local/bin/claude-agent-acp,target=/usr/local/bin/claude-agent-acp,type=bind,readonly\",
+  \"source=${localEnv:HOME}/.claude,target=/root/.claude,type=bind\"
+],
+\"runArgs\": [\"--network=host\", \"--userns=keep-id\"]
+```
+Note: this does NOT support SELinux `:z` — use docker-compose on Fedora/RHEL.
 
 Verify these are present when:
 - Creating a new devcontainer spec
 - Before running `devcontainer up` on an existing spec
 
-If either is missing, add it before proceeding with `devcontainer up`.
+If any are missing, add them before proceeding with `devcontainer up`.
 
 ### Convention: `.devcontainer/<role>/`
 Devcontainer configs are organized by agent role:

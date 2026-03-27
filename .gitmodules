@@ -1,0 +1,3 @@
+[submodule "modules/agent-shell"]
+	path = modules/agent-shell
+	url = https://github.com/xenodium/agent-shell.git
