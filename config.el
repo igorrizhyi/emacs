@@ -169,6 +169,9 @@
 ;; Set DOCKER_HOST so devcontainer CLI (and other tools) use podman
 (setenv "DOCKER_HOST" "unix:///run/user/1000/podman/podman.sock")
 
+;; Strip CLAUDECODE so spawned claude-agent-acp processes don't hit the nesting guard
+(setenv "CLAUDECODE")
+
 ;; Optimize general Emacs responsiveness
 (setq gc-cons-threshold (* 100 1024 1024))  ; 100MB instead of 800KB
 (setq read-process-output-max (* 1024 1024))  ; 1MB instead of 4KB
