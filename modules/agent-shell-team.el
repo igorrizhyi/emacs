@@ -101,6 +101,11 @@ the devcontainer wrapper and injects `--remote-env KEY=VALUE'
 flags so that the variables reach the container process as well."
   (let* ((env-vars (plist-get args :environment-variables))
          (client (apply orig-fn args)))
+    ;; [acp-init] TEMPORARY DEBUG LOGGING — remove when done
+    (message "[acp-init] inject-remote-env: cmd=%s params=%S env-count=%d"
+             (map-elt client :command)
+             (map-elt client :command-params)
+             (length (or env-vars '())))
     ;; Only act when there are env vars AND the resolved command is
     ;; devcontainer (i.e. the prefix wrapped it).
     (when (and env-vars
@@ -146,10 +151,13 @@ flags so that the variables reach the container process as well."
                     (setq i (1+ i)))
                   ;; Fallback: insert at end (shouldn't happen)
                   len))))
-        (map-put! client :command-params
-                  (append (seq-take params insert-pos)
-                          remote-env-flags
-                          (seq-drop params insert-pos)))))
+        (let ((new-params (append (seq-take params insert-pos)
+                                   remote-env-flags
+                                   (seq-drop params insert-pos))))
+          ;; [acp-init] TEMPORARY DEBUG LOGGING — remove when done
+          (message "[acp-init] inject-remote-env: final command: devcontainer %s"
+                   (string-join new-params " "))
+          (map-put! client :command-params new-params))))
     client))
 
 (advice-add 'agent-shell--make-acp-client :around
