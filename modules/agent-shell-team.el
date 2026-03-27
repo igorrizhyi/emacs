@@ -716,6 +716,31 @@ WORKTREE-NAME is the worktree name (for isolated mode)."
             agent-shell-team--mode mode
             agent-shell-team--worktree-path worktree
             agent-shell-team--worktree-name worktree-name)
+      ;; Set path resolver for devcontainer-based agents
+      (let* ((project-dir (or worktree default-directory))
+             (config-path (expand-file-name
+                           (format ".devcontainer/%s/devcontainer.json" role)
+                           project-dir)))
+        (when (file-exists-p config-path)
+          (condition-case err
+              (let* ((config (json-read-file config-path))
+                     (container-workspace (map-elt config 'workspaceFolder)))
+                (when container-workspace
+                  (let ((host-root (file-name-as-directory project-dir))
+                        (container-root (file-name-as-directory container-workspace)))
+                    (setq-local agent-shell-path-resolver-function
+                                (lambda (path)
+                                  (cond
+                                   ((string-prefix-p host-root path)
+                                    (concat container-root
+                                            (substring path (length host-root))))
+                                   ((string-prefix-p container-root path)
+                                    (concat host-root
+                                            (substring path (length container-root))))
+                                   (t path)))))))
+            (error
+             (message "agent-shell-team: failed to read devcontainer config %s: %s"
+                      config-path (error-message-string err))))))
       (add-hook 'kill-buffer-query-functions #'agent-shell-team--kill-guard nil t))))
 
 (defun agent-shell-team--unregister-agent (buffer)
