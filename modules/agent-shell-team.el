@@ -112,11 +112,15 @@ flags so that the variables reach the container process as well."
               (equal (map-elt client :command) "devcontainer"))
       (let* ((params (map-elt client :command-params))
              ;; Build --remote-env flags.  The env-vars list contains
-             ;; entries like "ANTHROPIC_API_KEY=sk-..." and "CLAUDECODE="
-             ;; (empty value means unset in the container).
+             ;; entries like "ANTHROPIC_API_KEY=sk-..." and "CLAUDECODE=".
+             ;; Skip entries with empty values (e.g. "KEY=") — injecting
+             ;; these via --remote-env would override valid credentials
+             ;; already present inside the container.
              (remote-env-flags
               (mapcan (lambda (env)
-                        (list "--remote-env" env))
+                        (when (and (string-match "=." env)
+                                   (not (string-suffix-p "=" env)))
+                          (list "--remote-env" env)))
                       env-vars))
              ;; Find where the actual wrapped command starts in params.
              ;; devcontainer exec [options...] <command> [args...]
