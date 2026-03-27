@@ -12,7 +12,7 @@
 ;;   1. agent-shell--handle pipeline steps (via advice)
 ;;   2. acp--route-incoming-message callback errors (via advice)
 ;;   3. acp--start-client sentinel event + stderr preservation (via advice)
-;;   4. acp--start-client filter message-queue state (via advice)
+;;   4. acp--start-client raw process filter output + filter error catching (via advice)
 
 ;;; Code:
 
@@ -98,13 +98,14 @@
   ;; ---------------------------------------------------------------------------
 
   (defun my/acp-init--log-sentinel (orig-fn &rest args)
-    "Around advice on `acp--start-client': wrap sentinel to log exit events."
+    "Around advice on `acp--start-client': wrap sentinel and filter to log events."
     (apply orig-fn args)
-    ;; After orig-fn, the process is on the client. Wrap its sentinel.
+    ;; After orig-fn, the process is on the client. Wrap its sentinel and filter.
     (let* ((client (plist-get args :client))
            (process (map-elt client :process))
            (orig-sentinel (and process (process-sentinel process))))
       (when process
+        ;; Wrap the sentinel
         (set-process-sentinel
          process
          (lambda (proc event)
@@ -134,7 +135,19 @@
                      (when orig-sentinel
                        (funcall orig-sentinel proc event))))
                (when orig-sentinel
-                 (funcall orig-sentinel proc event)))))))))
+                 (funcall orig-sentinel proc event))))))
+        ;; Wrap the process filter to log raw output and catch filter errors
+        (let ((orig-filter (process-filter process)))
+          (set-process-filter
+           process
+           (lambda (proc output)
+             (message "[acp-init] raw-filter: received %d bytes from %s" (length output) (process-name proc))
+             ;; Log first 200 chars of each chunk
+             (message "[acp-init] raw-filter: data=%.200s" output)
+             (condition-case err
+                 (funcall orig-filter proc output)
+               (error
+                (message "[acp-init] raw-filter: FILTER ERROR: %S" err)))))))))
 
   ;; This must run AFTER the stuck-busy-fixes sentinel advice, so we use :around
   ;; on the same function. Since stuck-busy-fixes also uses :around, our advice
@@ -142,11 +155,12 @@
   (advice-add 'acp--start-client :around #'my/acp-init--log-sentinel)
 
   ;; ---------------------------------------------------------------------------
-  ;; 4. acp--start-client filter — log message-queue-busy state
+  ;; 4. acp--start-client filter — raw process output logging
   ;; ---------------------------------------------------------------------------
-  ;; We can't easily wrap the internal filter lambda, but we can advise
-  ;; acp--route-incoming-message (done above in #2) to see each message processed.
-  ;; For the message-queue-busy flag, we log indirectly via the route advice.
+  ;; The filter wrapping above (in my/acp-init--log-sentinel) intercepts raw
+  ;; process output BEFORE the internal filter lambda processes it. This lets us
+  ;; see bytes that arrive but never reach acp--route-incoming-message, and catch
+  ;; errors thrown by the filter (which would latch the message-queue-busy flag).
   ;; Additional: log when acp--start-client is called with client details.
 
   (defun my/acp-init--log-start-client (orig-fn &rest args)
