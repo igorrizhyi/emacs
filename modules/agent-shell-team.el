@@ -1205,9 +1205,11 @@ Every `.devcontainer/<role>/` MUST provide:
    agent-shell spawns `claude-agent-acp` (not the Claude CLI). The binary is a self-contained
    Bun-compiled ELF that serves as both ACP server and Claude CLI. No Node.js needed in the container.
 
-2. **~/.claude credentials** — bind-mount `~/.claude` WRITABLE into the container at
-   `$HOME/.claude` (where `$HOME` is the container user's home, e.g. `/code` not `/root`).
-   OAuth token refresh and debug logs need write access.
+2. **~/.claude credentials** — bind-mount ONLY `~/.claude/.credentials.json` into the container
+   (e.g. at `/code/.claude/.credentials.json`). Do NOT mount the entire `~/.claude` directory —
+   it contains `settings.json` with host plugins (e.g. typescript-lsp) that the ACP binary will
+   try to load, hanging in containers without `node`. Only the credentials file is needed for
+   OAuth auth.
 
 3. **glibc compatibility** — if using Alpine/musl images, add `gcompat` to the Dockerfile
    (`apk add gcompat`). The `claude-agent-acp` binary is dynamically linked against glibc.
@@ -1230,7 +1232,7 @@ services:
     userns_mode: keep-id
     volumes:
       - ${HOME}/.local/bin/claude-agent-acp:/usr/local/bin/claude-agent-acp:ro,z
-      - ${HOME}/.claude:/code/.claude:z
+      - ${HOME}/.claude/.credentials.json:/code/.claude/.credentials.json:z
 ```
 
 Example `devcontainer.json` (mounts array empty — handled by compose):
@@ -1250,7 +1252,7 @@ When not using docker-compose, put mounts in `devcontainer.json`:
 ```json
 \"mounts\": [
   \"source=${localEnv:HOME}/.local/bin/claude-agent-acp,target=/usr/local/bin/claude-agent-acp,type=bind,readonly\",
-  \"source=${localEnv:HOME}/.claude,target=/root/.claude,type=bind\"
+  \"source=${localEnv:HOME}/.claude/.credentials.json,target=/root/.claude/.credentials.json,type=bind\"
 ],
 \"runArgs\": [\"--network=host\", \"--userns=keep-id\"]
 ```
