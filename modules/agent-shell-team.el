@@ -1110,6 +1110,27 @@ Before dispatching a tester agent, you MUST handle the container environment:
    - Build and verify the container before dispatching the tester
 4. Only after the container is running, dispatch the tester task via `tasksPut`
 
+### Required devcontainer.json fields
+Every `.devcontainer/<role>/devcontainer.json` MUST include:
+
+1. **Claude CLI bind-mount** — mount the host claude binary read-only into the container:
+   ```json
+   \"mounts\": [
+     \"source=${localEnv:HOME}/.local/bin/claude,target=/usr/local/bin/claude,type=bind,readonly\"
+   ]
+   ```
+
+2. **Host networking** for MCP connectivity:
+   ```json
+   \"runArgs\": [\"--network=host\", \"--userns=keep-id\"]
+   ```
+
+Verify these are present when:
+- Creating a new devcontainer spec
+- Before running `devcontainer up` on an existing spec
+
+If either is missing, add it before proceeding with `devcontainer up`.
+
 ### Convention: `.devcontainer/<role>/`
 Devcontainer configs are organized by agent role:
 - `.devcontainer/tester/` — tester agents
