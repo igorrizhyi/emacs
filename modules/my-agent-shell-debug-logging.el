@@ -85,7 +85,7 @@
         (message "[acp-init] unrecognized message: %S" (and object (truncate-string-to-width
                                                                      (format "%S" object) 200)))))
       ;; Call original but wrap in condition-case to catch callback errors
-      (condition-case-unless-debug err
+      (condition-case err
           (apply orig-fn args)
         (error
          (message "[acp-init] ERROR in route-incoming-message (request-id=%s): %S" id err)
@@ -167,7 +167,44 @@
   (advice-add 'acp--start-client :around #'my/acp-init--log-start-client))
 
 ;; ---------------------------------------------------------------------------
-;; 5. Removal helper
+;; 5. agent-shell--initiate-new-session — wrap on-session-init callback
+;; ---------------------------------------------------------------------------
+
+(after! agent-shell
+  (defun my/acp-init--log-new-session (orig-fn &rest args)
+    "Wrap on-session-init to log before/after."
+    (let* ((orig-on-session-init (plist-get args :on-session-init))
+           (logged-on-session-init
+            (lambda ()
+              (message "[acp-init] on-session-init: ENTERED")
+              (condition-case err
+                  (progn
+                    (funcall orig-on-session-init)
+                    (message "[acp-init] on-session-init: RETURNED OK"))
+                (error
+                 (message "[acp-init] on-session-init: ERROR: %S" err))))))
+      (setq args (plist-put args :on-session-init logged-on-session-init))
+      (apply orig-fn args)))
+  (advice-add 'agent-shell--initiate-new-session :around #'my/acp-init--log-new-session))
+
+;; ---------------------------------------------------------------------------
+;; 6. agent-shell--emit-event — log event emissions during init
+;; ---------------------------------------------------------------------------
+
+(after! agent-shell
+  (defun my/acp-init--log-emit-event (orig-fn &rest args)
+    "Around advice on `agent-shell--emit-event': log event name and catch errors."
+    (let ((event (plist-get args :event)))
+      (message "[acp-init] emit-event: %s" event)
+      (condition-case err
+          (apply orig-fn args)
+        (error
+         (message "[acp-init] emit-event ERROR for %s: %S" event err)
+         (signal (car err) (cdr err))))))
+  (advice-add 'agent-shell--emit-event :around #'my/acp-init--log-emit-event))
+
+;; ---------------------------------------------------------------------------
+;; 7. Removal helper
 ;; ---------------------------------------------------------------------------
 
 (defun my/acp-init-debug-logging-remove ()
@@ -177,6 +214,8 @@
   (advice-remove 'acp--route-incoming-message #'my/acp-init--log-route-message)
   (advice-remove 'acp--start-client #'my/acp-init--log-sentinel)
   (advice-remove 'acp--start-client #'my/acp-init--log-start-client)
+  (advice-remove 'agent-shell--initiate-new-session #'my/acp-init--log-new-session)
+  (advice-remove 'agent-shell--emit-event #'my/acp-init--log-emit-event)
   (message "[acp-init] All debug logging advice removed"))
 
 (message "[acp-init] Debug logging module loaded — all advice installed")
