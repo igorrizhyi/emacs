@@ -439,7 +439,7 @@ Does NOT attempt OAuth refresh — the CLI handles token refresh."
                  my/team-sidebar--quota-error "Parse error")
            (my/team-sidebar--quota-record-failure)))
   (when (buffer-live-p (current-buffer))
-    (kill-buffer (current-buffer)))
+    (url-mark-buffer-as-dead (current-buffer)))
   ;; Trigger sidebar re-render
   (my/team-sidebar--render))
 

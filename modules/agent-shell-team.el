@@ -2931,36 +2931,33 @@ Also detects agents stuck in busy state with no ACP output for
 (defun agent-shell-team--buffer-kill-hook ()
   "Clean up team registration when buffer is killed.
 Also removes the git worktree if the agent was in isolated mode."
-  (message "[agent-shell-team] buffer-kill-hook fired for %s\nBacktrace:\n%s"
-           (buffer-name)
-           (backtrace-to-string (backtrace-frames 'agent-shell-team--buffer-kill-hook)))
-  (when agent-shell-team--session-id
-    ;; Capture worktree path BEFORE unregister removes the agent from sessions
-    (let ((worktree-path agent-shell-team--worktree-path))
-      ;; Mark agent idle (remove busy sentinel file) before unregistering
-      (agent-shell-team--mark-agent-idle (buffer-name (current-buffer)))
-      (agent-shell-team--unregister-agent (current-buffer))
-      ;; Clean up any queued messages, interrupt tasks, and activity tracking for this buffer
-      (remhash (current-buffer) agent-shell-team--message-queue)
-      (setf (alist-get (current-buffer) agent-shell-team--interrupt-queue nil 'remove) nil)
-      (remhash (current-buffer) agent-shell-team--last-activity)
-      (remhash (current-buffer) agent-shell-team--last-compact-time)
-      ;; Stop devcontainer before worktree removal (container bind-mounts the worktree)
-      (when (and (bound-and-true-p agent-shell-team--role)
-                 (bound-and-true-p agent-shell-team--worktree-path))
-        (agent-shell-team--stop-devcontainer agent-shell-team--role agent-shell-team--worktree-path))
-      ;; Remove worktree if it exists
-      (when (and worktree-path (file-directory-p worktree-path))
-        (let ((default-directory (file-name-parent-directory worktree-path)))
-          (shell-command-to-string
-           (format "git worktree remove --force %s 2>&1"
-                   (shell-quote-argument worktree-path)))
-          ;; Verify removal — fallback to delete-directory + prune if git failed
-          (when (file-directory-p worktree-path)
-            (message "[agent-shell-team] WARNING: git worktree remove failed for %s, falling back to delete-directory"
-                     worktree-path)
-            (delete-directory worktree-path t)
-            (shell-command-to-string "git worktree prune 2>&1")))))))
+  (when (bound-and-true-p agent-shell-team--role)
+    (when agent-shell-team--session-id
+      ;; Capture worktree path BEFORE unregister removes the agent from sessions
+      (let ((worktree-path agent-shell-team--worktree-path))
+        ;; Mark agent idle (remove busy sentinel file) before unregistering
+        (agent-shell-team--mark-agent-idle (buffer-name (current-buffer)))
+        (agent-shell-team--unregister-agent (current-buffer))
+        ;; Clean up any queued messages, interrupt tasks, and activity tracking for this buffer
+        (remhash (current-buffer) agent-shell-team--message-queue)
+        (setf (alist-get (current-buffer) agent-shell-team--interrupt-queue nil 'remove) nil)
+        (remhash (current-buffer) agent-shell-team--last-activity)
+        (remhash (current-buffer) agent-shell-team--last-compact-time)
+        ;; Stop devcontainer before worktree removal (container bind-mounts the worktree)
+        (when (bound-and-true-p agent-shell-team--worktree-path)
+          (agent-shell-team--stop-devcontainer agent-shell-team--role agent-shell-team--worktree-path))
+        ;; Remove worktree if it exists
+        (when (and worktree-path (file-directory-p worktree-path))
+          (let ((default-directory (file-name-parent-directory worktree-path)))
+            (shell-command-to-string
+             (format "git worktree remove --force %s 2>&1"
+                     (shell-quote-argument worktree-path)))
+            ;; Verify removal — fallback to delete-directory + prune if git failed
+            (when (file-directory-p worktree-path)
+              (message "[agent-shell-team] WARNING: git worktree remove failed for %s, falling back to delete-directory"
+                       worktree-path)
+              (delete-directory worktree-path t)
+              (shell-command-to-string "git worktree prune 2>&1"))))))))
 
 (add-hook 'kill-buffer-hook #'agent-shell-team--buffer-kill-hook)
 
