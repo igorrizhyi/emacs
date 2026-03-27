@@ -1121,12 +1121,14 @@ Before dispatching a tester agent, you MUST handle the container environment:
 ### Required devcontainer.json fields
 Every `.devcontainer/<role>/devcontainer.json` MUST include:
 
-1. **Claude CLI bind-mount** — mount the host claude binary read-only into the container:
+1. **claude-agent-acp bind-mount** — mount the host ACP binary read-only into the container:
    ```json
    \"mounts\": [
-     \"source=${localEnv:HOME}/.local/bin/claude,target=/usr/local/bin/claude,type=bind,readonly\"
+     \"source=${localEnv:HOME}/.local/bin/claude-agent-acp,target=/usr/local/bin/claude-agent-acp,type=bind,readonly\"
    ]
    ```
+   Note: agent-shell spawns `claude-agent-acp` (not the Claude CLI). The binary is a self-contained
+   Bun-compiled ELF that serves as both ACP server and Claude CLI. No Node.js needed in the container.
 
 2. **Host networking** for MCP connectivity:
    ```json
