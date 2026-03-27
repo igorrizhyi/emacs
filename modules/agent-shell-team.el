@@ -87,6 +87,71 @@
              ;; Everything else (lead, researcher, knowledge) → no prefix
              (t nil))))))
 
+;;; Bridge env vars through devcontainer exec via --remote-env
+
+(defun agent-shell-team--inject-remote-env (orig-fn &rest args)
+  "Around advice for `agent-shell--make-acp-client'.
+When the command prefix wraps the process in `devcontainer exec',
+the `:environment-variables' set by the caller only affect the
+host-side `make-process', not the container.  This advice detects
+the devcontainer wrapper and injects `--remote-env KEY=VALUE'
+flags so that the variables reach the container process as well."
+  (let* ((env-vars (plist-get args :environment-variables))
+         (client (apply orig-fn args)))
+    ;; Only act when there are env vars AND the resolved command is
+    ;; devcontainer (i.e. the prefix wrapped it).
+    (when (and env-vars
+              (equal (map-elt client :command) "devcontainer"))
+      (let* ((params (map-elt client :command-params))
+             ;; Build --remote-env flags.  The env-vars list contains
+             ;; entries like "ANTHROPIC_API_KEY=sk-..." and "CLAUDECODE="
+             ;; (empty value means unset in the container).
+             (remote-env-flags
+              (mapcan (lambda (env)
+                        (list "--remote-env" env))
+                      env-vars))
+             ;; Find where the actual wrapped command starts in params.
+             ;; devcontainer exec [options...] <command> [args...]
+             ;; Options always start with "--", so the first non-"--"
+             ;; element that isn't a value for a preceding flag is the
+             ;; command.  Known flags with values: --workspace-folder,
+             ;; --config, --id-label, --container-id.
+             ;; We insert --remote-env flags right before the wrapped
+             ;; command (first element that doesn't start with "--" and
+             ;; isn't a value of the previous flag).
+             (insert-pos
+              (let ((i 0)
+                    (len (length params))
+                    (skip-next nil))
+                (catch 'found
+                  (while (< i len)
+                    (let ((el (nth i params)))
+                      (cond
+                       (skip-next
+                        (setq skip-next nil))
+                       ((string-prefix-p "--" el)
+                        ;; This is a flag; if it's not a boolean flag,
+                        ;; skip its value too.  devcontainer exec flags
+                        ;; that take values:
+                        (when (member el '("--workspace-folder" "--config"
+                                           "--id-label" "--container-id"
+                                           "--docker-path" "--docker-compose-path"
+                                           "--terminal-columns" "--terminal-rows"))
+                          (setq skip-next t)))
+                       (t
+                        (throw 'found i))))
+                    (setq i (1+ i)))
+                  ;; Fallback: insert at end (shouldn't happen)
+                  len))))
+        (map-put! client :command-params
+                  (append (seq-take params insert-pos)
+                          remote-env-flags
+                          (seq-drop params insert-pos)))))
+    client))
+
+(advice-add 'agent-shell--make-acp-client :around
+            #'agent-shell-team--inject-remote-env)
+
 ;;; Customization
 
 (defgroup agent-shell-team nil
