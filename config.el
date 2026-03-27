@@ -166,6 +166,9 @@
     (setenv "HYPRLAND_INSTANCE_SIGNATURE" sig)
     (message "Hyprland signature: %s" sig)))
 
+;; Set DOCKER_HOST so devcontainer CLI (and other tools) use podman
+(setenv "DOCKER_HOST" "unix:///run/user/1000/podman/podman.sock")
+
 ;; Optimize general Emacs responsiveness
 (setq gc-cons-threshold (* 100 1024 1024))  ; 100MB instead of 800KB
 (setq read-process-output-max (* 1024 1024))  ; 1MB instead of 4KB
