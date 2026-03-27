@@ -73,13 +73,16 @@
                              my/agent-shell-pending-worktree-path)))
             (cond
              ;; Tester with devcontainer config → devcontainer exec
-             ((and (equal role "tester") wt-path)
-              (let ((config-path (expand-file-name
-                                  ".devcontainer/tester/devcontainer.json"
-                                  wt-path)))
+             ;; Use wt-path if available (isolated mode), otherwise
+             ;; default-directory (neighbor mode — container provides isolation)
+             ((equal role "tester")
+              (let* ((project-dir (or wt-path default-directory))
+                     (config-path (expand-file-name
+                                   ".devcontainer/tester/devcontainer.json"
+                                   project-dir)))
                 (when (file-exists-p config-path)
                   (list "devcontainer" "exec"
-                        "--workspace-folder" wt-path
+                        "--workspace-folder" project-dir
                         "--config" config-path))))
              ;; Dev with worktree → bwrap sandboxing
              ((and (equal role "dev") wt-path)
@@ -2490,7 +2493,8 @@ Route the status update directly to the lead agent's queue."
 
 (defun agent-shell-team--auto-spawn-agent (session-id role)
   "Auto-spawn a new agent for ROLE in SESSION-ID.
-Devs and testers get isolated mode (worktree).
+Devs get isolated mode (worktree).  Testers get neighbor mode when a
+devcontainer config exists (container provides isolation), otherwise isolated.
 Researchers get neighbor mode.
 Returns the new agent buffer."
   ;; Pin default-directory to the main repo root so git commands in
@@ -2499,7 +2503,20 @@ Returns the new agent buffer."
   (message "[auto-spawn] Starting for role=%s session=%s" role session-id)
   (let* ((default-directory (or (agent-shell-worktree--git-repo-root)
                                 default-directory))
-         (mode (if (member role '("dev" "tester")) "isolated" "neighbor"))
+         (mode (cond
+                ;; Dev always gets a worktree for filesystem isolation
+                ((equal role "dev") "isolated")
+                ;; Tester gets neighbor mode when a devcontainer exists
+                ;; (the container provides isolation; worktree is redundant)
+                ((and (equal role "tester")
+                      (file-exists-p (expand-file-name
+                                      ".devcontainer/tester/devcontainer.json"
+                                      default-directory)))
+                 "neighbor")
+                ;; Tester without devcontainer still needs worktree isolation
+                ((equal role "tester") "isolated")
+                ;; Everything else (researcher, knowledge) → neighbor
+                (t "neighbor")))
          worktree-path worktree-name directory)
     (message "[auto-spawn] Mode for role=%s: %s (default-directory=%s)" role mode default-directory)
     (pcase mode
