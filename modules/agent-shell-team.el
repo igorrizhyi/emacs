@@ -1124,15 +1124,26 @@ Every `.devcontainer/<role>/devcontainer.json` MUST include:
 1. **claude-agent-acp bind-mount** — mount the host ACP binary read-only into the container:
    ```json
    \"mounts\": [
-     \"source=${localEnv:HOME}/.local/bin/claude-agent-acp,target=/usr/local/bin/claude-agent-acp,type=bind,readonly\"
+     \"source=${localEnv:HOME}/.local/bin/claude-agent-acp,target=/usr/local/bin/claude-agent-acp,type=bind,readonly\",
+     \"source=${localEnv:HOME}/.claude,target=/root/.claude,type=bind\"
    ]
    ```
-   Note: agent-shell spawns `claude-agent-acp` (not the Claude CLI). The binary is a self-contained
-   Bun-compiled ELF that serves as both ACP server and Claude CLI. No Node.js needed in the container.
+   Notes:
+   - agent-shell spawns `claude-agent-acp` (not the Claude CLI). The binary is a self-contained
+     Bun-compiled ELF that serves as both ACP server and Claude CLI. No Node.js needed in the container.
+   - `~/.claude` is mounted WRITABLE (no `readonly`) — OAuth token refresh and debug logs need write access.
 
 2. **Host networking** for MCP connectivity:
    ```json
    \"runArgs\": [\"--network=host\", \"--userns=keep-id\"]
+   ```
+   **docker-compose caveat**: For docker-compose-based devcontainers, `runArgs` like
+   `--network=host` do NOT apply. Instead, set `network_mode: host` in the docker-compose
+   service definition (typically `docker-compose.override.yml`):
+   ```yaml
+   services:
+     devcontainer:
+       network_mode: host
    ```
 
 Verify these are present when:
