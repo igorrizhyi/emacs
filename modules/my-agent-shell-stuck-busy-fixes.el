@@ -21,10 +21,24 @@
 ;; ---------------------------------------------------------------------------
 
 (after! agent-shell
+  (defun my/agent-shell--cancel-pending-acp-requests ()
+    "Remove all pending ACP requests for the current session.
+Prevents stale on-success callbacks from firing after interrupt."
+    (when-let* ((state (agent-shell--state))
+                (client (map-elt state :client))
+                (pending (map-elt client :pending-requests)))
+      (let ((count (length pending)))
+        (map-put! client :pending-requests nil)
+        (when (> count 0)
+          (message "[agent-shell-fix] Cleared %d pending ACP request(s)" count)))))
+
   (defun my/agent-shell-interrupt-clear-busy-a (&optional _force)
     "After advice: clear busy state when interrupt sends a cancel notification.
 Only acts when a session is active (the cancel-notification path)."
     (when (map-nested-elt (agent-shell--state) '(:session :id))
+      ;; Clear stale ACP pending requests FIRST to prevent
+      ;; old on-success callbacks from firing after interrupt
+      (my/agent-shell--cancel-pending-acp-requests)
       (agent-shell-heartbeat-stop
        :heartbeat (map-elt (agent-shell--state) :heartbeat))
       (shell-maker-finish-output :config shell-maker--config
