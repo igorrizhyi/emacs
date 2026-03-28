@@ -603,7 +603,9 @@ and stored in `agent-shell-team--emacs-mcp-http-port' and
                               "KNOWLEDGE_LLM_BACKEND=agent"
                               "KNOWLEDGE_SKIP_SYNTHESIS=1"
                               (format "PROJECT_ROOT=%s"
-                                      (directory-file-name default-directory))
+                                      (directory-file-name
+                                       (or (agent-shell-worktree--git-repo-root)
+                                           default-directory)))
                               (format "EMACS_SERVER_NAME=%s" server-name))
                         (when ns
                           (list (format "NAMESPACE=%s" ns)))
@@ -903,13 +905,15 @@ WORKTREE-NAME is the worktree name (for isolated mode)."
         (setq-local agent-shell-mcp-servers
                     (list
                      `((name . "emacs")
-                       (type . "sse")
+                       (type . "http")
                        (url . ,(format "http://127.0.0.1:%d/mcp"
-                                       agent-shell-team--emacs-mcp-http-port)))
+                                       agent-shell-team--emacs-mcp-http-port))
+                       (headers . nil))
                      `((name . "knowledge")
-                       (type . "sse")
+                       (type . "http")
                        (url . ,(format "http://127.0.0.1:%d/mcp"
-                                       agent-shell-team--knowledge-mcp-http-port))))))
+                                       agent-shell-team--knowledge-mcp-http-port))
+                       (headers . nil)))))
       (add-hook 'kill-buffer-query-functions #'agent-shell-team--kill-guard nil t))))
 
 (defun agent-shell-team--unregister-agent (buffer)
@@ -984,8 +988,7 @@ Return (worktree-path . worktree-name)."
   (let* ((repo-root (agent-shell-worktree--git-repo-root))
          (wt-name (agent-shell-worktree--generate-name))
          (wt-path (expand-file-name
-                   (file-name-concat repo-root
-                                     agent-shell-worktree--subdirectory
+                   (file-name-concat (agent-shell--dot-subdir "worktrees")
                                      wt-name))))
     (message "[create-worktree] repo-root=%s wt-name=%s wt-path=%s" repo-root wt-name wt-path)
     (unless repo-root
@@ -2733,7 +2736,9 @@ Returns the new agent buffer."
   (message "[auto-spawn] Starting for role=%s session=%s" role session-id)
   ;; Ensure HTTP MCP servers are running (idempotent)
   (agent-shell-team--start-http-mcp-servers)
-  (let* ((default-directory (or (agent-shell-worktree--git-repo-root)
+  (let* ((default-directory (or (when-let ((lead-buf (agent-shell-team--get-lead session-id)))
+                                 (buffer-local-value 'default-directory lead-buf))
+                                (agent-shell-worktree--git-repo-root)
                                 default-directory))
          (mode (cond
                 ;; Dev always gets a worktree for filesystem isolation

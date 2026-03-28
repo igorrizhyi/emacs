@@ -120,8 +120,15 @@
 ;; Agent shell - AI coding agents in Emacs
 (package! shell-maker)
 (package! acp)
+
+(defvar my/use-local-agent-shell t
+  "When non-nil, use the local fork in modules/agent-shell/.
+Set to nil and run `doom sync' to switch back to upstream.")
+
 (package! agent-shell
-  :recipe (:host github :repo "xenodium/agent-shell"))
+  :recipe (if my/use-local-agent-shell
+              '(:local-repo "modules/agent-shell" :type nil)
+            '(:host github :repo "xenodium/agent-shell")))
 
 ;; Doom's packages are pinned to a specific commit and updated from release to
 ;; ?release. The `unpin!' macro allows you to unpin single packages... (unpin!
