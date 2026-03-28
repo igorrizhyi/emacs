@@ -66,6 +66,8 @@
 
 (declare-function my/team-sidebar--show "my-agent-shell-sidebar")
 (declare-function agent-shell-namespace--format-peers-for-prompt "agent-shell-namespace")
+(declare-function claude-code-mcp-disconnect "claude-code-mcp-connection" (conn-key))
+(declare-function websocket-openp "websocket" (websocket))
 
 ;;; Devcontainer command prefix
 
@@ -2332,6 +2334,21 @@ Only the lead role may call this.  Returns an alist with success/message."
                     "--config" config-path)
       (message "[devcontainer] Container stopped for %s" role))))
 
+(defun agent-shell-team--cleanup-stale-mcp-connections ()
+  "Remove stale entries from `claude-code-mcp-project-connections'.
+Entries whose WebSocket is nil or closed are disconnected and removed.
+This cleans up orphaned timers (reconnect, ping) left behind when an
+agent's CLI process dies."
+  (when (boundp 'claude-code-mcp-project-connections)
+    (let (stale-keys)
+      (maphash (lambda (key info)
+                 (let ((ws (alist-get 'websocket info)))
+                   (unless (and ws (websocket-openp ws))
+                     (push key stale-keys))))
+               claude-code-mcp-project-connections)
+      (dolist (key stale-keys)
+        (claude-code-mcp-disconnect key)))))
+
 (defun agent-shell-team--cleanup-agent (buffer session-id worktree-path)
   "Clean up BUFFER: unregister from session, kill buffer, optionally remove worktree."
   (let ((agent-role (and (buffer-live-p buffer)
@@ -2396,6 +2413,10 @@ Only the lead role may call this.  Returns an alist with success/message."
     (with-current-buffer buffer
       (setq agent-shell-team--cleanup-in-progress t))
     (kill-buffer buffer))
+  ;; Clean up stale MCP connections (the killed agent's CLI dying closes its
+  ;; MCP server, leaving an orphaned entry with reconnect/ping timers).
+  ;; Use a short delay because the WebSocket close may not propagate instantly.
+  (run-at-time 1 nil #'agent-shell-team--cleanup-stale-mcp-connections)
   ;; Stop devcontainer before worktree removal (container bind-mounts the worktree)
   (when (and agent-role worktree-path)
     (agent-shell-team--stop-devcontainer agent-role worktree-path))
@@ -3301,7 +3322,10 @@ Also removes the git worktree if the agent was in isolated mode."
               (message "[agent-shell-team] WARNING: git worktree remove failed for %s, falling back to delete-directory"
                        worktree-path)
               (delete-directory worktree-path t)
-              (shell-command-to-string "git worktree prune 2>&1"))))))))
+              (shell-command-to-string "git worktree prune 2>&1"))))
+        ;; Clean up stale MCP connections after buffer kill.
+        ;; Delay gives the WebSocket close frame time to propagate.
+        (run-at-time 1 nil #'agent-shell-team--cleanup-stale-mcp-connections)))))
 
 (add-hook 'kill-buffer-hook #'agent-shell-team--buffer-kill-hook)
 
