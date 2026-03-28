@@ -2393,6 +2393,9 @@ Only the lead role may call this.  Returns an alist with success/message."
   (when (buffer-live-p buffer)
     (agent-shell-team--mark-agent-idle (buffer-name buffer))
     (agent-shell-team--unregister-agent buffer)
+    ;; Clean up queued messages and interrupt tasks before killing
+    (remhash buffer agent-shell-team--message-queue)
+    (setf (alist-get buffer agent-shell-team--interrupt-queue nil 'remove) nil)
     (with-current-buffer buffer
       (setq agent-shell-team--cleanup-in-progress t))
     (kill-buffer buffer))
@@ -3228,7 +3231,8 @@ Also detects agents stuck in busy state with no ACP output for
       (remhash sid agent-shell-team--pending-for-lead)))
   ;; --- Drain message queues for idle agents (skip busy and initializing) ---
   (maphash (lambda (buffer _messages)
-             (when (eq (agent-shell-team--agent-status buffer) 'idle)
+             (when (and (buffer-live-p buffer)
+                        (eq (agent-shell-team--agent-status buffer) 'idle))
                (agent-shell-team--drain-queue buffer)))
            agent-shell-team--message-queue)
   ;; --- Safety net: deliver interrupt tasks for any idle agents ---
@@ -3258,6 +3262,11 @@ Also detects agents stuck in busy state with no ACP output for
       (format "[drain] Error in try-assign-tasks: %s" (error-message-string err)))))
   ;; Sync idle inhibit with actual agent busy states
   (agent-shell-team--sync-idle-inhibit)
+  ;; Purge stale idle-inhibit entries for dead buffers
+  (maphash (lambda (id _)
+             (unless (and (get-buffer id) (buffer-live-p (get-buffer id)))
+               (remhash id agent-shell-team--idle-inhibit-tracked)))
+           (copy-hash-table agent-shell-team--idle-inhibit-tracked))
   ;; Stop timer if no more queued messages, pending-for-lead, AND no pending tasks
   (when (and (zerop (hash-table-count agent-shell-team--message-queue))
              (zerop (hash-table-count agent-shell-team--pending-for-lead))
