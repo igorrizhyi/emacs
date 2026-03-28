@@ -875,20 +875,20 @@ WORKTREE-NAME is the worktree name (for isolated mode)."
                                    (t path)))))))
             (error
              (message "agent-shell-team: failed to read devcontainer config %s: %s"
-                      config-path (error-message-string err))))
-          ;; Configure HTTP MCP servers for container agents
-          (when (and agent-shell-team--emacs-mcp-http-port
-                     agent-shell-team--knowledge-mcp-http-port)
-            (setq-local agent-shell-mcp-servers
-                        (list
-                         `((name . "emacs")
-                           (type . "http")
-                           (url . ,(format "http://127.0.0.1:%d/mcp"
-                                           agent-shell-team--emacs-mcp-http-port)))
-                         `((name . "knowledge")
-                           (type . "http")
-                           (url . ,(format "http://127.0.0.1:%d/mcp"
-                                           agent-shell-team--knowledge-mcp-http-port))))))))
+                      config-path (error-message-string err))))))
+      ;; Configure HTTP MCP servers for all agents (container or not)
+      (when (and agent-shell-team--emacs-mcp-http-port
+                 agent-shell-team--knowledge-mcp-http-port)
+        (setq-local agent-shell-mcp-servers
+                    (list
+                     `((name . "emacs")
+                       (type . "http")
+                       (url . ,(format "http://127.0.0.1:%d/mcp"
+                                       agent-shell-team--emacs-mcp-http-port)))
+                     `((name . "knowledge")
+                       (type . "http")
+                       (url . ,(format "http://127.0.0.1:%d/mcp"
+                                       agent-shell-team--knowledge-mcp-http-port))))))
       (add-hook 'kill-buffer-query-functions #'agent-shell-team--kill-guard nil t))))
 
 (defun agent-shell-team--unregister-agent (buffer)
