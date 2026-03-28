@@ -139,7 +139,10 @@ flags so that the variables reach the container process as well."
              ;; command (first element that doesn't start with "--" and
              ;; isn't a value of the previous flag).
              (insert-pos
-              (let ((i 0)
+              (let ((i (if (and (> (length params) 0)
+                               (equal (car params) "exec"))
+                          1  ; skip "exec" subcommand
+                        0))
                     (len (length params))
                     (skip-next nil))
                 (catch 'found
@@ -900,13 +903,15 @@ WORKTREE-NAME is the worktree name (for isolated mode)."
         (setq-local agent-shell-mcp-servers
                     (list
                      `((name . "emacs")
-                       (type . "http")
+                       (type . "sse")
                        (url . ,(format "http://127.0.0.1:%d/mcp"
-                                       agent-shell-team--emacs-mcp-http-port)))
+                                       agent-shell-team--emacs-mcp-http-port))
+                       (headers . nil))
                      `((name . "knowledge")
-                       (type . "http")
+                       (type . "sse")
                        (url . ,(format "http://127.0.0.1:%d/mcp"
-                                       agent-shell-team--knowledge-mcp-http-port))))))
+                                       agent-shell-team--knowledge-mcp-http-port))
+                       (headers . nil)))))
       (add-hook 'kill-buffer-query-functions #'agent-shell-team--kill-guard nil t))))
 
 (defun agent-shell-team--unregister-agent (buffer)
