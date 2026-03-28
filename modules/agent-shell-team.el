@@ -43,6 +43,11 @@
 (defvar my/agent-shell-pending-worktree-path)
 (defvar my/agent-shell-pending-role)
 
+;; Defined by Doom Emacs and Emacs server respectively — declared here
+;; to suppress byte-compiler free-variable warnings.
+(defvar doom-user-dir)
+(defvar server-name)
+
 ;; Override: resolve through worktrees to always get the MAIN repo root.
 ;; The upstream version uses --show-toplevel which returns the worktree's own
 ;; root when called from inside a worktree, causing nested worktree creation.
@@ -204,6 +209,26 @@ Roles not listed here fall back to `agent-shell-anthropic-default-model-id'."
   :type '(alist :key-type string :value-type string)
   :group 'agent-shell-team)
 
+(defcustom agent-shell-team-emacs-mcp-server-path
+  (expand-file-name "claude-emacs-mcp-server/dist/index.js" doom-user-dir)
+  "Path to the Emacs MCP server entry point (Node.js).
+Used to start the HTTP transport for container agents."
+  :type 'file
+  :group 'agent-shell-team)
+
+(defcustom agent-shell-team-knowledge-mcp-server-path
+  (expand-file-name "knowledge-mcp-server/server.py" doom-user-dir)
+  "Path to the knowledge MCP server entry point (Python).
+Used to start the HTTP transport for container agents."
+  :type 'file
+  :group 'agent-shell-team)
+
+(defcustom agent-shell-team-knowledge-mcp-python-path
+  (expand-file-name "knowledge-mcp-server/.venv/bin/python3" doom-user-dir)
+  "Path to the Python interpreter for the knowledge MCP server."
+  :type 'file
+  :group 'agent-shell-team)
+
 ;;; Faces for doom-modeline role badges
 
 (defface agent-shell-team-role-lead-face
@@ -266,6 +291,20 @@ Generated eagerly at load time so MCP handlers always have a valid session.")
 (defvar-local agent-shell-team--cleanup-in-progress nil
   "When non-nil, `agent-shell-team--kill-guard' allows the buffer to be killed.
 Set by `agent-shell-team--cleanup-agent' before calling `kill-buffer'.")
+
+;;; HTTP MCP server state
+
+(defvar agent-shell-team--emacs-mcp-http-port nil
+  "Port number of the running Emacs MCP HTTP server, or nil if not started.")
+
+(defvar agent-shell-team--knowledge-mcp-http-port nil
+  "Port number of the running knowledge MCP HTTP server, or nil if not started.")
+
+(defvar agent-shell-team--emacs-mcp-http-process nil
+  "Process object for the Emacs MCP HTTP server.")
+
+(defvar agent-shell-team--knowledge-mcp-http-process nil
+  "Process object for the knowledge MCP HTTP server.")
 
 ;;; Global registry
 
@@ -505,6 +544,100 @@ Called at startup to handle leftover files from crashed Emacs instances."
 
 (add-hook 'kill-emacs-hook #'agent-shell-team--cleanup-idle-inhibit)
 
+;;; HTTP MCP server lifecycle
+
+(defun agent-shell-team--start-http-mcp-servers ()
+  "Start HTTP MCP servers for container agent access.
+Starts the Emacs and knowledge MCP servers with --http flag.
+Each server prints PORT=<number> on stdout; the port is captured
+and stored in `agent-shell-team--emacs-mcp-http-port' and
+`agent-shell-team--knowledge-mcp-http-port'."
+  ;; Start Emacs MCP HTTP server
+  (unless (and agent-shell-team--emacs-mcp-http-process
+               (process-live-p agent-shell-team--emacs-mcp-http-process))
+    (let ((server-script agent-shell-team-emacs-mcp-server-path))
+      (if (not (file-exists-p server-script))
+          (message "agent-shell-team: Emacs MCP server not found at %s" server-script)
+        (setq agent-shell-team--emacs-mcp-http-port nil)
+        (let ((process-environment
+               (append (list (format "EMACS_INSTANCE_ID=%d" (emacs-pid))
+                             (format "EMACS_SERVER_NAME=%s" server-name))
+                       process-environment)))
+          (setq agent-shell-team--emacs-mcp-http-process
+                (make-process
+                 :name "emacs-mcp-http"
+                 :command (list "node" server-script "--http")
+                 :connection-type 'pipe
+                 :noquery t
+                 :filter (lambda (_proc output)
+                           (when (string-match "PORT=\\([0-9]+\\)" output)
+                             (setq agent-shell-team--emacs-mcp-http-port
+                                   (string-to-number (match-string 1 output)))
+                             (message "agent-shell-team: Emacs MCP HTTP server on port %d"
+                                      agent-shell-team--emacs-mcp-http-port))
+                           ;; Log remaining output for debugging
+                           (when (not (string-match-p "^PORT=" output))
+                             (message "emacs-mcp-http: %s" (string-trim output))))
+                 :sentinel (lambda (proc event)
+                             (message "emacs-mcp-http: %s" (string-trim event))
+                             (unless (process-live-p proc)
+                               (setq agent-shell-team--emacs-mcp-http-port nil)))))))))
+  ;; Start knowledge MCP HTTP server
+  (unless (and agent-shell-team--knowledge-mcp-http-process
+               (process-live-p agent-shell-team--knowledge-mcp-http-process))
+    (let ((server-script agent-shell-team-knowledge-mcp-server-path)
+          (python-path agent-shell-team-knowledge-mcp-python-path))
+      (if (not (file-exists-p server-script))
+          (message "agent-shell-team: Knowledge MCP server not found at %s" server-script)
+        (setq agent-shell-team--knowledge-mcp-http-port nil)
+        (let* ((ns (and (boundp 'agent-shell-namespace--config)
+                        agent-shell-namespace--config
+                        (plist-get agent-shell-namespace--config :namespace)))
+               (process-environment
+                (append (list "AGENT_SHELL_TEAM=1"
+                              "KNOWLEDGE_LLM_BACKEND=agent"
+                              "KNOWLEDGE_SKIP_SYNTHESIS=1"
+                              (format "PROJECT_ROOT=%s"
+                                      (directory-file-name default-directory))
+                              (format "EMACS_SERVER_NAME=%s" server-name))
+                        (when ns
+                          (list (format "NAMESPACE=%s" ns)))
+                        process-environment)))
+          (setq agent-shell-team--knowledge-mcp-http-process
+                (make-process
+                 :name "knowledge-mcp-http"
+                 :command (list python-path server-script "--http")
+                 :connection-type 'pipe
+                 :noquery t
+                 :filter (lambda (_proc output)
+                           (when (string-match "PORT=\\([0-9]+\\)" output)
+                             (setq agent-shell-team--knowledge-mcp-http-port
+                                   (string-to-number (match-string 1 output)))
+                             (message "agent-shell-team: Knowledge MCP HTTP server on port %d"
+                                      agent-shell-team--knowledge-mcp-http-port))
+                           ;; Log remaining output for debugging
+                           (when (not (string-match-p "^PORT=" output))
+                             (message "knowledge-mcp-http: %s" (string-trim output))))
+                 :sentinel (lambda (proc event)
+                             (message "knowledge-mcp-http: %s" (string-trim event))
+                             (unless (process-live-p proc)
+                               (setq agent-shell-team--knowledge-mcp-http-port nil))))))))))
+
+(defun agent-shell-team--stop-http-mcp-servers ()
+  "Stop HTTP MCP servers and reset port variables."
+  (when (and agent-shell-team--emacs-mcp-http-process
+             (process-live-p agent-shell-team--emacs-mcp-http-process))
+    (delete-process agent-shell-team--emacs-mcp-http-process))
+  (setq agent-shell-team--emacs-mcp-http-process nil
+        agent-shell-team--emacs-mcp-http-port nil)
+  (when (and agent-shell-team--knowledge-mcp-http-process
+             (process-live-p agent-shell-team--knowledge-mcp-http-process))
+    (delete-process agent-shell-team--knowledge-mcp-http-process))
+  (setq agent-shell-team--knowledge-mcp-http-process nil
+        agent-shell-team--knowledge-mcp-http-port nil))
+
+(add-hook 'kill-emacs-hook #'agent-shell-team--stop-http-mcp-servers)
+
 ;;; Session ID generation
 
 (defun agent-shell-team--generate-session-id ()
@@ -740,7 +873,20 @@ WORKTREE-NAME is the worktree name (for isolated mode)."
                                    (t path)))))))
             (error
              (message "agent-shell-team: failed to read devcontainer config %s: %s"
-                      config-path (error-message-string err))))))
+                      config-path (error-message-string err))))
+          ;; Configure HTTP MCP servers for container agents
+          (when (and agent-shell-team--emacs-mcp-http-port
+                     agent-shell-team--knowledge-mcp-http-port)
+            (setq-local agent-shell-mcp-servers
+                        (list
+                         `((name . "emacs")
+                           (type . "http")
+                           (url . ,(format "http://127.0.0.1:%d/mcp"
+                                           agent-shell-team--emacs-mcp-http-port)))
+                         `((name . "knowledge")
+                           (type . "http")
+                           (url . ,(format "http://127.0.0.1:%d/mcp"
+                                           agent-shell-team--knowledge-mcp-http-port))))))))
       (add-hook 'kill-buffer-query-functions #'agent-shell-team--kill-guard nil t))))
 
 (defun agent-shell-team--unregister-agent (buffer)
@@ -2540,6 +2686,8 @@ Returns the new agent buffer."
   ;; create-worktree always run from the correct context, not from
   ;; an agent's worktree CWD.
   (message "[auto-spawn] Starting for role=%s session=%s" role session-id)
+  ;; Ensure HTTP MCP servers are running (idempotent)
+  (agent-shell-team--start-http-mcp-servers)
   (let* ((default-directory (or (agent-shell-worktree--git-repo-root)
                                 default-directory))
          (mode (cond
@@ -3327,6 +3475,9 @@ When called from an existing team buffer:
 
     (message "agent-shell-team: start called, session=%s role=%s mode=%s"
              (agent-shell-team--short-session-id session-id) role mode)
+
+    ;; Ensure HTTP MCP servers are running for container agents
+    (agent-shell-team--start-http-mcp-servers)
 
     ;; Determine working directory
     (pcase mode
