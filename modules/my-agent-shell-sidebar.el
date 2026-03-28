@@ -883,6 +883,7 @@ Returns t if anything was inserted, nil otherwise."
                     (status (if (and (equal role "lead")
                                      buffer
                                      (get-buffer buffer)
+                                     (fboundp 'my-agent-shell-sprite--pending-p)
                                      (with-current-buffer buffer
                                        (my-agent-shell-sprite--pending-p)))
                                 'pending

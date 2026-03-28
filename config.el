@@ -1338,8 +1338,8 @@ Fedora atomic's /home -> /var/home symlink."
   (require 'my-agent-shell-stuck-busy-fixes)
   ;; TEMPORARY: Debug logging for ACP init pipeline (remove when done)
   (require 'my-agent-shell-debug-logging)
-  ;; Animated sprite icon for lead buffer header
-  (require 'my-agent-shell-sprite)
+  ;; Animated sprite icon — disabled (user doesn't use it)
+  ;; (require 'my-agent-shell-sprite)
   ;; Approval queue UI for lead agent options
   (require 'my-approval-ui)
   ;; Keybinding for quick access
