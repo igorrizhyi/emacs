@@ -206,7 +206,8 @@ without prompting for confirmation."
   :type 'integer
   :group 'agent-shell-team)
 
-(defcustom agent-shell-team-role-models '(("knowledge" . "sonnet"))
+(defcustom agent-shell-team-role-models '(("knowledge" . "sonnet")
+                                          ("researcher" . "sonnet"))
   "Alist mapping role name strings to Claude model ID strings.
 Each entry is (ROLE . MODEL-ID) where MODEL-ID is a short name
 like \"sonnet\", \"haiku\", \"opus\", or \"default\".
