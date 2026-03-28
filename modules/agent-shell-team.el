@@ -623,7 +623,25 @@ and stored in `agent-shell-team--emacs-mcp-http-port' and
                  :sentinel (lambda (proc event)
                              (message "knowledge-mcp-http: %s" (string-trim event))
                              (unless (process-live-p proc)
-                               (setq agent-shell-team--knowledge-mcp-http-port nil))))))))))
+                               (setq agent-shell-team--knowledge-mcp-http-port nil)))))))))
+  ;; Synchronously wait for both ports to be captured.
+  ;; The process filters set the port variables asynchronously; without
+  ;; this wait, callers (register-agent) see nil ports.
+  ;; Only wait if at least one port is still unknown (respects idempotency).
+  (when (or (null agent-shell-team--emacs-mcp-http-port)
+            (null agent-shell-team--knowledge-mcp-http-port))
+    (let ((deadline (+ (float-time) 10)))
+      (while (and (< (float-time) deadline)
+                  (or (null agent-shell-team--emacs-mcp-http-port)
+                      (null agent-shell-team--knowledge-mcp-http-port)))
+        (accept-process-output nil 0.1))
+      (when (or (null agent-shell-team--emacs-mcp-http-port)
+                (null agent-shell-team--knowledge-mcp-http-port))
+        (display-warning 'agent-shell-team
+                         (format "Timed out waiting for HTTP MCP ports (emacs=%s, knowledge=%s)"
+                                 agent-shell-team--emacs-mcp-http-port
+                                 agent-shell-team--knowledge-mcp-http-port)
+                         :warning)))))
 
 (defun agent-shell-team--stop-http-mcp-servers ()
   "Stop HTTP MCP servers and reset port variables."
