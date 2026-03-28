@@ -127,21 +127,48 @@ log(`Log file: ${logFile}`);
 // This ensures isolation between different Claude Code sessions
 const bridge = new EmacsBridge(log);
 let serverPort: number | undefined;
-const server = new McpServer(
-  {
-    name: "claude-code-mcp",
-    version: "0.1.0",
-  },
-  {
-    capabilities: {
-      tools: {},
-      resources: {
-        subscribe: false,
-        listChanged: true, // We'll notify when buffer list changes
-      },
+
+// Track active HTTP sessions (per-session McpServer instances)
+const httpSessions = new Map<string, { server: McpServer; transport: StreamableHTTPServerTransport }>();
+
+// The stdio server (used only in stdio mode)
+let stdioServer: McpServer | null = null;
+
+function createMcpServer(): McpServer {
+  return new McpServer(
+    {
+      name: "claude-code-mcp",
+      version: "0.1.0",
     },
+    {
+      capabilities: {
+        tools: {},
+        resources: {
+          subscribe: false,
+          listChanged: true,
+        },
+      },
+    }
+  );
+}
+
+// Broadcast a notification to all active servers (stdio + HTTP sessions)
+function broadcastServerNotification(method: string, params?: any) {
+  if (stdioServer) {
+    try {
+      stdioServer.server.notification({ method, params });
+    } catch (e) {
+      log(`Failed to send notification via stdio server: ${e}`);
+    }
   }
-);
+  for (const [sessionId, { server }] of httpSessions) {
+    try {
+      server.server.notification({ method, params });
+    } catch (e) {
+      log(`Failed to send notification to HTTP session ${sessionId}: ${e}`);
+    }
+  }
+}
 
 // Set up instance-aware notification handler
 bridge.setNotificationHandler((method: string, params: any) => {
@@ -175,9 +202,7 @@ bridge.setNotificationHandler((method: string, params: any) => {
       log(`Sent resource list changed notification to project ${projectRoot}`);
     } else {
       // Fallback: broadcast to all (old behavior)
-      server.server.notification({
-        method: "notifications/resources/list_changed",
-      });
+      broadcastServerNotification("notifications/resources/list_changed", {});
       log(
         "Sent resource list changed notification to all clients (no context)"
       );
@@ -193,10 +218,7 @@ bridge.setNotificationHandler((method: string, params: any) => {
     log(`Notification sent to project ${projectRoot}: ${method}`);
   } else {
     // No specific context - send to all clients (for compatibility)
-    server.server.notification({
-      method: method,
-      params: params,
-    });
+    broadcastServerNotification(method, params);
     log(
       `Notification sent to all clients: ${method} (no instance/project context)`
     );
@@ -204,7 +226,7 @@ bridge.setNotificationHandler((method: string, params: any) => {
 });
 
 // Register tools with McpServer
-function registerTools() {
+function registerTools(server: McpServer) {
   // getOpenBuffers tool
   server.registerTool(
     "getOpenBuffers",
@@ -653,7 +675,7 @@ function registerTools() {
 }
 
 // Register resources with dynamic listing
-function registerResources() {
+function registerResources(server: McpServer) {
   // Register buffer resources using ResourceTemplate with list callback
   const bufferTemplate = new ResourceTemplate("emacs://buffer/{+path}", {
     list: async () => {
@@ -807,6 +829,14 @@ async function notifyEmacsInstance(port: number, projectRoot: string, instanceId
   }
 }
 
+// Create a fully-configured McpServer with all tools and resources registered
+function createConfiguredServer(): McpServer {
+  const srv = createMcpServer();
+  registerTools(srv);
+  registerResources(srv);
+  return srv;
+}
+
 // Notify Emacs about the port using direct instance targeting
 async function notifyEmacsPort(port: number, targetInstanceId?: number): Promise<void> {
   const projectRoot = normalizeProjectRoot(process.cwd());
@@ -844,103 +874,56 @@ async function main() {
   // Notify Emacs about the assigned port using ps-based instance discovery
   await notifyEmacsPort(port, targetInstanceId);
 
-  // Register tools and resources
-  registerTools();
-  registerResources();
-
-  const PING_NORMAL_INTERVAL = 30000;
-  const PING_RETRY_INITIAL = 5000;
-  const PING_RETRY_MAX = 60000;
-  const PING_FAILURE_TIMEOUT = 5 * 60 * 1000; // 5 minutes
-
-  let pingRetryDelay = 0;
-  let pingFailureSince: number | null = null;
-
-  const ping = async () => {
-    try {
-      await server.server.ping();
-      if (pingFailureSince !== null) {
-        const downtime = Math.round((Date.now() - pingFailureSince) / 1000);
-        log(`Ping recovered for session ${sessionId} after ${downtime}s of failures. Resuming normal ping cycle.`);
-        pingFailureSince = null;
-        pingRetryDelay = 0;
-      } else {
-        log(`Ping successful for session ${sessionId}`);
-      }
-      setTimeout(ping, PING_NORMAL_INTERVAL);
-    } catch (error) {
-      const now = Date.now();
-      if (pingFailureSince === null) {
-        pingFailureSince = now;
-        pingRetryDelay = PING_RETRY_INITIAL;
-        log(`Ping failed for session ${sessionId} — entering suspended state, will retry in ${pingRetryDelay / 1000}s`);
-      } else {
-        const elapsed = now - pingFailureSince;
-        if (elapsed >= PING_FAILURE_TIMEOUT) {
-          log(`Ping has failed for ${Math.round(elapsed / 1000)}s (>${PING_FAILURE_TIMEOUT / 1000}s). CLI appears truly dead. Exiting.`);
-          await cleanup();
-          process.exit(1);
-        }
-        pingRetryDelay = Math.min(pingRetryDelay * 2, PING_RETRY_MAX);
-        log(`Ping still failing for session ${sessionId} (${Math.round(elapsed / 1000)}s elapsed). Retrying in ${pingRetryDelay / 1000}s...`);
-      }
-      setTimeout(ping, pingRetryDelay);
-    }
-  };
-  server.server.oninitialized = () => {
-    log(
-      `MCP server initialized for session ${sessionId}, Emacs bridge on port ${port}`
-    );
-    log(`Starting ping monitoring for session ${sessionId}`);
-    ping();
-    const cap = server.server.getClientCapabilities();
-    log(`Client capabilities: ${JSON.stringify(cap)}`);
-  };
-
   // Determine transport mode
   const useHttp = process.argv.includes("--http") || process.env.MCP_TRANSPORT === "http";
 
   if (useHttp) {
     const httpPort = process.env.EMACS_MCP_PORT ? parseInt(process.env.EMACS_MCP_PORT, 10) : 0;
 
-    // Create a map to track transports by session ID
-    const transports = new Map<string, StreamableHTTPServerTransport>();
-
     const httpServer = createServer(async (req, res) => {
       const url = new URL(req.url || "/", `http://127.0.0.1`);
 
       if (url.pathname === "/mcp") {
         // Check for existing session
-        const sessionId = req.headers["mcp-session-id"] as string | undefined;
-        let transport: StreamableHTTPServerTransport;
+        const existingSessionId = req.headers["mcp-session-id"] as string | undefined;
 
-        if (sessionId && transports.has(sessionId)) {
-          transport = transports.get(sessionId)!;
-        } else if (!sessionId && req.method === "POST") {
-          // New session - create transport
-          transport = new StreamableHTTPServerTransport({
+        if (existingSessionId && httpSessions.has(existingSessionId)) {
+          // Existing session - reuse transport
+          const session = httpSessions.get(existingSessionId)!;
+          await session.transport.handleRequest(req, res);
+        } else if (!existingSessionId && req.method === "POST") {
+          // New session - create per-session McpServer + transport
+          const sessionServer = createConfiguredServer();
+          const transport = new StreamableHTTPServerTransport({
             sessionIdGenerator: () => crypto.randomUUID(),
             onsessioninitialized: (newSessionId) => {
-              transports.set(newSessionId, transport);
+              httpSessions.set(newSessionId, { server: sessionServer, transport });
               log(`HTTP session initialized: ${newSessionId}`);
             },
           });
 
+          // Connect first, then set onclose to avoid Protocol.connect() overwriting it
+          await sessionServer.connect(transport);
+
+          // Compose our cleanup with Protocol's onclose handler
+          const protocolOnclose = transport.onclose;
           transport.onclose = () => {
             if (transport.sessionId) {
-              transports.delete(transport.sessionId);
+              httpSessions.delete(transport.sessionId);
               log(`HTTP session closed: ${transport.sessionId}`);
+            }
+            // Call Protocol's original onclose handler
+            if (protocolOnclose) {
+              protocolOnclose();
             }
           };
 
-          await server.connect(transport);
+          await transport.handleRequest(req, res);
         } else {
           res.writeHead(400, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ error: "Bad Request: No valid session" }));
           return;
         }
-
-        await transport.handleRequest(req, res);
       } else {
         res.writeHead(404, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: "Not Found" }));
@@ -960,9 +943,60 @@ async function main() {
 
     log(`MCP server (HTTP) running for session ${sessionId}, Emacs bridge on port ${port}`);
   } else {
-    // Default: stdio transport
+    // Default: stdio transport — single McpServer instance
+    stdioServer = createConfiguredServer();
+
+    const PING_NORMAL_INTERVAL = 30000;
+    const PING_RETRY_INITIAL = 5000;
+    const PING_RETRY_MAX = 60000;
+    const PING_FAILURE_TIMEOUT = 5 * 60 * 1000; // 5 minutes
+
+    let pingRetryDelay = 0;
+    let pingFailureSince: number | null = null;
+
+    const ping = async () => {
+      try {
+        await stdioServer!.server.ping();
+        if (pingFailureSince !== null) {
+          const downtime = Math.round((Date.now() - pingFailureSince) / 1000);
+          log(`Ping recovered for session ${sessionId} after ${downtime}s of failures. Resuming normal ping cycle.`);
+          pingFailureSince = null;
+          pingRetryDelay = 0;
+        } else {
+          log(`Ping successful for session ${sessionId}`);
+        }
+        setTimeout(ping, PING_NORMAL_INTERVAL);
+      } catch (error) {
+        const now = Date.now();
+        if (pingFailureSince === null) {
+          pingFailureSince = now;
+          pingRetryDelay = PING_RETRY_INITIAL;
+          log(`Ping failed for session ${sessionId} — entering suspended state, will retry in ${pingRetryDelay / 1000}s`);
+        } else {
+          const elapsed = now - pingFailureSince;
+          if (elapsed >= PING_FAILURE_TIMEOUT) {
+            log(`Ping has failed for ${Math.round(elapsed / 1000)}s (>${PING_FAILURE_TIMEOUT / 1000}s). CLI appears truly dead. Exiting.`);
+            await cleanup();
+            process.exit(1);
+          }
+          pingRetryDelay = Math.min(pingRetryDelay * 2, PING_RETRY_MAX);
+          log(`Ping still failing for session ${sessionId} (${Math.round(elapsed / 1000)}s elapsed). Retrying in ${pingRetryDelay / 1000}s...`);
+        }
+        setTimeout(ping, pingRetryDelay);
+      }
+    };
+    stdioServer.server.oninitialized = () => {
+      log(
+        `MCP server initialized for session ${sessionId}, Emacs bridge on port ${port}`
+      );
+      log(`Starting ping monitoring for session ${sessionId}`);
+      ping();
+      const cap = stdioServer!.server.getClientCapabilities();
+      log(`Client capabilities: ${JSON.stringify(cap)}`);
+    };
+
     const transport = new StdioServerTransport();
-    await server.connect(transport);
+    await stdioServer.connect(transport);
     log(`MCP server (stdio) running for session ${sessionId}, Emacs bridge on port ${port}`);
   }
 }
@@ -991,7 +1025,7 @@ process.on("uncaughtException", (error) => {
 process.on("unhandledRejection", (reason, promise) => {
   log(`Unhandled rejection at: ${promise}, reason: ${reason}`);
   log(`Project root: ${normalizeProjectRoot(process.cwd())}`);
-  cleanup().then(() => process.exit(1));
+  // Log only — do NOT exit. A single session's rejection must not kill the shared server.
 });
 
 async function cleanup() {
