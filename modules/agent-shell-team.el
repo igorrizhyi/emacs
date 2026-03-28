@@ -905,13 +905,11 @@ WORKTREE-NAME is the worktree name (for isolated mode)."
                      `((name . "emacs")
                        (type . "sse")
                        (url . ,(format "http://127.0.0.1:%d/mcp"
-                                       agent-shell-team--emacs-mcp-http-port))
-                       (headers . nil))
+                                       agent-shell-team--emacs-mcp-http-port)))
                      `((name . "knowledge")
                        (type . "sse")
                        (url . ,(format "http://127.0.0.1:%d/mcp"
-                                       agent-shell-team--knowledge-mcp-http-port))
-                       (headers . nil)))))
+                                       agent-shell-team--knowledge-mcp-http-port))))))
       (add-hook 'kill-buffer-query-functions #'agent-shell-team--kill-guard nil t))))
 
 (defun agent-shell-team--unregister-agent (buffer)
