@@ -440,6 +440,76 @@ async def main():
         await server.run(read, write, server.create_initialization_options())
 
 
+async def main_http():
+    """Run the MCP server over Streamable HTTP transport."""
+    import socket
+    import uvicorn
+    from starlette.applications import Starlette
+    from starlette.routing import Mount
+    from mcp.server.streamable_http import StreamableHTTPServerTransport
+
+    port = int(os.environ.get("KNOWLEDGE_MCP_PORT", "0"))
+
+    transport = StreamableHTTPServerTransport(
+        mcp_session_id=None,
+        is_json_response_enabled=False,
+    )
+
+    # Mount at /mcp for conventional path; the trailing-slash redirect
+    # (307 /mcp -> /mcp/) is harmless — HTTP clients follow it automatically.
+    app = Starlette(
+        routes=[
+            Mount("/mcp", app=transport.handle_request),
+        ],
+    )
+
+    # If port is 0, bind a socket to get a random available port, then
+    # pass the pre-bound socket to uvicorn so the port is known upfront.
+    if port == 0:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    else:
+        sock = None
+
+    # Print port for parent process (Emacs) to read
+    print(f"PORT={port}", flush=True)
+    logger.info("Knowledge MCP HTTP server starting on 127.0.0.1:%d", port)
+
+    async with transport.connect() as (read, write):
+        # Run MCP server and uvicorn concurrently
+        async def run_mcp():
+            await server.run(read, write, server.create_initialization_options())
+
+        async def run_uvicorn():
+            config = uvicorn.Config(
+                app,
+                host="127.0.0.1",
+                port=port,
+                log_level="warning",
+            )
+            uvi_server = uvicorn.Server(config)
+            if sock is not None:
+                sock.listen(128)
+                await uvi_server.serve(sockets=[sock])
+            else:
+                await uvi_server.serve()
+
+        async with asyncio.TaskGroup() as tg:
+            tg.create_task(run_mcp())
+            tg.create_task(run_uvicorn())
+
+
 if __name__ == "__main__":
+    import argparse
     import asyncio
-    asyncio.run(main())
+
+    parser = argparse.ArgumentParser(description="Knowledge MCP Server")
+    parser.add_argument("--http", action="store_true", help="Use Streamable HTTP transport instead of stdio")
+    args = parser.parse_args()
+
+    if args.http:
+        asyncio.run(main_http())
+    else:
+        asyncio.run(main())
