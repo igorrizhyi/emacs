@@ -583,6 +583,20 @@ Does NOT attempt OAuth refresh — the CLI handles token refresh."
 (defvar-local my/team-sidebar--last-render-hash nil
   "Content hash from last render, used to skip redundant timer re-renders.")
 
+(defvar my/team-sidebar--file-exists-cache (make-hash-table :test #'equal)
+  "TTL cache for `file-exists-p' results on report paths.
+Keys are file paths, values are (RESULT . TIMESTAMP).")
+
+(defun my/team-sidebar--file-exists-cached-p (path)
+  "Return cached `file-exists-p' result for PATH with 30s TTL."
+  (let ((entry (gethash path my/team-sidebar--file-exists-cache)))
+    (if (and entry (< (- (float-time) (cdr entry)) 30))
+        (car entry)
+      (let ((result (file-exists-p path)))
+        (puthash path (cons result (float-time))
+                 my/team-sidebar--file-exists-cache)
+        result))))
+
 (defvar-local my/team-sidebar--last-preview-buf nil
   "Last buffer displayed by preview, to skip redundant `display-buffer' calls.")
 
@@ -733,7 +747,7 @@ Returns a string hash; cheap to compute."
                                      (expand-file-name
                                       (format ".agent-shell/reports/%s/" sid)
                                       root))))
-                  (when (file-exists-p report-path)
+                  (when (my/team-sidebar--file-exists-cached-p report-path)
                     (setq task (plist-put (copy-sequence task) :report-path report-path))))
                 (let ((indicator (my/team-sidebar--task-status-indicator task))
                       (label (my/team-sidebar--task-label task))
@@ -869,6 +883,7 @@ Returns t if anything was inserted, nil otherwise."
                     (status (if (and (equal role "lead")
                                      buffer
                                      (get-buffer buffer)
+                                     (fboundp 'my-agent-shell-sprite--pending-p)
                                      (with-current-buffer buffer
                                        (my-agent-shell-sprite--pending-p)))
                                 'pending
@@ -1309,6 +1324,7 @@ Cancels any pending preview timer before scheduling a new one."
   (setq my/team-sidebar--history-cache nil
         my/team-sidebar--history-cache-time 0
         my/team-sidebar--manually-collapsed nil)
+  (clrhash my/team-sidebar--file-exists-cache)
   (my/team-sidebar--render))
 
 (defun my/team-sidebar-toggle-section ()
@@ -1523,7 +1539,7 @@ collapse into one toggle."
 ;;; ---- Refresh Timer ----------------------------------------------------------
 
 (defun my/team-sidebar--ensure-timer ()
-  "Ensure the 2-second refresh timer is running."
+  "Ensure the 5-second refresh timer is running."
   (let ((buf (get-buffer my/team-sidebar-buffer-name)))
     (when (and buf (buffer-live-p buf))
       (with-current-buffer buf
@@ -1531,7 +1547,7 @@ collapse into one toggle."
                      (timerp my/team-sidebar--refresh-timer)
                      (memq my/team-sidebar--refresh-timer timer-list))
           (setq my/team-sidebar--refresh-timer
-                (run-with-timer 2 2 #'my/team-sidebar--timer-refresh)))))))
+                (run-with-timer 5 5 #'my/team-sidebar--timer-refresh)))))))
 
 (defun my/team-sidebar--stop-timer ()
   "Stop the refresh timer."
