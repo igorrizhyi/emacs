@@ -5,6 +5,8 @@ import {
   ResourceTemplate,
 } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { createServer } from "http";
 import { EmacsBridge } from "./emacs-bridge.js";
 import {
   sendNotificationInputSchema,
@@ -94,6 +96,7 @@ import {
   bufferResourceHandler,
   projectResourceHandler,
 } from "./resources/index.js";
+import * as crypto from "crypto";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
@@ -894,12 +897,74 @@ async function main() {
     log(`Client capabilities: ${JSON.stringify(cap)}`);
   };
 
-  // For MCP, use stdio transport
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-  log(
-    `MCP server running for session ${sessionId}, Emacs bridge on port ${port}`
-  );
+  // Determine transport mode
+  const useHttp = process.argv.includes("--http") || process.env.MCP_TRANSPORT === "http";
+
+  if (useHttp) {
+    const httpPort = process.env.EMACS_MCP_PORT ? parseInt(process.env.EMACS_MCP_PORT, 10) : 0;
+
+    // Create a map to track transports by session ID
+    const transports = new Map<string, StreamableHTTPServerTransport>();
+
+    const httpServer = createServer(async (req, res) => {
+      const url = new URL(req.url || "/", `http://127.0.0.1`);
+
+      if (url.pathname === "/mcp") {
+        // Check for existing session
+        const sessionId = req.headers["mcp-session-id"] as string | undefined;
+        let transport: StreamableHTTPServerTransport;
+
+        if (sessionId && transports.has(sessionId)) {
+          transport = transports.get(sessionId)!;
+        } else if (!sessionId && req.method === "POST") {
+          // New session - create transport
+          transport = new StreamableHTTPServerTransport({
+            sessionIdGenerator: () => crypto.randomUUID(),
+            onsessioninitialized: (newSessionId) => {
+              transports.set(newSessionId, transport);
+              log(`HTTP session initialized: ${newSessionId}`);
+            },
+          });
+
+          transport.onclose = () => {
+            if (transport.sessionId) {
+              transports.delete(transport.sessionId);
+              log(`HTTP session closed: ${transport.sessionId}`);
+            }
+          };
+
+          await server.connect(transport);
+        } else {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Bad Request: No valid session" }));
+          return;
+        }
+
+        await transport.handleRequest(req, res);
+      } else {
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Not Found" }));
+      }
+    });
+
+    await new Promise<void>((resolve) => {
+      httpServer.listen(httpPort, "127.0.0.1", () => {
+        const addr = httpServer.address();
+        const actualPort = typeof addr === "object" && addr ? addr.port : httpPort;
+        // Print port to stdout for callers to discover
+        process.stdout.write(`PORT=${actualPort}\n`);
+        log(`HTTP transport listening on 127.0.0.1:${actualPort}`);
+        resolve();
+      });
+    });
+
+    log(`MCP server (HTTP) running for session ${sessionId}, Emacs bridge on port ${port}`);
+  } else {
+    // Default: stdio transport
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
+    log(`MCP server (stdio) running for session ${sessionId}, Emacs bridge on port ${port}`);
+  }
 }
 
 // Cleanup on exit
