@@ -25,6 +25,8 @@
 (defvar my-layout--claude-started nil
   "Track whether Claude Code has been started.")
 
+(declare-function agent-shell-team--start-http-mcp-servers "agent-shell-team")
+
 (defun my-layout--init-state ()
   "Initialize window layout state tracking."
   (dolist (split my-layout--splits)
@@ -334,6 +336,7 @@ If already in the lead buffer, toggle back to the previous buffer."
      ;; No lead session — start one
      (t
       (require 'agent-shell-team)
+      (agent-shell-team--start-http-mcp-servers)
       (let* ((context-buffer (current-buffer))
              (session-id agent-shell-team--session-id)
              (buf (agent-shell-team--start-agent session-id "lead" "neighbor" default-directory nil nil)))
