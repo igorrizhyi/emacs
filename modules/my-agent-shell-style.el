@@ -348,5 +348,26 @@ Schedules an idle timer to apply TEAM/CTX faces after streaming pauses."
   (advice-add 'shell-maker--output-filter
               :after #'my/agent-shell--style-after-output))
 
+;; --- Table styling (markdown-overlays) ---
+
+(defface my/agent-shell-table-row-face
+  `((t :family "SF Mono" :weight semibold :height 0.75
+       :background "#1a1006" :extend t))
+  "Face for table rows in agent-shell markdown output.")
+
+(defface my/agent-shell-table-zebra-face
+  `((t :family "SF Mono" :weight semibold :height 0.75
+       :background "#251708" :extend t))
+  "Face for alternating (zebra) table rows in agent-shell markdown output.")
+
+(defface my/agent-shell-table-header-face
+  `((t :family "SF Mono" :weight bold :height 0.75
+       :background "#372413" :extend t))
+  "Face for table header rows in agent-shell markdown output.")
+
+(setq markdown-overlays--table-row-face 'my/agent-shell-table-row-face)
+(setq markdown-overlays--table-zebra-face 'my/agent-shell-table-zebra-face)
+(setq markdown-overlays--table-header-face 'my/agent-shell-table-header-face)
+
 (provide 'my-agent-shell-style)
 ;;; my-agent-shell-style.el ends here
