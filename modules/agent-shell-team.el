@@ -359,6 +359,9 @@ taskUpdate can resolve the correct session without relying on the global.")
 Tasks with :priority \"interrupt\" that target a busy agent are stored
 here and delivered immediately when the agent finishes its current turn.")
 
+(defvar agent-shell-team--agent-current-task (make-hash-table :test 'eq)
+  "Map of buffer -> current task message string for interrupt context recovery.")
+
 ;;; Idle inhibit (hypridle / screensaver)
 
 (defvar agent-shell-team--idle-inhibit-cookie nil
@@ -2457,6 +2460,7 @@ agent's CLI process dies."
     (agent-shell-team--unregister-agent buffer)
     ;; Clean up queued messages and interrupt tasks before killing
     (remhash buffer agent-shell-team--message-queue)
+    (remhash buffer agent-shell-team--agent-current-task)
     (setf (alist-get buffer agent-shell-team--interrupt-queue nil 'remove) nil)
     (with-current-buffer buffer
       (setq agent-shell-team--cleanup-in-progress t))
@@ -2853,22 +2857,10 @@ reached its max agent count, auto-spawn a new agent."
                                        '(busy initializing))
                                  (gethash (alist-get 'buffer targeted-agent) just-assigned)))
                         (if (equal (plist-get task :priority) "interrupt")
-                            ;; Interrupt priority: queue for immediate delivery when agent goes idle
-                            (let* ((buf (alist-get 'buffer targeted-agent))
-                                   (existing (assq buf agent-shell-team--interrupt-queue)))
-                              (if existing
-                                  (setcdr existing (append (cdr existing) (list task)))
-                                (push (cons buf (list task)) agent-shell-team--interrupt-queue))
-                              (agent-shell-team--log session-id
-                               (format "[assign] Interrupt task %s queued for %s (agent busy)"
-                                       (plist-get task :request-id) (buffer-name buf)))
-                              ;; Notify lead that interrupt is queued
-                              (when-let ((lead-buf (agent-shell-team--get-lead session-id)))
-                                (agent-shell-team--queue-message
-                                 session-id lead-buf
-                                 (list :from "system" :title "Interrupt Queued"
-                                       :message (format "[request-id: %s] queued for immediate delivery when agent finishes current turn"
-                                                        (plist-get task :request-id))))))
+                            ;; Interrupt priority: cancel current turn and deliver immediately
+                            (let ((buf (alist-get 'buffer targeted-agent)))
+                              (agent-shell-team--interrupt-agent buf targeted-agent task session-id)
+                              (puthash buf t just-assigned))
                           ;; Normal priority: re-queue as before
                           (push task remaining)))
                        ;; Targeted assignment: agent gone — clear target for reassignment
@@ -3067,6 +3059,38 @@ SESSION-ID identifies the team.  GROUP contains the completed request IDs."
                  (not (null proc)) busy pm pmax (and text (length text)) result)
         result))))
 
+(defun agent-shell-team--interrupt-agent (buffer agent task session-id)
+  "Cancel BUFFER's current turn and deliver TASK immediately.
+If the agent is not actually busy (race condition), assign directly.
+When busy, cancels the current turn and queues for delivery via
+`agent-shell-team--deliver-interrupt-tasks' (fires on finish-output).
+The task message is enriched with previous-task context."
+  (when (buffer-live-p buffer)
+    (if (not (agent-shell-team--buffer-busy-p buffer))
+        ;; Agent is idle (race condition) — assign directly
+        (agent-shell-team--assign-task-to-agent agent task)
+      ;; Agent is busy — enrich message with context, cancel, and queue
+      (let ((previous-task (gethash buffer agent-shell-team--agent-current-task)))
+        (plist-put task :message
+          (format "[URGENT INTERRUPT from lead]\n%s%s\n\nAfter addressing this, resume your previous work."
+                  (if previous-task
+                      (format "You were working on: %s\n\n" previous-task)
+                    "")
+                  (plist-get task :message)))
+        ;; Queue for delivery — deliver-interrupt-tasks fires via
+        ;; after-advice on shell-maker-finish-output
+        (let ((existing (assq buffer agent-shell-team--interrupt-queue)))
+          (if existing
+              (setcdr existing (append (cdr existing) (list task)))
+            (push (cons buffer (list task)) agent-shell-team--interrupt-queue)))
+        ;; Cancel the current turn — after-advice clears busy state
+        ;; and triggers shell-maker-finish-output → deliver-interrupt-tasks
+        (with-current-buffer buffer
+          (agent-shell-interrupt t))
+        (agent-shell-team--log session-id
+         (format "[assign] Interrupt task %s: cancelled %s for immediate delivery"
+                 (plist-get task :request-id) (buffer-name buffer)))))))
+
 (defun agent-shell-team--prompt-agent (buffer message)
   "Deliver MESSAGE to BUFFER's agent via shell-maker-submit.
 This goes through shell-maker's normal prompt flow so that:
@@ -3085,6 +3109,7 @@ If the user has uncommitted text at the prompt, defer delivery by re-queuing."
              (list :from "system" :title "Deferred" :message message))
             (agent-shell-team--start-drain-timer))
         (message "prompt-guard: DELIVERING to %s" (buffer-name buffer))
+        (puthash buffer message agent-shell-team--agent-current-task)
         (with-current-buffer buffer
           (shell-maker-submit :input (format "«TEAM»\n%s\n«/TEAM»" message)))))))
 
@@ -3361,6 +3386,7 @@ Also removes the git worktree if the agent was in isolated mode."
         (agent-shell-team--unregister-agent (current-buffer))
         ;; Clean up any queued messages, interrupt tasks, and activity tracking for this buffer
         (remhash (current-buffer) agent-shell-team--message-queue)
+        (remhash (current-buffer) agent-shell-team--agent-current-task)
         (setf (alist-get (current-buffer) agent-shell-team--interrupt-queue nil 'remove) nil)
         (remhash (current-buffer) agent-shell-team--last-activity)
         (remhash (current-buffer) agent-shell-team--last-compact-time)
