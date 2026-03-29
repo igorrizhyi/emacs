@@ -37,6 +37,7 @@
 (require 'agent-shell)
 (require 'agent-shell-worktree)
 (require 'agent-shell-emacs-mcp)
+(require 'agent-shell-google)
 
 ;; Defined in config.el — declared here so the byte-compiler treats it as
 ;; dynamically-scoped when let-bound in `agent-shell-team--start-agent'.
@@ -213,6 +214,14 @@ Each entry is (ROLE . MODEL-ID) where MODEL-ID is a short name
 like \"sonnet\", \"haiku\", \"opus\", or \"default\".
 Roles not listed here fall back to `agent-shell-anthropic-default-model-id'."
   :type '(alist :key-type string :value-type string)
+  :group 'agent-shell-team)
+
+(defcustom agent-shell-team-role-backends
+  '(("researcher" . gemini))
+  "Alist mapping roles to CLI backends.
+Supported backends: `claude' (default), `gemini'.
+Roles not listed here fall back to claude."
+  :type '(alist :key-type string :value-type symbol)
   :group 'agent-shell-team)
 
 (defcustom agent-shell-team-emacs-mcp-server-path
@@ -3497,6 +3506,15 @@ WORKTREE-PATH and WORKTREE-NAME are for isolated mode."
 
 (defun agent-shell-team--make-config (session-id role buffer-name)
   "Create agent-shell config for a team agent.
+SESSION-ID, ROLE, and BUFFER-NAME customize the config.
+Dispatches to the appropriate backend based on `agent-shell-team-role-backends'."
+  (let ((backend (or (cdr (assoc role agent-shell-team-role-backends)) 'claude)))
+    (pcase backend
+      ('gemini (agent-shell-team--make-gemini-config session-id role buffer-name))
+      (_ (agent-shell-team--make-claude-config session-id role buffer-name)))))
+
+(defun agent-shell-team--make-claude-config (session-id role buffer-name)
+  "Create Claude-backend agent-shell config for a team agent.
 SESSION-ID, ROLE, and BUFFER-NAME customize the config."
   (agent-shell-emacs-mcp--ensure-mcp-ready)
   (agent-shell-make-agent-config
@@ -3514,6 +3532,107 @@ SESSION-ID, ROLE, and BUFFER-NAME customize the config."
    :default-session-mode-id (lambda () (or (and agent-shell-team-skip-permissions "bypassPermissions")
                                             agent-shell-anthropic-default-session-mode-id))
    :install-instructions "See https://github.com/zed-industries/claude-code-acp for installation."))
+
+(defun agent-shell-team--make-gemini-config (session-id role buffer-name)
+  "Create Gemini-backend agent-shell config for a team agent.
+SESSION-ID, ROLE, and BUFFER-NAME customize the config."
+  (agent-shell-emacs-mcp--ensure-mcp-ready)
+  (agent-shell-team--ensure-gemini-mcp-config)
+  (agent-shell-make-agent-config
+   :identifier 'gemini-cli
+   :mode-line-name (format "Team:%s:%s" (agent-shell-team--short-session-id session-id) role)
+   :buffer-name buffer-name
+   :shell-prompt "Gemini> "
+   :shell-prompt-regexp "Gemini> "
+   :icon-name "gemini.png"
+   :welcome-function #'agent-shell-google--gemini-welcome-message
+   :needs-authentication (not (map-elt agent-shell-google-authentication :none))
+   :authenticate-request-maker (lambda ()
+                                 (cond ((map-elt agent-shell-google-authentication :api-key)
+                                        (acp-make-authenticate-request
+                                         :method-id "gemini-api-key"
+                                         :method '((id . "gemini-api-key")
+                                                   (name . "Use Gemini API key")
+                                                   (description . "Requires setting the `GEMINI_API_KEY` environment variable"))))
+                                       ((map-elt agent-shell-google-authentication :vertex-ai)
+                                        (acp-make-authenticate-request
+                                         :method-id "vertex-ai"
+                                         :method '((id . "vertex-ai")
+                                                   (name . "Vertex AI")
+                                                   (description . ""))))
+                                       ((map-elt agent-shell-google-authentication :none)
+                                        nil)
+                                       (t
+                                        (acp-make-authenticate-request
+                                         :method-id "oauth-personal"
+                                         :method '((id . "oauth-personal")
+                                                   (name . "Log in with Google")
+                                                   (description . ""))))))
+   :client-maker (lambda (buffer)
+                   (agent-shell-team--make-gemini-client buffer))
+   :default-model-id (let ((model (or (cdr (assoc role agent-shell-team-role-models))
+                                      "gemini-2.5-flash")))
+                       (lambda () model))
+   :default-session-mode-id (lambda () (or (and agent-shell-team-skip-permissions "bypassPermissions")
+                                            nil))
+   :install-instructions "See https://github.com/google-gemini/gemini-cli for installation."))
+
+(defun agent-shell-team--make-gemini-client (buffer)
+  "Create ACP client for Gemini CLI with MCP environment vars in BUFFER."
+  (let ((agent-shell-google-gemini-environment
+         (append (list (format "EMACS_INSTANCE_ID=%d" (emacs-pid))
+                       (format "EMACS_SERVER_NAME=%s" server-name)
+                       (format "PROJECT_ROOT=%s" (directory-file-name default-directory)))
+                 (when-let* ((ns (and (boundp 'agent-shell-namespace--config)
+                                      agent-shell-namespace--config
+                                      (plist-get agent-shell-namespace--config :namespace))))
+                   (list (format "NAMESPACE=%s" ns)))
+                 agent-shell-google-gemini-environment)))
+    (agent-shell-google-make-gemini-client :buffer buffer)))
+
+(defun agent-shell-team--ensure-gemini-mcp-config ()
+  "Generate .gemini/settings.json with MCP server config.
+Gemini CLI reads MCP config from a project-level .gemini/settings.json
+rather than a CLI flag.  This writes the file with the current HTTP
+MCP server ports.  Also ensures .gemini/ is in .gitignore."
+  (agent-shell-team--start-http-mcp-servers)
+  (let ((gemini-dir (expand-file-name ".gemini" default-directory))
+        (settings-file (expand-file-name ".gemini/settings.json" default-directory))
+        (gitignore-file (expand-file-name ".gitignore" default-directory)))
+    ;; Create .gemini directory
+    (unless (file-directory-p gemini-dir)
+      (make-directory gemini-dir t))
+    ;; Write settings.json with MCP server URLs
+    (let ((config (json-encode
+                   `((mcpServers
+                      . ,(append
+                          (when agent-shell-team--emacs-mcp-http-port
+                            `((emacs . ((httpUrl . ,(format "http://localhost:%d/sse"
+                                                            agent-shell-team--emacs-mcp-http-port))
+                                        (trust . t)))))
+                          (when agent-shell-team--knowledge-mcp-http-port
+                            `((knowledge . ((httpUrl . ,(format "http://localhost:%d/sse"
+                                                                agent-shell-team--knowledge-mcp-http-port))
+                                            (trust . t)))))))))))
+      (with-temp-file settings-file
+        (insert config)
+        (json-pretty-print-buffer)))
+    ;; Ensure .gemini/ is in .gitignore
+    (when (file-exists-p (expand-file-name ".git" default-directory))
+      (let ((gitignore-entry ".gemini/"))
+        (if (file-exists-p gitignore-file)
+            (let ((content (with-temp-buffer
+                             (insert-file-contents gitignore-file)
+                             (buffer-string))))
+              (unless (string-match-p (regexp-quote gitignore-entry) content)
+                (with-temp-buffer
+                  (insert-file-contents gitignore-file)
+                  (goto-char (point-max))
+                  (unless (bolp) (insert "\n"))
+                  (insert gitignore-entry "\n")
+                  (write-region (point-min) (point-max) gitignore-file))))
+          (with-temp-file gitignore-file
+            (insert gitignore-entry "\n")))))))
 
 ;;; Team membership announcements
 
