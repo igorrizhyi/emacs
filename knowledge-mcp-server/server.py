@@ -425,6 +425,14 @@ async def _handle_submit_llm_result(arguments: dict) -> list[types.TextContent]:
 
             entity_count = await merge_and_upsert_entities(graph, entities, chunk_map)
             rel_count = await merge_and_upsert_relationships(graph, relationships)
+
+            # Trigger feature extraction for the processed chunks.
+            # In agent backend this queues feature_extraction tasks; it
+            # no-ops if no theme entities were touched.
+            feature_chunks = [{"id": cid} for cid in chunk_ids]
+            if feature_chunks:
+                await extract_features_for_batch(graph, feature_chunks)
+
             cleanup_task(PROJECT_ROOT, task_id)
             return [types.TextContent(
                 type="text",
