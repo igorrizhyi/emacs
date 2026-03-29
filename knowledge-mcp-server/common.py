@@ -151,6 +151,7 @@ def init_schema(graph):
     for stmt in (
         "CREATE INDEX FOR (e:Entity) ON (e.type)",
         "CREATE INDEX FOR (e:Entity) ON (e.name)",
+        "CREATE INDEX IF NOT EXISTS FOR (f:Feature) ON (f.name)",
     ):
         try:
             graph.query(stmt)
@@ -1152,12 +1153,17 @@ def query_knowledge(graph, question: str, role: str = None, top_k: int = 8, mode
         conf = confidence.get(chunk["id"])
         proj_label_prefix = f"{chunk['project']}: " if chunk.get("project") else ""
         proj_label_from = f"from {chunk['project']}: " if chunk.get("project") else ""
-        if chunk.get('_expanded'):
-            context_parts.append(f"[expanded: {proj_label_from}{chunk['source']} / {chunk['section']}] {chunk['content']}")
+        source = chunk.get("source", "")
+        if source.startswith("flow:"):
+            # Scenario/flow chunks get a distinctive label so the LLM knows
+            # it's reading behavioral descriptions, not implementation notes
+            context_parts.append(f"[flow: {source} / {chunk['section']}] {chunk['content']}")
+        elif chunk.get('_expanded'):
+            context_parts.append(f"[expanded: {proj_label_from}{source} / {chunk['section']}] {chunk['content']}")
         elif conf:
-            context_parts.append(f"[{conf}: {proj_label_prefix}{chunk['source']} / {chunk['section']}] {chunk['content']}")
+            context_parts.append(f"[{conf}: {proj_label_prefix}{source} / {chunk['section']}] {chunk['content']}")
         else:
-            context_parts.append(f"[{proj_label_from}{chunk['source']} / {chunk['section']}] {chunk['content']}")
+            context_parts.append(f"[{proj_label_from}{source} / {chunk['section']}] {chunk['content']}")
 
     context_text = "\n\n".join(context_parts)
 

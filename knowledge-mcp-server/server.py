@@ -26,6 +26,7 @@ from entities import (
     merge_and_upsert_entities, merge_and_upsert_relationships,
     parse_extraction_output,
 )
+from features import extract_features_for_batch, parse_feature_extraction_output, upsert_feature
 from llm_queue import (
     queue_llm_task, get_llm_task as _get_llm_task,
     submit_llm_result as _submit_llm_result, cleanup_task,
@@ -367,6 +368,9 @@ async def _store_knowledge_bg(content: str, source: str, roles: list[str]):
             # Entity extraction
             entity_count, rel_count = await extract_and_store_entities(graph, chunks)
 
+            # Feature/Scenario extraction (runs after entities are in the graph)
+            await extract_features_for_batch(graph, chunks)
+
             supersede_info = f", {len(supersessions)} supersession(s)" if supersessions else ""
             entity_info = f", {entity_count} entities, {rel_count} relationships" if entity_count else ""
             proj_info = f" project={project}" if project else ""
@@ -425,6 +429,47 @@ async def _handle_submit_llm_result(arguments: dict) -> list[types.TextContent]:
             return [types.TextContent(
                 type="text",
                 text=f"Entity extraction task {task_id} completed: {entity_count} entities, {rel_count} relationships.",
+            )]
+
+        elif task_type == "feature_extraction":
+            graph = await _ensure_graph()
+            feature_data = parse_feature_extraction_output(result_text)
+            if not feature_data:
+                cleanup_task(PROJECT_ROOT, task_id)
+                return [types.TextContent(
+                    type="text",
+                    text=f"Feature extraction task {task_id}: failed to parse LLM output.",
+                )]
+
+            # Dedup: check fuzzy name match and entity overlap
+            from features import (
+                find_existing_feature, find_feature_by_entity_overlap,
+                _fetch_existing_features, _fetch_feature_entities,
+            )
+            existing_features = _fetch_existing_features(graph)
+            matched = find_existing_feature(feature_data["name"], existing_features)
+            if matched:
+                feature_data["name"] = matched
+            else:
+                proposed_entities = set(feature_data.get("implements", []))
+                existing_feature_entities = _fetch_feature_entities(graph)
+                overlap_match = find_feature_by_entity_overlap(
+                    proposed_entities, existing_feature_entities
+                )
+                if overlap_match:
+                    feature_data["name"] = overlap_match
+
+            # Validate depends_on references
+            feature_data["depends_on"] = [
+                d for d in feature_data.get("depends_on", [])
+                if d in existing_features or find_existing_feature(d, existing_features)
+            ]
+
+            await upsert_feature(graph, feature_data)
+            cleanup_task(PROJECT_ROOT, task_id)
+            return [types.TextContent(
+                type="text",
+                text=f"Feature extraction task {task_id} completed: feature '{feature_data['name']}' with {len(feature_data.get('scenarios', []))} scenarios.",
             )]
 
         else:
