@@ -3570,8 +3570,10 @@ SESSION-ID, ROLE, and BUFFER-NAME customize the config."
                                                    (description . ""))))))
    :client-maker (lambda (buffer)
                    (agent-shell-team--make-gemini-client buffer))
-   :default-model-id (let ((model (or (cdr (assoc role agent-shell-team-role-models))
-                                      "gemini-2.5-flash")))
+   :default-model-id (let* ((role-model (cdr (assoc role agent-shell-team-role-models)))
+                            (model (if (and role-model (string-prefix-p "gemini" role-model))
+                                       role-model
+                                     "gemini-2.5-flash")))
                        (lambda () model))
    :default-session-mode-id (lambda () (or (and agent-shell-team-skip-permissions "bypassPermissions")
                                             nil))
