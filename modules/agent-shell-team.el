@@ -3458,6 +3458,15 @@ WORKTREE-PATH and WORKTREE-NAME are for isolated mode."
                    ;; Immediately try assigning queued tasks to this newly ready agent
                    ;; instead of waiting up to 3s for the next drain timer tick
                    (agent-shell-team--try-assign-tasks)))
+      ;; Subscribe to turn-complete so queued messages drain immediately
+      ;; (~100ms delay) instead of waiting for the 3s polling timer
+      (agent-shell-subscribe-to
+       :shell-buffer buffer
+       :event 'turn-complete
+       :on-event (lambda (_event)
+                   (when (buffer-live-p buffer)
+                     (run-at-time 0.1 nil
+                                  #'agent-shell-team--drain-queue buffer))))
       buffer)))
 
 (defun agent-shell-team--make-config (session-id role buffer-name)
