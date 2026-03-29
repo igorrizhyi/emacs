@@ -11,8 +11,9 @@ from difflib import SequenceMatcher
 
 import litellm
 
-from common import CLASSIFICATION_MODEL, chunk_id
+from common import CLASSIFICATION_MODEL, KNOWLEDGE_LLM_BACKEND, PROJECT_ROOT, chunk_id
 from entities import normalize_entity_name
+from llm_queue import queue_llm_task
 
 logger = logging.getLogger(__name__)
 
@@ -390,6 +391,7 @@ async def extract_features_for_batch(graph, chunks: list[dict]):
     entity_list = [f"{r[0]} ({r[1]})" for r in all_entities.result_set]
 
     # 4. For each theme, gather context and extract Feature
+    queued = 0
     for theme in themes:
         context_chunks = gather_feature_context(graph, theme["name"])
         if len(context_chunks) < 2:
@@ -409,7 +411,17 @@ async def extract_features_for_batch(graph, chunks: list[dict]):
             chunk_contents=chunk_contents,
         )
 
-        # 5. LLM call
+        # 5. LLM call (or queue for agent backend)
+        if KNOWLEDGE_LLM_BACKEND == "agent":
+            queue_llm_task(
+                PROJECT_ROOT,
+                "feature_extraction",
+                prompt,
+                context={"theme": theme["name"]},
+            )
+            queued += 1
+            continue
+
         resp = await litellm.acompletion(
             model=CLASSIFICATION_MODEL, messages=[{"role": "user", "content": prompt}]
         )
@@ -447,4 +459,7 @@ async def extract_features_for_batch(graph, chunks: list[dict]):
         if feature_data["name"] not in existing_features:
             existing_features.append(feature_data["name"])
 
-    logger.info("Feature extraction: processed %d themes", len(themes))
+    if queued:
+        logger.info("Feature extraction: processed %d themes (%d queued for agent)", len(themes), queued)
+    else:
+        logger.info("Feature extraction: processed %d themes", len(themes))
