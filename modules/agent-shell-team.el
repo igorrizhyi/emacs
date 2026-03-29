@@ -3573,10 +3573,9 @@ SESSION-ID, ROLE, and BUFFER-NAME customize the config."
    :default-model-id (let* ((role-model (cdr (assoc role agent-shell-team-role-models)))
                             (model (if (and role-model (string-prefix-p "gemini" role-model))
                                        role-model
-                                     "gemini-2.5-flash")))
+                                     "gemini-2.5-pro")))
                        (lambda () model))
-   :default-session-mode-id (lambda () (or (and agent-shell-team-skip-permissions "bypassPermissions")
-                                            nil))
+   :default-session-mode-id (lambda () nil)
    :install-instructions "See https://github.com/google-gemini/gemini-cli for installation."))
 
 (defun agent-shell-team--make-gemini-client (buffer)
