@@ -175,6 +175,53 @@
   "Cache TTL in seconds. Slightly less than the 30s timer interval
 to avoid edge cases where cache expires between check and next tick.")
 
+;;; ---- Gemini Quota State (Global) -------------------------------------------
+
+(defvar my/team-sidebar--gemini-quota-buckets nil
+  "List of alists from Gemini retrieveUserQuota response.
+Each alist has keys: modelId, remainingAmount, remainingFraction, resetTime.")
+
+(defvar my/team-sidebar--gemini-quota-error nil
+  "String error message if Gemini quota fetch failed, or nil.")
+
+(defvar my/team-sidebar--gemini-quota-fetching nil
+  "Non-nil when a Gemini quota fetch is in progress.")
+
+(defvar my/team-sidebar--gemini-quota-fetch-started nil
+  "Timestamp when current Gemini fetch began, for timeout detection.")
+
+(defvar my/team-sidebar--gemini-quota-retry-p nil
+  "Non-nil when a Gemini 401 retry is in progress.")
+
+(defvar my/team-sidebar--gemini-quota-last-token nil
+  "The access token used for the most recent Gemini quota fetch.")
+
+(defvar my/team-sidebar--gemini-project-id nil
+  "Cached Gemini cloudaicompanionProject ID from loadCodeAssist.")
+
+(defvar my/team-sidebar--gemini-consecutive-failures 0
+  "Count of consecutive Gemini quota fetch failures for exponential backoff.")
+
+(defvar my/team-sidebar--gemini-backoff-until 0
+  "Unix timestamp until which Gemini quota fetches are skipped (backoff).")
+
+(defconst my/team-sidebar--gemini-quota-cache-file
+  (expand-file-name "~/.gemini/.quota-cache.json")
+  "Shared cache file for Gemini quota data across Emacs instances.")
+
+(defconst my/team-sidebar--gemini-creds-file
+  (expand-file-name "~/.gemini/oauth_creds.json")
+  "Gemini OAuth credentials file.")
+
+(defconst my/team-sidebar--gemini-api-base
+  "https://cloudcode-pa.googleapis.com/v1internal"
+  "Gemini Code Assist API base URL.")
+
+;;; ---- Quota Provider Tab State ---------------------------------------------
+
+(defvar my/team-sidebar--quota-provider 'claude
+  "Active quota provider: `claude' or `gemini'.")
+
 ;;; ---- Foreign Agents State (Namespace) --------------------------------------
 
 (defvar my/team-sidebar--foreign-agents nil
@@ -228,6 +275,296 @@ UTIL-5H, UTIL-7D are floats; RESET-5H, RESET-7D are unix timestamps."
     (when r7 (setq my/team-sidebar--quota-7d-reset r7))
     (setq my/team-sidebar--quota-error nil))
   (my/team-sidebar--render))
+
+;;; ---- Gemini Quota Cache ----------------------------------------------------
+
+(defun my/team-sidebar--gemini-cache-read ()
+  "Read Gemini quota cache file. Return alist if fresh, nil if stale/missing."
+  (condition-case nil
+      (when (file-exists-p my/team-sidebar--gemini-quota-cache-file)
+        (let* ((json-object-type 'alist)
+               (json-key-type 'symbol)
+               (data (json-read-file my/team-sidebar--gemini-quota-cache-file))
+               (fetched-at (alist-get 'fetched_at data)))
+          (when (and fetched-at
+                     (< (- (float-time) fetched-at)
+                        my/team-sidebar--quota-cache-ttl))
+            data)))
+    (error nil)))
+
+(defun my/team-sidebar--gemini-cache-write (buckets project-id)
+  "Write Gemini quota BUCKETS and PROJECT-ID to shared cache file atomically."
+  (condition-case nil
+      (let* ((dir (file-name-directory my/team-sidebar--gemini-quota-cache-file))
+             (data (json-encode
+                    `((fetched_at . ,(float-time))
+                      (project_id . ,project-id)
+                      (buckets . ,(vconcat buckets)))))
+             (tmp-file (concat my/team-sidebar--gemini-quota-cache-file ".tmp")))
+        (unless (file-directory-p dir)
+          (make-directory dir t))
+        (with-temp-file tmp-file
+          (insert data))
+        (rename-file tmp-file my/team-sidebar--gemini-quota-cache-file t))
+    (error nil)))
+
+(defun my/team-sidebar--gemini-apply-cache (data)
+  "Apply cached Gemini quota DATA (alist) to state and re-render."
+  (let ((buckets (alist-get 'buckets data))
+        (pid (alist-get 'project_id data)))
+    (when buckets
+      (setq my/team-sidebar--gemini-quota-buckets
+            (append buckets nil)))  ; convert vector to list
+    (when pid
+      (setq my/team-sidebar--gemini-project-id pid))
+    (setq my/team-sidebar--gemini-quota-error nil))
+  (my/team-sidebar--render))
+
+;;; ---- Gemini Circuit Breaker -----------------------------------------------
+
+(defun my/team-sidebar--gemini-record-failure ()
+  "Increment Gemini failure counter and set backoff timer."
+  (cl-incf my/team-sidebar--gemini-consecutive-failures)
+  (setq my/team-sidebar--gemini-backoff-until
+        (+ (float-time)
+           (* 30 (expt 2 (min my/team-sidebar--gemini-consecutive-failures 5))))))
+
+(defun my/team-sidebar--gemini-reset-backoff ()
+  "Reset Gemini circuit breaker state."
+  (setq my/team-sidebar--gemini-consecutive-failures 0
+        my/team-sidebar--gemini-backoff-until 0))
+
+;;; ---- Gemini Token & Project ID --------------------------------------------
+
+(defun my/team-sidebar--gemini-read-token ()
+  "Read OAuth access token from Gemini credentials file.
+Returns the token string or nil if unavailable/expired."
+  (condition-case nil
+      (when (file-exists-p my/team-sidebar--gemini-creds-file)
+        (let* ((json-object-type 'alist)
+               (json-key-type 'symbol)
+               (creds (json-read-file my/team-sidebar--gemini-creds-file))
+               (token (alist-get 'access_token creds))
+               (expiry (alist-get 'expiry_date creds)))
+          (if (and expiry (numberp expiry)
+                   (> (+ (float-time) 300) (/ expiry 1000.0)))
+              (progn
+                (setq my/team-sidebar--gemini-quota-error "Gemini token expired")
+                nil)
+            token)))
+    (error nil)))
+
+(defun my/team-sidebar--gemini-fetch-project-id (token callback)
+  "Fetch Gemini project ID via loadCodeAssist using TOKEN.
+Calls CALLBACK with the project ID string, or nil on failure."
+  (condition-case _err
+      (let ((url-request-method "POST")
+            (url-request-extra-headers
+             `(("Authorization" . ,(concat "Bearer " token))
+               ("Content-Type" . "application/json")))
+            (url-request-data
+             (encode-coding-string
+              (json-encode
+               `((metadata . ((ideType . "IDE_UNSPECIFIED")
+                              (platform . "PLATFORM_UNSPECIFIED")
+                              (pluginType . "GEMINI")))))
+              'utf-8)))
+        (url-retrieve
+         (concat my/team-sidebar--gemini-api-base ":loadCodeAssist")
+         (lambda (status)
+           (let ((project-id nil))
+             (unless (plist-get status :error)
+               (condition-case nil
+                   (progn
+                     (goto-char (point-min))
+                     (re-search-forward "\n\n")
+                     (let* ((json-object-type 'alist)
+                            (json-key-type 'symbol)
+                            (resp (json-read)))
+                       (setq project-id
+                             (alist-get 'cloudaicompanionProject resp))))
+                 (error nil)))
+             (when (buffer-live-p (current-buffer))
+               (url-mark-buffer-as-dead (current-buffer)))
+             (funcall callback project-id)))
+         nil t t))
+    (error
+     (funcall callback nil))))
+
+;;; ---- Gemini Quota API -----------------------------------------------------
+
+(cl-defun my/team-sidebar--gemini-quota-fetch ()
+  "Fetch Gemini quota utilization, using shared file cache when fresh.
+Follows the same pattern as Claude's quota fetch."
+  (unless (my/team-sidebar--network-available-p)
+    (cl-return-from my/team-sidebar--gemini-quota-fetch nil))
+  ;; Circuit breaker
+  (when (> my/team-sidebar--gemini-backoff-until (float-time))
+    (let ((remaining (ceiling (- my/team-sidebar--gemini-backoff-until (float-time)))))
+      (let ((token (my/team-sidebar--gemini-read-token)))
+        (if (and token my/team-sidebar--gemini-quota-last-token
+                 (not (equal token my/team-sidebar--gemini-quota-last-token)))
+            (my/team-sidebar--gemini-reset-backoff)
+          (setq my/team-sidebar--gemini-quota-error
+                (format "Gemini backoff (%dm%ds)"
+                        (/ remaining 60) (mod remaining 60)))
+          (cl-return-from my/team-sidebar--gemini-quota-fetch nil)))))
+  ;; Timeout recovery
+  (when (and my/team-sidebar--gemini-quota-fetching
+             my/team-sidebar--gemini-quota-fetch-started
+             (> (- (float-time) my/team-sidebar--gemini-quota-fetch-started) 15))
+    (setq my/team-sidebar--gemini-quota-fetching nil
+          my/team-sidebar--gemini-quota-fetch-started nil
+          my/team-sidebar--gemini-quota-retry-p nil
+          my/team-sidebar--gemini-quota-error "Gemini fetch timeout")
+    (my/team-sidebar--gemini-record-failure))
+  (when my/team-sidebar--gemini-quota-fetching
+    (cl-return-from my/team-sidebar--gemini-quota-fetch nil))
+  ;; Check shared cache first
+  (let ((cached (my/team-sidebar--gemini-cache-read)))
+    (when cached
+      (my/team-sidebar--gemini-apply-cache cached)
+      (cl-return-from my/team-sidebar--gemini-quota-fetch nil)))
+  ;; Cache miss — fetch
+  (let ((token (my/team-sidebar--gemini-read-token)))
+    (when token
+      (when (and my/team-sidebar--gemini-quota-last-token
+                 (not (equal token my/team-sidebar--gemini-quota-last-token)))
+        (my/team-sidebar--gemini-reset-backoff))
+      (if my/team-sidebar--gemini-project-id
+          ;; Have project ID — fetch quota directly
+          (my/team-sidebar--gemini-do-fetch token my/team-sidebar--gemini-project-id)
+        ;; Need project ID first
+        (setq my/team-sidebar--gemini-quota-fetching t
+              my/team-sidebar--gemini-quota-fetch-started (float-time)
+              my/team-sidebar--gemini-quota-last-token token)
+        (my/team-sidebar--gemini-fetch-project-id
+         token
+         (lambda (project-id)
+           (if project-id
+               (progn
+                 (setq my/team-sidebar--gemini-project-id project-id)
+                 (setq my/team-sidebar--gemini-quota-fetching nil)
+                 (my/team-sidebar--gemini-do-fetch token project-id))
+             (setq my/team-sidebar--gemini-quota-fetching nil
+                   my/team-sidebar--gemini-quota-fetch-started nil
+                   my/team-sidebar--gemini-quota-error "No Gemini project")
+             (my/team-sidebar--gemini-record-failure)
+             (my/team-sidebar--render))))))))
+
+(defun my/team-sidebar--gemini-do-fetch (token project-id)
+  "Perform the actual Gemini quota API call using TOKEN and PROJECT-ID."
+  (condition-case err
+      (progn
+        (setq my/team-sidebar--gemini-quota-fetching t
+              my/team-sidebar--gemini-quota-fetch-started (float-time)
+              my/team-sidebar--gemini-quota-last-token token)
+        (let ((url-request-method "POST")
+              (url-request-extra-headers
+               `(("Authorization" . ,(concat "Bearer " token))
+                 ("Content-Type" . "application/json")))
+              (url-request-data
+               (encode-coding-string
+                (json-encode `((project . ,project-id)))
+                'utf-8)))
+          (url-retrieve
+           (concat my/team-sidebar--gemini-api-base ":retrieveUserQuota")
+           #'my/team-sidebar--gemini-quota-callback
+           nil t t)))
+    (error
+     (setq my/team-sidebar--gemini-quota-fetching nil
+           my/team-sidebar--gemini-quota-fetch-started nil
+           my/team-sidebar--gemini-quota-error (format "%s" err))
+     (my/team-sidebar--gemini-record-failure))))
+
+(cl-defun my/team-sidebar--gemini-quota-callback (status)
+  "Handle Gemini quota API response."
+  (condition-case nil
+      (if (plist-get status :error)
+          (let ((http-status (my/team-sidebar--quota-get-http-status)))
+            (if (eq http-status 401)
+                (when (my/team-sidebar--gemini-handle-401)
+                  (cl-return-from my/team-sidebar--gemini-quota-callback nil))
+              (setq my/team-sidebar--gemini-quota-fetching nil
+                    my/team-sidebar--gemini-quota-fetch-started nil
+                    my/team-sidebar--gemini-quota-error "Gemini API error")
+              (my/team-sidebar--gemini-record-failure)))
+        ;; Check for 401 even without :error
+        (let ((http-status (my/team-sidebar--quota-get-http-status)))
+          (when (eq http-status 401)
+            (when (my/team-sidebar--gemini-handle-401)
+              (cl-return-from my/team-sidebar--gemini-quota-callback nil))))
+        ;; Parse JSON response body
+        (goto-char (point-min))
+        (re-search-forward "\n\n")
+        (let* ((json-object-type 'alist)
+               (json-key-type 'symbol)
+               (resp (json-read))
+               (buckets (alist-get 'buckets resp)))
+          (setq my/team-sidebar--gemini-quota-buckets
+                (when buckets (append buckets nil))
+                my/team-sidebar--gemini-quota-fetching nil
+                my/team-sidebar--gemini-quota-fetch-started nil
+                my/team-sidebar--gemini-quota-error nil
+                my/team-sidebar--gemini-quota-retry-p nil)
+          (my/team-sidebar--gemini-reset-backoff)
+          (my/team-sidebar--gemini-cache-write
+           my/team-sidebar--gemini-quota-buckets
+           my/team-sidebar--gemini-project-id)))
+    (error (setq my/team-sidebar--gemini-quota-fetching nil
+                 my/team-sidebar--gemini-quota-fetch-started nil
+                 my/team-sidebar--gemini-quota-error "Gemini parse error")
+           (my/team-sidebar--gemini-record-failure)))
+  (when (buffer-live-p (current-buffer))
+    (url-mark-buffer-as-dead (current-buffer)))
+  (my/team-sidebar--render))
+
+(defun my/team-sidebar--gemini-handle-401 ()
+  "Handle 401 from Gemini API. Returns non-nil if a retry was initiated."
+  (when (buffer-live-p (current-buffer))
+    (kill-buffer (current-buffer)))
+  (if my/team-sidebar--gemini-quota-retry-p
+      (progn
+        (setq my/team-sidebar--gemini-quota-fetching nil
+              my/team-sidebar--gemini-quota-fetch-started nil
+              my/team-sidebar--gemini-quota-retry-p nil
+              my/team-sidebar--gemini-quota-error "Gemini auth failed after retry")
+        (my/team-sidebar--gemini-record-failure)
+        ;; Invalidate project ID — may need to re-fetch
+        (setq my/team-sidebar--gemini-project-id nil)
+        (my/team-sidebar--render)
+        nil)
+    (setq my/team-sidebar--gemini-quota-retry-p t)
+    (let ((fresh-token (my/team-sidebar--gemini-read-token)))
+      (if (and fresh-token
+               (not (equal fresh-token my/team-sidebar--gemini-quota-last-token)))
+          (if my/team-sidebar--gemini-project-id
+              (progn (my/team-sidebar--gemini-do-fetch
+                      fresh-token my/team-sidebar--gemini-project-id)
+                     t)
+            ;; Re-fetch project ID too
+            (setq my/team-sidebar--gemini-quota-last-token fresh-token)
+            (my/team-sidebar--gemini-fetch-project-id
+             fresh-token
+             (lambda (pid)
+               (if pid
+                   (progn
+                     (setq my/team-sidebar--gemini-project-id pid)
+                     (my/team-sidebar--gemini-do-fetch fresh-token pid))
+                 (setq my/team-sidebar--gemini-quota-fetching nil
+                       my/team-sidebar--gemini-quota-fetch-started nil
+                       my/team-sidebar--gemini-quota-retry-p nil
+                       my/team-sidebar--gemini-quota-error "Gemini auth failed")
+                 (my/team-sidebar--gemini-record-failure)
+                 (my/team-sidebar--render))))
+            t)
+        (setq my/team-sidebar--gemini-quota-fetching nil
+              my/team-sidebar--gemini-quota-fetch-started nil
+              my/team-sidebar--gemini-quota-retry-p nil
+              my/team-sidebar--gemini-quota-error "Gemini auth failed (awaiting refresh)")
+        (my/team-sidebar--gemini-record-failure)
+        (my/team-sidebar--render)
+        nil))))
 
 ;;; ---- Circuit Breaker -------------------------------------------------------
 
@@ -477,16 +814,43 @@ Does NOT attempt OAuth refresh — the CLI handles token refresh."
     (when reset-str
       (insert "    " (propertize reset-str 'face 'my/team-sidebar-quota-reset) "\n"))))
 
-(defun my/team-sidebar--insert-quota ()
-  "Insert quota progress bars at point. Returns non-nil if anything was inserted."
+(defun my/team-sidebar--gemini-model-short-name (model-id)
+  "Return a short display name for Gemini MODEL-ID.
+E.g., \"models/gemini-2.5-pro\" → \"2.5-pro\"."
   (cond
-   ;; Error state
+   ((null model-id) "?")
+   ((string-match "gemini-\\(.+\\)" model-id)
+    (match-string 1 model-id))
+   (t model-id)))
+
+(defun my/team-sidebar--gemini-parse-reset-time (reset-time-str)
+  "Parse Gemini RESET-TIME-STR (ISO 8601) to unix timestamp."
+  (when (and reset-time-str (stringp reset-time-str) (> (length reset-time-str) 0))
+    (condition-case nil
+        (float-time (date-to-time reset-time-str))
+      (error nil))))
+
+(defun my/team-sidebar--insert-quota-tabs ()
+  "Insert provider tab header. Returns non-nil."
+  (let* ((tab-start (point))
+         (claude-label (if (eq my/team-sidebar--quota-provider 'claude)
+                           (propertize "[Claude]" 'face '(:weight bold :foreground "#ffb000"))
+                         (propertize " Claude " 'face 'font-lock-comment-face)))
+         (gemini-label (if (eq my/team-sidebar--quota-provider 'gemini)
+                           (propertize "[Gemini]" 'face '(:weight bold :foreground "#ffb000"))
+                         (propertize " Gemini " 'face 'font-lock-comment-face))))
+    (insert claude-label " " gemini-label "\n")
+    (put-text-property tab-start (1- (point)) 'my/sidebar-quota-tab t)
+    t))
+
+(defun my/team-sidebar--insert-claude-quota ()
+  "Insert Claude quota bars. Returns non-nil if anything was inserted."
+  (cond
    (my/team-sidebar--quota-error
     (insert " " (propertize my/team-sidebar--quota-error
                              'face 'my/team-sidebar-quota-reset)
             "\n\n")
     t)
-   ;; Data available
    ((and my/team-sidebar--quota-5h-util my/team-sidebar--quota-7d-util)
     (my/team-sidebar--quota-render-bar
      "5h" my/team-sidebar--quota-5h-util my/team-sidebar--quota-5h-reset)
@@ -494,10 +858,45 @@ Does NOT attempt OAuth refresh — the CLI handles token refresh."
      "7d" my/team-sidebar--quota-7d-util my/team-sidebar--quota-7d-reset)
     (insert "\n")
     t)
-   ;; Loading
    (t
     (insert " " (propertize "Loading quota..." 'face 'my/team-sidebar-quota-reset) "\n\n")
     t)))
+
+(defun my/team-sidebar--insert-gemini-quota ()
+  "Insert Gemini quota bars. Returns non-nil if anything was inserted."
+  (cond
+   (my/team-sidebar--gemini-quota-error
+    (insert " " (propertize my/team-sidebar--gemini-quota-error
+                             'face 'my/team-sidebar-quota-reset)
+            "\n\n")
+    t)
+   (my/team-sidebar--gemini-quota-buckets
+    (dolist (bucket my/team-sidebar--gemini-quota-buckets)
+      (let* ((model-id (alist-get 'modelId bucket))
+             (label (my/team-sidebar--gemini-model-short-name model-id))
+             (remaining-frac (alist-get 'remainingFraction bucket))
+             (util (if (and remaining-frac (numberp remaining-frac))
+                       (- 1.0 remaining-frac)
+                     0.0))
+             (reset-str (alist-get 'resetTime bucket))
+             (reset-ts (my/team-sidebar--gemini-parse-reset-time reset-str)))
+        (my/team-sidebar--quota-render-bar
+         (truncate-string-to-width label 3 nil nil "") util reset-ts)))
+    (insert "\n")
+    t)
+   ((not (file-exists-p my/team-sidebar--gemini-creds-file))
+    (insert " " (propertize "No Gemini creds" 'face 'my/team-sidebar-quota-reset) "\n\n")
+    t)
+   (t
+    (insert " " (propertize "Loading Gemini..." 'face 'my/team-sidebar-quota-reset) "\n\n")
+    t)))
+
+(defun my/team-sidebar--insert-quota ()
+  "Insert quota progress bars at point. Returns non-nil if anything was inserted."
+  (my/team-sidebar--insert-quota-tabs)
+  (if (eq my/team-sidebar--quota-provider 'claude)
+      (my/team-sidebar--insert-claude-quota)
+    (my/team-sidebar--insert-gemini-quota)))
 
 ;;; ---- Context Usage Bar -----------------------------------------------------
 
@@ -548,6 +947,7 @@ Does NOT attempt OAuth refresh — the CLI handles token refresh."
                (timerp my/team-sidebar--quota-timer)
                (memq my/team-sidebar--quota-timer timer-list))
     (my/team-sidebar--quota-fetch)  ; immediate first fetch
+    (my/team-sidebar--gemini-quota-fetch)
     (setq my/team-sidebar--quota-timer
           (run-with-timer 30 30 #'my/team-sidebar--quota-timer-tick))))
 
@@ -560,7 +960,9 @@ Does NOT attempt OAuth refresh — the CLI handles token refresh."
 (defun my/team-sidebar--quota-timer-tick ()
   "Timer callback: fetch quota if sidebar buffer exists."
   (if (get-buffer my/team-sidebar-buffer-name)
-      (my/team-sidebar--quota-fetch)
+      (progn
+        (my/team-sidebar--quota-fetch)
+        (my/team-sidebar--gemini-quota-fetch))
     (my/team-sidebar--quota-stop-timer)))
 
 ;;; ---- Sidebar Buffer Local State ---------------------------------------------
@@ -608,7 +1010,7 @@ Keys are file paths, values are (RESULT . TIMESTAMP).")
 Returns a string hash; cheap to compute."
   (secure-hash
    'md5
-   (format "%S|%S|%S|%S|%S|%S"
+   (format "%S|%S|%S|%S|%S|%S|%S"
            (when (and (boundp 'agent-shell-team--sessions)
                       (hash-table-p agent-shell-team--sessions))
              (let (entries)
@@ -629,6 +1031,9 @@ Returns a string hash; cheap to compute."
            (list my/team-sidebar--quota-5h-util
                  my/team-sidebar--quota-7d-util
                  my/team-sidebar--quota-error)
+           (list my/team-sidebar--gemini-quota-buckets
+                 my/team-sidebar--gemini-quota-error
+                 my/team-sidebar--quota-provider)
            my/team-sidebar--foreign-agents
            (when (boundp 'agent-shell-team--task-groups)
              agent-shell-team--task-groups)
@@ -1056,7 +1461,8 @@ Returns t if anything was inserted, nil otherwise."
     (or (get-text-property pos 'my/sidebar-agent)
         (get-text-property pos 'my/sidebar-task)
         (get-text-property pos 'my/sidebar-session)
-        (get-text-property pos 'my/sidebar-pending-task))))
+        (get-text-property pos 'my/sidebar-pending-task)
+        (get-text-property pos 'my/sidebar-quota-tab))))
 
 (defun my/team-sidebar--render-task-preview (task)
   "Render TASK plist into a formatted preview buffer."
@@ -1195,6 +1601,11 @@ Cancels any pending preview timer before scheduling a new one."
   "Switch to agent buffer, open task report, or toggle session at point."
   (interactive)
   (cond
+   ;; Quota tab header — toggle provider
+   ((get-text-property (line-beginning-position) 'my/sidebar-quota-tab)
+    (setq my/team-sidebar--quota-provider
+          (if (eq my/team-sidebar--quota-provider 'claude) 'gemini 'claude))
+    (my/team-sidebar--render))
    ;; Session header — toggle collapse
    ((my/team-sidebar--session-at-point)
     (my/team-sidebar-toggle-section))
@@ -1348,8 +1759,9 @@ Cancels any pending preview timer before scheduling a new one."
                     (dedicated . t)))))
         (when win
           (my/team-sidebar--set-window-params win))))
-    ;; Reset circuit breaker when sidebar is shown/toggled
+    ;; Reset circuit breakers when sidebar is shown/toggled
     (my/team-sidebar--quota-reset-backoff)
+    (my/team-sidebar--gemini-reset-backoff)
     ;; Start refresh timers
     (my/team-sidebar--ensure-timer)
     (my/team-sidebar--quota-ensure-timer)
