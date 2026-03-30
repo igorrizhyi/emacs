@@ -34,13 +34,12 @@ Changes take effect for newly spawned researcher agents."
                             (let ((backend (or (alist-get 'researcher agent-shell-team-role-backends)
                                                (cdr (assoc "researcher" agent-shell-team-role-backends)))))
                               (if (eq backend 'gemini) "gemini-2.5-flash" "claude-sonnet-4-6"))))
-         ;; Reorder so current default is first
+         ;; Build "Default (<label>)" entry and prepend it
          (default-entry (seq-find (lambda (e) (equal (cdr e) current-model)) all-models))
-         (models (if default-entry
-                     (cons default-entry (seq-remove (lambda (e) (equal e default-entry)) all-models))
-                   all-models))
+         (default-label (format "Default (%s)" (or (car default-entry) current-model)))
+         (models (cons (cons default-label current-model) all-models))
          (labels (mapcar #'car models))
-         (choice (completing-read (format "Model [%s]: " (car labels)) labels nil t nil nil (car labels)))
+         (choice (completing-read (format "Model [%s]: " default-label) labels nil t nil nil default-label))
          (model-id (alist-get choice models nil nil #'equal))
          ;; Find lead buffer and deliver
          (lead-buf (agent-shell-team--get-lead agent-shell-team--session-id))
