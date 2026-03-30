@@ -31,7 +31,9 @@ Changes take effect for newly spawned researcher agents."
          ;; Look up current researcher model from config
          (current-model (or (alist-get 'researcher agent-shell-team-role-models)
                             (cdr (assoc "researcher" agent-shell-team-role-models))
-                            "claude-sonnet-4-6"))
+                            (let ((backend (or (alist-get 'researcher agent-shell-team-role-backends)
+                                               (cdr (assoc "researcher" agent-shell-team-role-backends)))))
+                              (if (eq backend 'gemini) "gemini-2.5-flash" "claude-sonnet-4-6"))))
          ;; Reorder so current default is first
          (default-entry (seq-find (lambda (e) (equal (cdr e) current-model)) all-models))
          (models (if default-entry
