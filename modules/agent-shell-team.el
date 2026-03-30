@@ -1944,65 +1944,10 @@ You process LLM tasks queued by the knowledge server. You do NOT modify source f
 
 ### entity_extraction
 
-When you receive an `entity_extraction` task, the `prompt` field
-contains the raw chunk text to extract entities from (NOT instructions).
-Follow the extraction format specified below exactly.
-
-Given that text, identify all notable named entities and relationships.
-
-### Entities
-For each entity extract:
-- entity_name: Name of the entity, CAPITALIZED
-- entity_type: One of [component, concept, tool, identifier, location, theme]
-- entity_description: Comprehensive description of the entity's attributes and role
-
-Entity type descriptions:
-- component: A software module, package, library, or service
-- concept: An abstract idea, pattern, or methodology
-- tool: A specific tool, database, or external dependency
-- identifier: A function name, variable, configuration key, or code symbol
-- location: A file path, directory, URL, or endpoint
-- theme: A broad topic or area that this knowledge relates to (e.g., \"task persistence\", \"agent lifecycle\", \"graph search\", \"MCP protocol\")
-
-Format each entity as:
-(\"entity\"<|><entity_name><|><entity_type><|><entity_description>)
-
-### Relationships
-From the entities identified, extract meaningful relationships:
-- source_entity: name of the source entity (CAPITALIZED)
-- target_entity: name of the target entity (CAPITALIZED)
-- relationship_description: explanation of why these entities are related
-- relationship_strength: integer score 1-10 indicating strength
-
-Format each relationship as:
-(\"relationship\"<|><source_entity><|><target_entity><|><relationship_description><|><relationship_strength>)
-
-### Output Format
-Return all entities and relationships as a single list.
-Use ## as the record delimiter. Put ## after EVERY record, including the last one.
-When finished, output <|COMPLETE|> on its own line.
-
-Important: Extract ANY notable named thing regardless of type. The types above are
-hints, not constraints. The value is in entity names and descriptions.
-- Do NOT extract git commit hashes (e.g., c5d4603, bacea92) as entities. They are ephemeral references, not meaningful concepts.
-- Do NOT extract programming language constructs or primitives (e.g., let*, defvar, nil, t, lambda, async/await)
-- Do NOT extract generic variable names that are common across codebases (e.g., face, status, buffer, config, data, result)
-- Do NOT extract property values or flags (e.g., invisible t, :extend t, force true)
-- Do NOT extract formatting details (e.g., bold markers, heading levels, indentation patterns)
-- Do NOT extract specific line number references (e.g., 'line 790', 'lines 2283-2329')
-
-- Prefer ONE entity per feature/concept rather than splitting into sub-entities. For example, extract 'RESERVED AGENT STATUS' as one entity, not separate entities for 'reserved status detection', 'reserved dismiss guard', 'reserved sidebar UI', etc.
-- For relationships, use the relationship description to capture sub-aspects rather than creating separate entities.
-
-- Use the FULL 1-10 range for relationship_strength. Reserve 9-10 for direct dependencies (A uses B, A contains B). Use 5-7 for related concepts. Use 1-4 for loose associations.
-
-### Example
-Input text: \"The agent-shell package uses FalkorDB as its graph database.\"
-Output:
-(\"entity\"<|>\"AGENT-SHELL\"<|>\"component\"<|>\"A package that provides the agent shell framework\")##
-(\"entity\"<|>\"FALKORDB\"<|>\"tool\"<|>\"A graph database used by agent-shell for knowledge storage\")##
-(\"relationship\"<|>\"AGENT-SHELL\"<|>\"FALKORDB\"<|>\"Agent-shell uses FalkorDB as its graph database\"<|>9)##
-<|COMPLETE|>
+When you receive an `entity_extraction` task, the `prompt` field contains
+the FULL extraction prompt with entity types, format instructions, examples,
+and the chunk text. Execute the prompt exactly as written — it is the
+single source of truth for entity types and output format.
 
 ### supersession_classification
 
