@@ -14,6 +14,7 @@ from knowledge_cache import invalidate_cache
 from common import (
     GRAPH_NAME, KNOWLEDGE_LLM_BACKEND, NAMESPACE, PROJECT_ROOT,
     EMACS_SERVER_NAME, KNOWLEDGE_PROJECT_ROOT,
+    MAX_CHUNK_CHARS,
     get_graph, init_schema, ingest_chunks, query_knowledge, chunk_id,
     chunk_report, create_similarity_edges_for_chunks,
     create_cross_role_edges,
@@ -299,20 +300,105 @@ async def _handle_store(arguments: dict) -> list[types.TextContent]:
 
 
 def _build_chunks(content: str, source: str, roles_str: str, project: str = None) -> list[dict]:
-    """Parse content into chunk dicts (shared by both backends)."""
+    """Parse content into chunk dicts (shared by both backends).
+
+    Report chunks are delegated to ``chunk_report``.  For knowledge content,
+    related bullet points and paragraphs are grouped together (instead of
+    one-line-per-chunk) and a metadata prefix ``[Source: …, Section: …]``
+    is prepended to each chunk's content so the entity extraction LLM has
+    provenance context.  Chunk IDs are computed from the *original* content
+    (without the prefix) to preserve deduplication / idempotency.
+    """
     if source.startswith("report:"):
         request_id = source.split(":", 1)[1]
-        return chunk_report(content, request_id, roles_str, project=project)
-    elif content.startswith("- "):
-        return [{"id": chunk_id(source, content[2:].strip()),
-                 "content": content[2:].strip(), "section": "General",
-                 "source": source, "roles": roles_str, "type": "knowledge",
-                 "project": project}]
-    else:
-        raw = [l.strip() for l in content.split("\n") if l.strip() and not l.strip().startswith("#")]
-        return [{"id": chunk_id(source, t), "content": t, "section": "General",
-                 "source": source, "roles": roles_str, "type": "knowledge",
-                 "project": project} for t in raw]
+        chunks = chunk_report(content, request_id, roles_str, project=project)
+        # Add metadata prefix to report chunks
+        for c in chunks:
+            c["content"] = f"[Source: {c['source']}, Section: {c['section']}]\n{c['content']}"
+        return chunks
+
+    # --- Knowledge content: smart grouping ---
+    lines = content.split("\n")
+    section = "General"
+    groups: list[tuple[str, str]] = []  # (section, text)
+    buf: list[str] = []
+    buf_len = 0
+
+    def _flush_buf():
+        nonlocal buf, buf_len
+        if not buf:
+            return
+        text = "\n".join(buf).strip()
+        if text:
+            groups.append((section, text))
+        buf = []
+        buf_len = 0
+
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.rstrip()
+
+        # Track section headers — flush current group, update section
+        if stripped.startswith("## "):
+            _flush_buf()
+            section = stripped[3:].strip()
+            i += 1
+            continue
+        if stripped.startswith("# "):
+            _flush_buf()
+            section = stripped[2:].strip()
+            i += 1
+            continue
+
+        # Blank line → paragraph boundary
+        if not stripped:
+            _flush_buf()
+            i += 1
+            continue
+
+        # Bullet line: collect with continuation lines
+        if stripped.startswith("- "):
+            # If adding this bullet would exceed max chunk size, flush first
+            if buf and buf_len + len(stripped) > MAX_CHUNK_CHARS:
+                _flush_buf()
+            buf.append(stripped)
+            buf_len += len(stripped)
+            i += 1
+            # Gather continuation lines (indented, not a new bullet)
+            while i < len(lines):
+                next_line = lines[i].rstrip()
+                if next_line and not next_line.startswith("- ") and (next_line.startswith("  ") or next_line.startswith("\t")):
+                    buf.append(next_line)
+                    buf_len += len(next_line)
+                    i += 1
+                else:
+                    break
+            continue
+
+        # Non-bullet, non-header, non-blank line → paragraph content
+        if buf and buf_len + len(stripped) > MAX_CHUNK_CHARS:
+            _flush_buf()
+        buf.append(stripped)
+        buf_len += len(stripped)
+        i += 1
+
+    _flush_buf()
+
+    chunks = []
+    for grp_section, text in groups:
+        cid = chunk_id(source, text)
+        prefixed = f"[Source: {source}, Section: {grp_section}]\n{text}"
+        chunks.append({
+            "id": cid,
+            "content": prefixed,
+            "section": grp_section,
+            "source": source,
+            "roles": roles_str,
+            "type": "knowledge",
+            "project": project,
+        })
+    return chunks
 
 
 async def _store_and_queue_llm(content: str, source: str, roles: list[str]) -> list[str]:
