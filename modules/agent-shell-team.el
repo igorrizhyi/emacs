@@ -317,6 +317,15 @@ Generated eagerly at load time so MCP handlers always have a valid session.")
   "When non-nil, `agent-shell-team--kill-guard' allows the buffer to be killed.
 Set by `agent-shell-team--cleanup-agent' before calling `kill-buffer'.")
 
+(defvar-local agent-shell-team--model-id nil
+  "The model ID this agent was spawned with.
+Used to match tasks with model overrides to agents running the same model.")
+
+(defvar agent-shell-team--spawn-model-override nil
+  "Dynamic variable: when let-bound, overrides the model for agent spawning.
+Set by `agent-shell-team--auto-spawn-agent' when the triggering task has a
+`:model' field, so `make-gemini-config'/`make-claude-config' can pick it up.")
+
 ;;; HTTP MCP server state
 
 (defvar agent-shell-team--emacs-mcp-http-port nil
@@ -1087,14 +1096,21 @@ For quick verification tasks (finding code snippets, confirming line numbers, ch
 schemas, validating file contents), dispatch a researcher via tasksPut instead of using
 the Task tool. These run on gemini-2.5-flash-lite and don't block your coordination.
 
+**IMPORTANT:** When dispatching quick-research tasks, include `\"model\": \"gemini-2.5-flash-lite\"`
+in each task object. This forces the spawned researcher to use the flash-lite model instead
+of the default researcher model. Example:
+```json
+{\"tasks\": [{\"role\": \"researcher\", \"message\": \"...\", \"model\": \"gemini-2.5-flash-lite\"}]}
+```
+
 Decision hierarchy for research:
 1. **Knowledge DB** (`query_knowledge`) — ALWAYS check first. This is the source of truth.
-2. **Flash-lite researcher** (tasksPut with role=researcher) — use for quick lookups when
-   the knowledge DB returned solid results but you need fast verification. These are
-   lightweight, non-blocking, and run on gemini-2.5-flash-lite. Keep the task description
-   short and focused on a single question.
-3. **Team researcher** (tasksPut with role=researcher) — use when the knowledge DB
-   returned vague or no results and you need deep investigation: understanding
+2. **Flash-lite researcher** (tasksPut with role=researcher, model=gemini-2.5-flash-lite) —
+   use for quick lookups when the knowledge DB returned solid results but you need fast
+   verification. These are lightweight, non-blocking, and run on gemini-2.5-flash-lite.
+   Keep the task description short and focused on a single question.
+3. **Team researcher** (tasksPut with role=researcher, NO model field) — use when the
+   knowledge DB returned vague or no results and you need deep investigation: understanding
    unfamiliar architecture, mapping dependencies, evaluating tradeoffs, or answering
    questions that require reading multiple files across the codebase.")
     (_
@@ -2588,6 +2604,7 @@ Return the number of tasks actually enqueued, or signal an error if
                  (group-id (or (map-elt task 'group_id) (map-elt task "group_id")))
                  (target (or (map-elt task 'target) (map-elt task "target")))
                  (priority (or (map-elt task 'priority) (map-elt task "priority")))
+                 (model (or (map-elt task 'model) (map-elt task "model")))
                  (caller-request-id (or (map-elt task 'request_id) (map-elt task "request_id")))
                  (request-id (or caller-request-id
                                  (agent-shell-team--generate-request-id)))
@@ -2633,6 +2650,7 @@ Return the number of tasks actually enqueued, or signal an error if
                                   :group-id group-id
                                   :target target
                                   :priority priority
+                                  :model model
                                   :session-id session-id
                                   :report-path report-path)))
                 ;; Persist to disk (skip for knowledge — they're long-lived and silent)
@@ -2959,13 +2977,20 @@ reached its max agent count, auto-spawn a new agent."
                                                            (alist-get 'role a)
                                                            (agent-shell-team--agent-status (alist-get 'buffer a))))
                                                    all-agents)))
+                               (task-model (plist-get task :model))
                                (idle-agent
                                 (cl-find-if
                                  (lambda (a)
                                    (let ((buf (alist-get 'buffer a)))
                                      (and (equal (alist-get 'role a) role)
                                           (eq (agent-shell-team--agent-status buf) 'idle)
-                                          (not (gethash buf just-assigned)))))
+                                          (not (gethash buf just-assigned))
+                                          ;; When task has model override, only match
+                                          ;; agents spawned with the same model
+                                          (or (not task-model)
+                                              (equal task-model
+                                                     (buffer-local-value
+                                                      'agent-shell-team--model-id buf))))))
                                  all-agents)))
                           (if idle-agent
                               (progn
@@ -3004,9 +3029,14 @@ reached its max agent count, auto-spawn a new agent."
                                 (if (and is-not-lead under-max (not has-initializing) is-not-singleton)
                                     (progn
                                       (agent-shell-team--log session-id
-                                       (format "[auto-spawn] No idle %s agent, spawning new one" role))
+                                       (format "[auto-spawn] No idle %s agent, spawning new one%s"
+                                               role (if (plist-get task :model)
+                                                        (format " (model: %s)" (plist-get task :model))
+                                                      "")))
                                       (message "[try-assign] >>> SPAWNING new %s agent" role)
-                                      (agent-shell-team--auto-spawn-agent session-id role)
+                                      (let ((agent-shell-team--spawn-model-override
+                                             (plist-get task :model)))
+                                        (agent-shell-team--auto-spawn-agent session-id role))
                                       ;; Push task back — new agent is still initializing,
                                       ;; it will be assigned on the next drain timer tick
                                       (push task remaining))
@@ -3523,6 +3553,10 @@ WORKTREE-PATH and WORKTREE-NAME are for isolated mode."
                     (agent-shell-team--make-request-decorator system-prompt)))))
       (message "agent-shell-team: agent-shell--start returned buffer=%s (process=%s)"
                buffer (get-buffer-process buffer))
+      ;; Store the model ID used for this agent (for idle-agent matching)
+      (when agent-shell-team--spawn-model-override
+        (with-current-buffer buffer
+          (setq agent-shell-team--model-id agent-shell-team--spawn-model-override)))
       ;; Register in team session
       (message "agent-shell-team: registering agent...")
       (agent-shell-team--register-agent session-id buffer role mode worktree-path worktree-name)
@@ -3598,7 +3632,8 @@ SESSION-ID, ROLE, and BUFFER-NAME customize the config."
    :icon-name "anthropic.png"
    :welcome-function #'agent-shell-emacs-mcp--welcome-message
    :client-maker #'agent-shell-emacs-mcp--make-client
-   :default-model-id (let ((model (or (cdr (assoc role agent-shell-team-role-models))
+   :default-model-id (let ((model (or agent-shell-team--spawn-model-override
+                               (cdr (assoc role agent-shell-team-role-models))
                                agent-shell-anthropic-default-model-id)))
                        (lambda () model))
    :default-session-mode-id (lambda () (or (and agent-shell-team-skip-permissions "bypassPermissions")
@@ -3641,10 +3676,17 @@ SESSION-ID, ROLE, and BUFFER-NAME customize the config."
                                                    (description . ""))))))
    :client-maker (lambda (buffer)
                    (agent-shell-team--make-gemini-client buffer))
-   :default-model-id (let* ((role-model (cdr (assoc role agent-shell-team-role-models)))
-                            (model (if (and role-model (string-prefix-p "gemini" role-model))
-                                       role-model
-                                     "gemini-2.5-flash")))
+   :default-model-id (let* ((override agent-shell-team--spawn-model-override)
+                            (role-model (cdr (assoc role agent-shell-team-role-models)))
+                            (model (cond
+                                    ;; Spawn-time override (e.g. flash-lite quick research)
+                                    ((and override (string-prefix-p "gemini" override))
+                                     override)
+                                    ;; Role-level model from defcustom
+                                    ((and role-model (string-prefix-p "gemini" role-model))
+                                     role-model)
+                                    ;; Fallback
+                                    (t "gemini-2.5-flash"))))
                        (lambda () model))
    :default-session-mode-id (lambda () nil)
    :install-instructions "See https://github.com/google-gemini/gemini-cli for installation."))
