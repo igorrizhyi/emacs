@@ -561,7 +561,15 @@ hasn't been notified yet, deliver a system message to the lead."
                       :message message-text)))
               ('dead
                (agent-shell-team--log session-id
-                                      "WARNING: lead buffer is dead, cannot deliver idle fallback")))))))))
+                                      "WARNING: lead buffer is dead, cannot deliver idle fallback")))))
+        ;; Clean up task state — same as handle-task-update does on "finished".
+        ;; Remove from active-tasks so the task isn't stuck forever.
+        ;; Keep request-to-buffer and request-to-session for dismissAgent lookup
+        ;; (same rationale as handle-task-update; cleaned up by cleanup-agent).
+        (remhash request-id agent-shell-team--active-tasks)
+        ;; Handle group completion if this task was part of a group
+        (when-let ((group-id (gethash request-id agent-shell-team--request-to-group)))
+          (agent-shell-team--handle-task-completion request-id session-id nil))))))
 
 (defun agent-shell-team--sync-idle-inhibit ()
   "Scan all registered agents, sync busy files with actual status.
