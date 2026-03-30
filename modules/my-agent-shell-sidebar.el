@@ -827,26 +827,13 @@ Returns t if anything was inserted, nil otherwise."
                (pos (point))
                (win (get-buffer-window buf t))
                (saved-window-point (when win (window-point win))))
-          ;; Preserve prompt block if present
-          (let ((prompt-end (my/team-sidebar--prompt-region-end)))
-            (goto-char (or prompt-end (point-min)))
-            (delete-region (point) (point-max))
-            (my/team-sidebar--insert-status)
-            (goto-char (min pos (point-max))))
+          (goto-char (point-min))
+          (delete-region (point) (point-max))
+          (my/team-sidebar--insert-status)
+          (goto-char (min pos (point-max)))
           (when (and win saved-window-point)
             (set-window-point win (min saved-window-point (point-max)))))))))
 
-(defun my/team-sidebar--prompt-region-end ()
-  "Return end of the prompt region at top of buffer, or nil if none."
-  (save-excursion
-    (goto-char (point-min))
-    (when (looking-at "```")
-      ;; Find the closing ```
-      (forward-line 1)
-      (if (re-search-forward "^```$" nil t)
-          (progn (forward-line 1) (point))
-        ;; Unclosed block — include everything to end of buffer? No, return nil.
-        nil))))
 
 (defun my/team-sidebar--insert-status ()
   "Insert team status content at point."
@@ -992,8 +979,6 @@ Returns t if anything was inserted, nil otherwise."
     (define-key map "x" #'my/team-sidebar-kill-agent)
     (define-key map "q" #'my/team-sidebar-quit)
     (define-key map "g" #'my/team-sidebar-refresh)
-    (define-key map "+" #'my/team-sidebar-prompt)
-    (define-key map "i" #'my/team-sidebar-prompt)
     (define-key map "j" #'my/team-sidebar-next-item)
     (define-key map "k" #'my/team-sidebar-prev-item)
     (define-key map (kbd "<up>") #'my/team-sidebar-prev-item)
@@ -1026,8 +1011,6 @@ Returns t if anything was inserted, nil otherwise."
     "x" #'my/team-sidebar-kill-agent
     "q" #'my/team-sidebar-quit
     "g" #'my/team-sidebar-refresh
-    "+" #'my/team-sidebar-prompt
-    "i" #'my/team-sidebar-prompt
     "j" #'my/team-sidebar-next-item
     "k" #'my/team-sidebar-prev-item
     (kbd "<up>") #'my/team-sidebar-prev-item
@@ -1341,99 +1324,6 @@ Cancels any pending preview timer before scheduling a new one."
         (setq my/team-sidebar--manually-collapsed
               (delete session-id my/team-sidebar--manually-collapsed)))
       (my/team-sidebar--render))))
-
-;;; ---- Inline Prompt Mode -----------------------------------------------------
-
-(defvar my/team-sidebar-prompt-mode-map
-  (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "C-<return>") #'my/team-sidebar-prompt-submit)
-    (define-key map (kbd "<escape>") #'my/team-sidebar-prompt-cancel)
-    (define-key map (kbd "C-c C-k") #'my/team-sidebar-prompt-cancel)
-    map)
-  "Keymap for inline prompt editing in the team sidebar.")
-
-(define-minor-mode my/team-sidebar-prompt-mode
-  "Minor mode for inline prompt editing in team sidebar."
-  :lighter " Prompt"
-  :keymap my/team-sidebar-prompt-mode-map
-  (if my/team-sidebar-prompt-mode
-      (setq buffer-read-only nil)
-    (setq buffer-read-only t)
-    (when (fboundp 'evil-normal-state)
-      (evil-normal-state))))
-
-(defun my/team-sidebar-prompt ()
-  "Enter inline prompt mode: insert a markdown code block at the top."
-  (interactive)
-  (let ((inhibit-read-only t))
-    (goto-char (point-min))
-    (insert "```\n\n```\n")
-    ;; Make only the editable region modifiable
-    (let ((block-end (save-excursion
-                       (goto-char (point-min))
-                       (forward-line 1)
-                       (re-search-forward "^```$" nil t)
-                       (line-beginning-position 2))))
-      (put-text-property block-end (point-max) 'read-only t))
-    ;; Position cursor inside the block
-    (goto-char (point-min))
-    (forward-line 1)
-    (my/team-sidebar-prompt-mode 1)
-    ;; Switch to emacs state AFTER minor mode is fully set up,
-    ;; via run-at-time to ensure evil doesn't override it.
-    (when (fboundp 'evil-emacs-state)
-      (run-at-time 0 nil
-                   (lambda (buf)
-                     (when (buffer-live-p buf)
-                       (let ((win (get-buffer-window buf)))
-                         (when (and win (window-live-p win))
-                           (select-window win)
-                           (evil-emacs-state)))))
-                   (current-buffer)))))
-
-(defun my/team-sidebar--extract-prompt-text ()
-  "Extract text from between the ``` markers at top of buffer."
-  (save-excursion
-    (goto-char (point-min))
-    (when (looking-at "```")
-      (forward-line 1)
-      (let ((start (point)))
-        (when (re-search-forward "^```$" nil t)
-          (string-trim (buffer-substring-no-properties start (line-beginning-position))))))))
-
-(defun my/team-sidebar--erase-prompt-block ()
-  "Remove the prompt block from the top of the buffer."
-  (let ((inhibit-read-only t))
-    ;; Remove read-only property first
-    (remove-text-properties (point-min) (point-max) '(read-only nil))
-    (save-excursion
-      (goto-char (point-min))
-      (when (looking-at "```")
-        (let ((end (my/team-sidebar--prompt-region-end)))
-          (when end
-            (delete-region (point-min) end)))))))
-
-(defun my/team-sidebar-prompt-submit ()
-  "Submit the prompt text to the lead agent shell buffer."
-  (interactive)
-  (let ((text (my/team-sidebar--extract-prompt-text)))
-    (if (or (null text) (string-empty-p text))
-        (message "Empty prompt, nothing to submit.")
-      (let* ((sid agent-shell-team--session-id)
-             (lead-buf (my/team-sidebar--find-lead-buffer sid)))
-        (if (not (buffer-live-p lead-buf))
-            (message "Lead buffer not found for session %s" sid)
-          (my/team-sidebar-prompt-mode -1)
-          (my/team-sidebar--erase-prompt-block)
-          (with-current-buffer lead-buf
-            (shell-maker-submit :input text))
-          (message "Submitted to lead."))))))
-
-(defun my/team-sidebar-prompt-cancel ()
-  "Cancel prompt editing and restore read-only state."
-  (interactive)
-  (my/team-sidebar-prompt-mode -1)
-  (my/team-sidebar--erase-prompt-block))
 
 ;;; ---- Side Window Management -------------------------------------------------
 
