@@ -3575,14 +3575,18 @@ SESSION-ID, ROLE, and BUFFER-NAME customize the config."
    :default-model-id (let* ((role-model (cdr (assoc role agent-shell-team-role-models)))
                             (model (if (and role-model (string-prefix-p "gemini" role-model))
                                        role-model
-                                     "gemini-2.5-pro")))
+                                     "gemini-2.5-flash")))
                        (lambda () model))
    :default-session-mode-id (lambda () nil)
    :install-instructions "See https://github.com/google-gemini/gemini-cli for installation."))
 
 (defun agent-shell-team--make-gemini-client (buffer)
   "Create ACP client for Gemini CLI with MCP environment vars in BUFFER."
-  (let ((agent-shell-google-gemini-environment
+  (let ((agent-shell-google-gemini-acp-command
+         (if agent-shell-team-skip-permissions
+             (append agent-shell-google-gemini-acp-command '("--yolo"))
+           agent-shell-google-gemini-acp-command))
+        (agent-shell-google-gemini-environment
          (append (list (format "EMACS_INSTANCE_ID=%d" (emacs-pid))
                        (format "EMACS_SERVER_NAME=%s" server-name)
                        (format "PROJECT_ROOT=%s" (directory-file-name default-directory)))
