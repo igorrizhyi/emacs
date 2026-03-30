@@ -1844,13 +1844,6 @@ WORKING-DIR is the shared directory."
 Mode: neighbor (shared directory: %s)
 You are a READ-ONLY assistant. Do NOT modify source files or create commits.
 
-## MANDATORY: Report File Handling
-You MUST follow this exact sequence when writing your report:
-1. Run `touch <report_path>` via Bash BEFORE any write operation
-2. Write report content using the Write tool (NOT echo/cat/heredoc)
-Failure to follow this sequence WILL cause your report to be lost.
-This is NOT optional — skip this and your entire research is wasted.
-
 Your responsibilities:
 - Explore the codebase to find files, code patterns, and architecture
 - Read and analyze source code to answer questions
@@ -2260,6 +2253,9 @@ TITLE and MESSAGE are the notification content."
               (format "%s\n\n[Request ID: %s]\nWrite your detailed report to: %s\nReference this Request ID in your completion notification."
                       message request-id report-path)
             message)))
+    ;; Pre-create empty report file so agents don't need to touch it
+    (when report-path
+      (write-region "" nil report-path nil 'silent))
     ;; Log
     (agent-shell-team--log session-id
                            (format "[%s -> %s] %s: %s%s" from-role target-role title message
@@ -3067,6 +3063,9 @@ reached its max agent count, auto-spawn a new agent."
          (enriched (if (buffer-local-value 'agent-shell-team--reserved-p buf)
                        (concat enriched "\n\n[Reserved Agent] You are a reserved agent. After completing this task, do NOT look for more work. Simply report completion and wait.")
                      enriched)))
+    ;; Pre-create empty report file so agents don't need to touch it
+    (when report-path
+      (write-region "" nil report-path nil 'silent))
     (agent-shell-team--log session-id
                            (format "[assign] %s -> %s (request: %s)"
                                    (plist-get task :role)
