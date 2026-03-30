@@ -932,12 +932,10 @@ WORKTREE-NAME is the worktree name (for isolated mode)."
              (message "agent-shell-team: failed to read devcontainer config %s: %s"
                       config-path (error-message-string err))))))
       ;; Configure HTTP MCP servers for all agents (container or not)
-      ;; Gemini uses /sse (SSE transport), Claude uses /mcp (Streamable HTTP)
+      ;; Both backends use /mcp (Streamable HTTP)
       (when (and agent-shell-team--emacs-mcp-http-port
                  agent-shell-team--knowledge-mcp-http-port)
-        (let ((mcp-endpoint (if (eq (or (cdr (assoc role agent-shell-team-role-backends)) 'claude)
-                                    'gemini)
-                                "/sse" "/mcp")))
+        (let ((mcp-endpoint "/mcp"))
           (setq-local agent-shell-mcp-servers
                       (list
                        `((name . "emacs")
