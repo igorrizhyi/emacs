@@ -3558,8 +3558,16 @@ WORKTREE-PATH and WORKTREE-NAME are for isolated mode."
 (defun agent-shell-team--make-config (session-id role buffer-name)
   "Create agent-shell config for a team agent.
 SESSION-ID, ROLE, and BUFFER-NAME customize the config.
-Dispatches to the appropriate backend based on `agent-shell-team-role-backends'."
-  (let ((backend (or (cdr (assoc role agent-shell-team-role-backends)) 'claude)))
+Dispatches to the appropriate backend: if `agent-shell-team--spawn-model-override'
+is set, the backend is auto-detected from the model name prefix (\"gemini\" or
+\"claude\").  Otherwise falls back to `agent-shell-team-role-backends', then claude."
+  (let* ((override-model agent-shell-team--spawn-model-override)
+         (explicit-backend (cdr (assoc role agent-shell-team-role-backends)))
+         (backend (cond
+                   ((and override-model (string-prefix-p "gemini" override-model)) 'gemini)
+                   ((and override-model (string-prefix-p "claude" override-model)) 'claude)
+                   (explicit-backend explicit-backend)
+                   (t 'claude))))
     (pcase backend
       ('gemini (agent-shell-team--make-gemini-config session-id role buffer-name))
       (_ (agent-shell-team--make-claude-config session-id role buffer-name)))))
