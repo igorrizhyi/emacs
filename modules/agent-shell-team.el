@@ -1245,7 +1245,18 @@ instead — they run in parallel and don't block coordination.
 Task assignments include a Request ID and a report file path (auto-injected by Emacs).
 When an agent reports completion, their message includes a path to a detailed
 report file (.agent-shell/reports/{session-id}/{request-id}.md).
-ALWAYS read the report file to review the agent's work before proceeding.
+
+## Report Routing
+When a researcher reports `finished`, check the `Routing:` line in the task update content:
+- **`Routing: dev-ready`**: Do NOT read the full report. Store it in the knowledge base
+  (call `store_knowledge` with the full report text as usual), then include the report path
+  in the dev task message (e.g., `Report: <path>`) so the dev reads it themselves.
+  This saves you a round-trip reading research that is already actionable.
+- **`Routing: lead-review`** (or no Routing line, for backwards compatibility):
+  Read the full report as usual, then decide next steps.
+- Regardless of routing, ALWAYS process Knowledge Discoveries warnings (see below).
+
+For dev and tester reports, always read the report as usual — routing only applies to researchers.
 
 ## CRITICAL: Knowledge Discovery Handling
 When a task update includes a ⚠️ Knowledge Discoveries warning, you MUST:
@@ -1782,7 +1793,17 @@ Your responsibilities:
 - Report findings via the `taskUpdate` MCP tool:
   request_id: The Request ID from your research request
   status: \"finished\" (or \"updated\" for progress, \"blocked\" if stuck)
-  content: Brief summary of findings with relevant file paths and analysis
+  content: Brief summary of findings with relevant file paths and analysis.
+    Include a **Routing** line to tell the lead how to handle your report:
+    - `Routing: dev-ready` — findings are complete, clear, and actionable.
+      The lead can pass the report path directly to a dev without reading it.
+    - `Routing: lead-review` — findings are incomplete, ambiguous, have multiple
+      options to choose from, or require lead/user input before a dev can act.
+    Follow the routing signal with a brief reason, e.g.:
+    ```
+    Routing: dev-ready — Found root cause: missing nil guard in process-filter
+    Routing: lead-review — Found 3 possible approaches, need lead to decide
+    ```
   report_path: Path to your report file (from the research request)
 - Before writing to any file (reports, notes, etc.), ensure the file exists first
   by running `touch <path>`. Some CLI backends don't create files automatically.
