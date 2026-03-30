@@ -1409,7 +1409,8 @@ Returns t if anything was inserted, nil otherwise."
   (setq-local face-remapping-alist
               '((default (:background "#1a1400" :foreground "#ffb000"))
                 (header-line (:background "#1a1400" :foreground "#ffc830"
-                               :weight bold :box nil)))))
+                               :weight bold :box nil))))
+  (add-hook 'kill-buffer-hook #'my/team-sidebar--kill-buffer-cleanup nil t))
 
 ;; Evil-mode integration: bind keys in normal state so they take priority
 (when (fboundp 'evil-define-key*)
@@ -1882,8 +1883,22 @@ collapse into one toggle."
 
 ;;; ---- Integration / Hook Registration ----------------------------------------
 
+(defun my/team-sidebar--teardown-hooks ()
+  "Remove all global hooks registered by the sidebar."
+  (remove-hook 'window-buffer-change-functions #'my/team-sidebar--auto-toggle)
+  (remove-hook 'window-selection-change-functions #'my/team-sidebar--auto-toggle)
+  (remove-hook 'window-configuration-change-hook #'my/team-sidebar--reapply-window-params))
+
+(defun my/team-sidebar--kill-buffer-cleanup ()
+  "Clean up hooks and timers when the sidebar buffer is killed."
+  (my/team-sidebar--teardown-hooks)
+  (my/team-sidebar--stop-timer)
+  (my/team-sidebar--quota-stop-timer))
+
 (defun my/team-sidebar--setup-hooks ()
-  "Register auto-toggle hooks and window-config protection."
+  "Register auto-toggle hooks and window-config protection.
+Removes first to guarantee no accumulation on repeated calls."
+  (my/team-sidebar--teardown-hooks)
   (add-hook 'window-buffer-change-functions #'my/team-sidebar--auto-toggle)
   (add-hook 'window-selection-change-functions #'my/team-sidebar--auto-toggle)
   (add-hook 'window-configuration-change-hook #'my/team-sidebar--reapply-window-params))
