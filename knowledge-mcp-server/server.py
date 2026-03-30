@@ -36,6 +36,7 @@ from llm_queue import (
     submit_llm_result as _submit_llm_result, cleanup_task,
 )
 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(name)s %(levelname)s %(message)s')
 logger = logging.getLogger(__name__)
 
 _project = _resolve_project()
@@ -490,7 +491,9 @@ async def _store_knowledge_bg(content: str, source: str, roles: list[str]):
             entity_count, rel_count = await extract_and_store_entities(graph, chunks)
 
             # Feature/Scenario extraction (runs after entities are in the graph)
+            logger.info("_store_knowledge_bg: calling extract_features_for_batch for %d chunks", len(chunks))
             await extract_features_for_batch(graph, chunks)
+            logger.info("_store_knowledge_bg: extract_features_for_batch completed")
 
             supersede_info = f", {len(supersessions)} supersession(s)" if supersessions else ""
             entity_info = f", {entity_count} entities, {rel_count} relationships" if entity_count else ""
@@ -552,7 +555,9 @@ async def _handle_submit_llm_result(arguments: dict) -> list[types.TextContent]:
             # no-ops if no theme entities were touched.
             feature_chunks = [{"id": cid} for cid in chunk_ids]
             if feature_chunks:
+                logger.info("entity_extraction post-process: calling extract_features_for_batch for %d chunk(s)", len(feature_chunks))
                 feature_task_ids = await extract_features_for_batch(graph, feature_chunks)
+                logger.info("entity_extraction post-process: extract_features_for_batch returned %d task(s)", len(feature_task_ids))
                 if feature_task_ids:
                     asyncio.create_task(_dispatch_knowledge_agent(feature_task_ids))
 

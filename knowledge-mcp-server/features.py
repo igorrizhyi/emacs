@@ -363,6 +363,8 @@ async def extract_features_for_batch(graph, chunks: list[dict]) -> list[str]:
 
     Returns list of queued task UUIDs (agent backend) or empty list.
     """
+    logger.info("Feature extraction: entered with %d chunks", len(chunks))
+
     # 1. Identify touched theme entities
     chunk_ids = [c["id"] for c in chunks]
     result = graph.query(
@@ -375,8 +377,11 @@ async def extract_features_for_batch(graph, chunks: list[dict]) -> list[str]:
     )
 
     themes = [{"name": r[0], "description": r[1] or ""} for r in result.result_set]
+    theme_names = [t["name"] for t in themes]
+    logger.info("Feature extraction: found %d theme(s): %s", len(themes), theme_names)
 
     if not themes:
+        logger.info("Feature extraction: no theme entities found, bailing out")
         return []
 
     # 2. Get existing Feature names (for dedup + cross-reference)
@@ -397,7 +402,12 @@ async def extract_features_for_batch(graph, chunks: list[dict]) -> list[str]:
     for theme in themes:
         context_chunks = gather_feature_context(graph, theme["name"])
         if len(context_chunks) < 2:
+            logger.info("Feature extraction: skipping theme '%s' — only %d context chunk(s)",
+                        theme["name"], len(context_chunks))
             continue  # Not enough context for meaningful Feature
+
+        logger.info("Feature extraction: proceeding with theme '%s' (%d context chunks)",
+                    theme["name"], len(context_chunks))
 
         # Assemble prompt
         chunk_contents = "\n---\n".join(
