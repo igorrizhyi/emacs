@@ -1420,7 +1420,8 @@ Returns t if anything was inserted, nil otherwise."
     (kbd "RET") #'my/team-sidebar-switch-to-agent
     "x" #'my/team-sidebar-kill-agent
     "q" #'my/team-sidebar-quit
-    "g" #'my/team-sidebar-refresh
+    "gr" #'my/team-sidebar-refresh
+    "gg" #'my/team-sidebar-goto-lead
     "j" #'my/team-sidebar-next-item
     "k" #'my/team-sidebar-prev-item
     (kbd "<up>") #'my/team-sidebar-prev-item
@@ -1576,6 +1577,23 @@ Cancels any pending preview timer before scheduling a new one."
              (not (my/team-sidebar--item-at-point-p)))
         (goto-char start)
       (my/team-sidebar--preview-current-debounced))))
+
+(defun my/team-sidebar-goto-lead ()
+  "Jump to the lead agent's line and preview its buffer."
+  (interactive)
+  (let ((found nil))
+    (save-excursion
+      (goto-char (point-min))
+      (while (and (not found) (not (eobp)))
+        (let ((agent (get-text-property (line-beginning-position) 'my/sidebar-agent)))
+          (when (and agent (equal (alist-get 'role agent) "lead"))
+            (setq found (line-beginning-position))))
+        (forward-line 1)))
+    (if found
+        (progn
+          (goto-char found)
+          (my/team-sidebar--preview-agent))
+      (message "No lead agent found in sidebar"))))
 
 (defun my/team-sidebar-next-agent ()
   "Move to next agent line and preview its buffer."
