@@ -913,20 +913,26 @@ WORKTREE-NAME is the worktree name (for isolated mode)."
              (message "agent-shell-team: failed to read devcontainer config %s: %s"
                       config-path (error-message-string err))))))
       ;; Configure HTTP MCP servers for all agents (container or not)
+      ;; Gemini uses /sse (SSE transport), Claude uses /mcp (Streamable HTTP)
       (when (and agent-shell-team--emacs-mcp-http-port
                  agent-shell-team--knowledge-mcp-http-port)
-        (setq-local agent-shell-mcp-servers
-                    (list
-                     `((name . "emacs")
-                       (type . "http")
-                       (url . ,(format "http://127.0.0.1:%d/mcp"
-                                       agent-shell-team--emacs-mcp-http-port))
-                       (headers . nil))
-                     `((name . "knowledge")
-                       (type . "http")
-                       (url . ,(format "http://127.0.0.1:%d/mcp"
-                                       agent-shell-team--knowledge-mcp-http-port))
-                       (headers . nil)))))
+        (let ((mcp-endpoint (if (eq (or (cdr (assoc role agent-shell-team-role-backends)) 'claude)
+                                    'gemini)
+                                "/sse" "/mcp")))
+          (setq-local agent-shell-mcp-servers
+                      (list
+                       `((name . "emacs")
+                         (type . "http")
+                         (url . ,(format "http://127.0.0.1:%d%s"
+                                         agent-shell-team--emacs-mcp-http-port
+                                         mcp-endpoint))
+                         (headers . nil))
+                       `((name . "knowledge")
+                         (type . "http")
+                         (url . ,(format "http://127.0.0.1:%d%s"
+                                         agent-shell-team--knowledge-mcp-http-port
+                                         mcp-endpoint))
+                         (headers . nil))))))
       (add-hook 'kill-buffer-query-functions #'agent-shell-team--kill-guard nil t))))
 
 (defun agent-shell-team--unregister-agent (buffer)
@@ -3566,7 +3572,6 @@ SESSION-ID, ROLE, and BUFFER-NAME customize the config."
   "Create Gemini-backend agent-shell config for a team agent.
 SESSION-ID, ROLE, and BUFFER-NAME customize the config."
   (agent-shell-emacs-mcp--ensure-mcp-ready)
-  (agent-shell-team--ensure-gemini-mcp-config)
   (agent-shell-make-agent-config
    :identifier 'gemini-cli
    :mode-line-name (format "Team:%s:%s" (agent-shell-team--short-session-id session-id) role)
@@ -3624,49 +3629,6 @@ SESSION-ID, ROLE, and BUFFER-NAME customize the config."
                  agent-shell-google-gemini-environment)))
     (agent-shell-google-make-gemini-client :buffer buffer)))
 
-(defun agent-shell-team--ensure-gemini-mcp-config ()
-  "Generate .gemini/settings.json with MCP server config.
-Gemini CLI reads MCP config from a project-level .gemini/settings.json
-rather than a CLI flag.  This writes the file with the current HTTP
-MCP server ports.  Also ensures .gemini/ is in .gitignore."
-  (agent-shell-team--start-http-mcp-servers)
-  (let ((gemini-dir (expand-file-name ".gemini" default-directory))
-        (settings-file (expand-file-name ".gemini/settings.json" default-directory))
-        (gitignore-file (expand-file-name ".gitignore" default-directory)))
-    ;; Create .gemini directory
-    (unless (file-directory-p gemini-dir)
-      (make-directory gemini-dir t))
-    ;; Write settings.json with MCP server URLs
-    (let ((config (json-encode
-                   `((mcpServers
-                      . ,(append
-                          (when agent-shell-team--emacs-mcp-http-port
-                            `((emacs . ((httpUrl . ,(format "http://localhost:%d/sse"
-                                                            agent-shell-team--emacs-mcp-http-port))
-                                        (trust . t)))))
-                          (when agent-shell-team--knowledge-mcp-http-port
-                            `((knowledge . ((httpUrl . ,(format "http://localhost:%d/sse"
-                                                                agent-shell-team--knowledge-mcp-http-port))
-                                            (trust . t)))))))))))
-      (with-temp-file settings-file
-        (insert config)
-        (json-pretty-print-buffer)))
-    ;; Ensure .gemini/ is in .gitignore
-    (when (file-exists-p (expand-file-name ".git" default-directory))
-      (let ((gitignore-entry ".gemini/"))
-        (if (file-exists-p gitignore-file)
-            (let ((content (with-temp-buffer
-                             (insert-file-contents gitignore-file)
-                             (buffer-string))))
-              (unless (string-match-p (regexp-quote gitignore-entry) content)
-                (with-temp-buffer
-                  (insert-file-contents gitignore-file)
-                  (goto-char (point-max))
-                  (unless (bolp) (insert "\n"))
-                  (insert gitignore-entry "\n")
-                  (write-region (point-min) (point-max) gitignore-file))))
-          (with-temp-file gitignore-file
-            (insert gitignore-entry "\n")))))))
 
 ;;; Team membership announcements
 
