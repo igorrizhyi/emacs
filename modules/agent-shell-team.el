@@ -3524,6 +3524,14 @@ Also removes the git worktree if the agent was in isolated mode."
         ;; Delay gives the WebSocket close frame time to propagate.
         (run-at-time 1 nil #'agent-shell-team--cleanup-stale-mcp-connections)))))
 
+(defun agent-shell-team-teardown ()
+  "Remove all global hooks and timers registered by agent-shell-team.
+Call this to cleanly unload the module or reset team state."
+  (interactive)
+  (remove-hook 'kill-buffer-hook #'agent-shell-team--buffer-kill-hook)
+  (agent-shell-team--stop-drain-timer))
+
+(remove-hook 'kill-buffer-hook #'agent-shell-team--buffer-kill-hook)
 (add-hook 'kill-buffer-hook #'agent-shell-team--buffer-kill-hook)
 
 ;;; Agent spawning
