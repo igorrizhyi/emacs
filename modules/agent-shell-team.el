@@ -244,6 +244,16 @@ Used to start the HTTP transport for container agents."
   :type 'file
   :group 'agent-shell-team)
 
+(defcustom agent-shell-team-lead-quick-research-backend 'subagent
+  "How the lead agent handles quick ad-hoc lookups (tier 2 research).
+`subagent' — lead uses the Task tool (subagent_type=Explore) in-process.
+  This is the default and blocks the lead while running.
+`flash-lite' — lead dispatches a gemini-2.5-flash-lite researcher via
+  tasksPut.  Non-blocking but requires an agent slot."
+  :type '(choice (const :tag "Task tool sub-agent (blocks lead)" subagent)
+                 (const :tag "Flash-lite researcher via tasksPut" flash-lite))
+  :group 'agent-shell-team)
+
 ;;; Faces for doom-modeline role badges
 
 (defface agent-shell-team-role-lead-face
@@ -1041,6 +1051,50 @@ Format: *team:{session-short}:{role}:{worktree-name-or-main}*"
 
 ;;; Role-specific system prompts (no targetRole — routing is inferred by Emacs)
 
+(defun agent-shell-team--lead-quick-research-section ()
+  "Return the quick-research instructions for the lead prompt.
+The content depends on `agent-shell-team-lead-quick-research-backend'."
+  (pcase agent-shell-team-lead-quick-research-backend
+    ('subagent
+     "## Sub-Agent Research
+You have access to lightweight sub-agents via the Task tool (subagent_type=Explore).
+These run in-process and block you while running, but they protect your context
+window from search result bloat.
+
+Decision hierarchy for research:
+1. **Knowledge DB** (`query_knowledge`) — ALWAYS check first. This is the source of truth.
+2. **Sub-agent** (Task tool) — use when the knowledge DB returned solid results but you
+   need quick verification: finding specific code snippets, confirming line numbers,
+   checking schemas, or validating that a file still matches what the DB describes.
+   These are fast, cheap, and don't require spawning a full agent.
+3. **Team researcher** (tasksPut with role=researcher) — use when the knowledge DB
+   returned vague or no results and you need deep investigation: understanding
+   unfamiliar architecture, mapping dependencies, evaluating tradeoffs, or answering
+   questions that require reading multiple files across the codebase.
+
+Key constraint: sub-agents block you. Don't use them for tasks that take more than
+~30 seconds. If you'd need multiple sub-agents in sequence, dispatch a team researcher
+instead — they run in parallel and don't block coordination.")
+    ('flash-lite
+     "## Quick Research via Flash-Lite
+For quick verification tasks (finding code snippets, confirming line numbers, checking
+schemas, validating file contents), dispatch a researcher via tasksPut instead of using
+the Task tool. These run on gemini-2.5-flash-lite and don't block your coordination.
+
+Decision hierarchy for research:
+1. **Knowledge DB** (`query_knowledge`) — ALWAYS check first. This is the source of truth.
+2. **Flash-lite researcher** (tasksPut with role=researcher) — use for quick lookups when
+   the knowledge DB returned solid results but you need fast verification. These are
+   lightweight, non-blocking, and run on gemini-2.5-flash-lite. Keep the task description
+   short and focused on a single question.
+3. **Team researcher** (tasksPut with role=researcher) — use when the knowledge DB
+   returned vague or no results and you need deep investigation: understanding
+   unfamiliar architecture, mapping dependencies, evaluating tradeoffs, or answering
+   questions that require reading multiple files across the codebase.")
+    (_
+     (error "Unknown value for `agent-shell-team-lead-quick-research-backend': %s"
+            agent-shell-team-lead-quick-research-backend))))
+
 (defun agent-shell-team--lead-prompt (session-id)
   "Generate lead system prompt for SESSION-ID."
   (let ((lead-base
@@ -1221,25 +1275,7 @@ You are the user's thinking partner. Use researchers for exploration, not just a
 - Stay at the strategic level. Do NOT read code files or do deep investigation yourself —
   that's what researchers are for
 
-## Sub-Agent Research
-You have access to lightweight sub-agents via the Task tool (subagent_type=Explore).
-These run in-process and block you while running, but they protect your context
-window from search result bloat.
-
-Decision hierarchy for research:
-1. **Knowledge DB** (`query_knowledge`) — ALWAYS check first. This is the source of truth.
-2. **Sub-agent** (Task tool) — use when the knowledge DB returned solid results but you
-   need quick verification: finding specific code snippets, confirming line numbers,
-   checking schemas, or validating that a file still matches what the DB describes.
-   These are fast, cheap, and don't require spawning a full agent.
-3. **Team researcher** (tasksPut with role=researcher) — use when the knowledge DB
-   returned vague or no results and you need deep investigation: understanding
-   unfamiliar architecture, mapping dependencies, evaluating tradeoffs, or answering
-   questions that require reading multiple files across the codebase.
-
-Key constraint: sub-agents block you. Don't use them for tasks that take more than
-~30 seconds. If you'd need multiple sub-agents in sequence, dispatch a team researcher
-instead — they run in parallel and don't block coordination.
+%s
 
 ## Reports
 Task assignments include a Request ID and a report file path (auto-injected by Emacs).
@@ -1518,7 +1554,8 @@ container management needed after `devcontainer up`.
 ### Fallback
 If no `.devcontainer/<role>/` config exists AND the user declines creating one,
 the tester runs on the host in a git worktree (no containerization)."
-          session-id)))
+          session-id
+          (agent-shell-team--lead-quick-research-section))))
     (let ((knowledge-content (let ((f (agent-shell-team--knowledge-file "lead")))
                                (when (file-exists-p f)
                                  (with-temp-buffer
