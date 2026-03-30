@@ -1926,13 +1926,18 @@ Removes first to guarantee no accumulation on repeated calls."
 
 ;;; ---- Context bar refresh on usage update -----------------------------------
 
+(defvar my/team-sidebar--usage-render-timer nil
+  "Debounce timer for sidebar re-render triggered by usage updates.")
+
 (with-eval-after-load 'agent-shell-usage
   (advice-add 'agent-shell--update-usage-from-notification :after
     (lambda (&rest _)
       (when (and (boundp 'agent-shell-team--role)
                  (equal agent-shell-team--role "lead"))
-        (when (fboundp 'my/team-sidebar--render)
-          (my/team-sidebar--render))))))
+        (when my/team-sidebar--usage-render-timer
+          (cancel-timer my/team-sidebar--usage-render-timer))
+        (setq my/team-sidebar--usage-render-timer
+              (run-with-timer 5 nil #'my/team-sidebar--render))))))
 
 (provide 'my-agent-shell-sidebar)
 ;;; my-agent-shell-sidebar.el ends here
