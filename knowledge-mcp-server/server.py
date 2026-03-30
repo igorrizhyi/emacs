@@ -25,6 +25,7 @@ from entities import (
     extract_and_store_entities,
     merge_and_upsert_entities, merge_and_upsert_relationships,
     parse_extraction_output,
+    format_extraction_prompt,
 )
 from features import extract_features_for_batch, parse_feature_extraction_output, upsert_feature
 from llm_queue import (
@@ -315,14 +316,14 @@ async def _store_and_queue_llm(content: str, source: str, roles: list[str]) -> l
         if supersessions:
             create_supersedes_edges(graph, supersessions)
 
-        # Entity extraction: queue one task per chunk
-        # The prompt field contains only the chunk text; extraction
-        # instructions live in the knowledge agent's system prompt.
+        # Entity extraction: queue one task per chunk with the full
+        # extraction prompt (entity types, format, examples).  This is the
+        # single source of truth — derived from ENTITY_TYPES in entities.py.
         for chunk in chunks:
             tid = queue_llm_task(
                 PROJECT_ROOT,
                 "entity_extraction",
-                chunk["content"],
+                format_extraction_prompt(chunk["content"]),
                 context={"chunk_ids": [chunk["id"]]},
             )
             task_ids.append(tid)

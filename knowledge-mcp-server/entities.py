@@ -255,16 +255,26 @@ def parse_extraction_output(output: str) -> tuple[list[dict], list[dict]]:
 # ---------------------------------------------------------------------------
 
 
-async def extract_entities_from_chunk(chunk_content: str) -> tuple[list[dict], list[dict]]:
-    """Extract entities and relationships from a single chunk via LLM."""
+def format_extraction_prompt(chunk_content: str) -> str:
+    """Format the entity extraction prompt for a chunk.
+
+    Single source of truth for the extraction prompt — used by both
+    the litellm backend (extract_entities_from_chunk) and the agent
+    backend (queued LLM tasks).
+    """
     entity_types_str = ", ".join(ENTITY_TYPES)
-    prompt = ENTITY_EXTRACTION_PROMPT.format(
+    return ENTITY_EXTRACTION_PROMPT.format(
         entity_types=entity_types_str,
         tuple_delim=TUPLE_DELIMITER,
         record_delim=RECORD_DELIMITER,
         completion_delim=COMPLETION_DELIMITER,
         input_text=chunk_content,
     )
+
+
+async def extract_entities_from_chunk(chunk_content: str) -> tuple[list[dict], list[dict]]:
+    """Extract entities and relationships from a single chunk via LLM."""
+    prompt = format_extraction_prompt(chunk_content)
 
     messages = [{"role": "user", "content": prompt}]
     resp = await litellm.acompletion(model=CLASSIFICATION_MODEL, messages=messages)
