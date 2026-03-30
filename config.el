@@ -1220,6 +1220,7 @@
 (autoload 'agent-shell-emacs-mcp "agent-shell-emacs-mcp" "Start Claude with Emacs MCP integration." t)
 (autoload 'agent-shell-team "agent-shell-team" "Start multi-agent team session." t)
 (autoload 'agent-shell-team-status "agent-shell-team" "Team dashboard." t)
+(setq agent-shell-team-lead-quick-research-backend 'flash-lite)
 
 (defvar my/agent-shell-pending-worktree-path nil
   "Dynamic variable carrying worktree-path during agent-shell--start.
