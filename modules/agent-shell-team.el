@@ -390,6 +390,11 @@ here and delivered immediately when the agent finishes its current turn.")
 (defvar agent-shell-team--agent-current-task (make-hash-table :test 'eq)
   "Map of buffer -> current task message string for interrupt context recovery.")
 
+(defvar agent-shell-team--idle-fallback-notified (make-hash-table :test 'equal)
+  "Set of request-ids already notified via the idle fallback mechanism.
+Prevents repeated notifications on every poll cycle when a researcher
+goes idle without calling taskUpdate.")
+
 ;;; Idle inhibit (hypridle / screensaver)
 
 (defvar agent-shell-team--idle-inhibit-cookie nil
@@ -510,12 +515,60 @@ and makes D-Bus calls asynchronously to avoid blocking the main thread."
                (agent-shell-team--log agent-shell-team--session-id
                  (format "[idle-inhibit] DBus error (uninhibit): %s" (error-message-string err)))))))))))
 
+(defun agent-shell-team--check-researcher-idle-fallback (session-id buf agent-id)
+  "Check if researcher BUF went idle without calling taskUpdate.
+SESSION-ID is the team session.  AGENT-ID is the buffer name.
+If the researcher has an active task (still in `active-tasks') and
+hasn't been notified yet, deliver a system message to the lead."
+  (let ((request-id nil))
+    ;; Reverse-lookup: find request-id mapped to this buffer
+    (maphash (lambda (k v)
+               (when (eq v buf)
+                 (setq request-id k)))
+             agent-shell-team--request-to-buffer)
+    (when (and request-id
+               ;; Task is still active (taskUpdate "finished" not received)
+               (gethash request-id agent-shell-team--active-tasks)
+               ;; Haven't notified for this request-id yet
+               (not (gethash request-id agent-shell-team--idle-fallback-notified)))
+      (puthash request-id t agent-shell-team--idle-fallback-notified)
+      (let* ((task (gethash request-id agent-shell-team--active-tasks))
+             (report-path (plist-get task :report-path))
+             (report-has-content
+              (and report-path
+                   (file-readable-p report-path)
+                   (> (or (file-attribute-size (file-attributes report-path)) 0)
+                      50)))
+             (message-text
+              (if report-has-content
+                  (format "[System] Researcher %s (request-id: %s) went idle without calling taskUpdate. Report file may contain results: %s"
+                          agent-id request-id report-path)
+                (format "[System] Researcher %s (request-id: %s) went idle without calling taskUpdate. Report file is empty — agent may have failed silently."
+                        agent-id request-id)))
+             (lead-buf (agent-shell-team--get-lead session-id)))
+        (agent-shell-team--log session-id
+                               (format "[idle-fallback] %s" message-text))
+        (when lead-buf
+          (let ((lead-status (agent-shell-team--agent-status lead-buf)))
+            (pcase lead-status
+              ('idle
+               (agent-shell-team--prompt-agent lead-buf message-text))
+              ((or 'busy 'initializing)
+               (agent-shell-team--queue-message
+                session-id lead-buf
+                (list :from "system"
+                      :title "Researcher Idle Fallback"
+                      :message message-text)))
+              ('dead
+               (agent-shell-team--log session-id
+                                      "WARNING: lead buffer is dead, cannot deliver idle fallback")))))))))
+
 (defun agent-shell-team--sync-idle-inhibit ()
   "Scan all registered agents, sync busy files with actual status.
 Called from the drain timer to catch any missed transitions."
   (let ((changed nil))
     (maphash
-     (lambda (_session-id agents)
+     (lambda (session-id agents)
        (dolist (agent agents)
          (let* ((buf (alist-get 'buffer agent))
                 (agent-id (and (buffer-live-p buf) (buffer-name buf)))
@@ -529,7 +582,11 @@ Called from the drain timer to catch any missed transitions."
                ((or 'idle 'dead)
                 (when (gethash agent-id agent-shell-team--idle-inhibit-tracked)
                   (agent-shell-team--mark-agent-idle agent-id)
-                  (setq changed t))))))))
+                  (setq changed t)
+                  ;; Fallback: detect researcher that went idle without calling taskUpdate
+                  (when (equal (alist-get 'role agent) "researcher")
+                    (agent-shell-team--check-researcher-idle-fallback
+                     session-id buf agent-id)))))))))
      agent-shell-team--sessions)
     ;; If anything changed, update-idle-inhibit was already called by mark-*
     ;; but do a final reconciliation in case of races
@@ -2475,7 +2532,8 @@ agent's CLI process dies."
                  (push k removed-request-ids)
                  (remhash k agent-shell-team--request-to-buffer)
                  (remhash k agent-shell-team--request-to-session)
-                 (remhash k agent-shell-team--active-tasks)))
+                 (remhash k agent-shell-team--active-tasks)
+                 (remhash k agent-shell-team--idle-fallback-notified)))
              (copy-hash-table agent-shell-team--request-to-buffer))
     ;; Clean up group tracking for removed request-ids
     (dolist (rid removed-request-ids)
@@ -2778,6 +2836,7 @@ Route the status update directly to the lead agent's queue."
                        ;; and by assign-task-to-agent which proactively clears stale entries.
                        (when (equal st "finished")
                          (remhash rid agent-shell-team--active-tasks)
+                         (remhash rid agent-shell-team--idle-fallback-notified)
                          (when-let ((group-id (gethash rid agent-shell-team--request-to-group)))
                            (agent-shell-team--handle-task-completion rid sid nil))))))
       t)))
