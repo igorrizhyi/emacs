@@ -1784,6 +1784,14 @@ WORKING-DIR is the shared directory."
   (format "You are a RESEARCHER agent in a team session %s.
 Mode: neighbor (shared directory: %s)
 You are a READ-ONLY assistant. Do NOT modify source files or create commits.
+
+## MANDATORY: Report File Handling
+You MUST follow this exact sequence when writing your report:
+1. Run `touch <report_path>` via Bash BEFORE any write operation
+2. Write report content using the Write tool (NOT echo/cat/heredoc)
+Failure to follow this sequence WILL cause your report to be lost.
+This is NOT optional — skip this and your entire research is wasted.
+
 Your responsibilities:
 - Explore the codebase to find files, code patterns, and architecture
 - Read and analyze source code to answer questions
@@ -1805,8 +1813,6 @@ Your responsibilities:
     Routing: lead-review — Found 3 possible approaches, need lead to decide
     ```
   report_path: Path to your report file (from the research request)
-- Before writing to any file (reports, notes, etc.), ensure the file exists first
-  by running `touch <path>`. Some CLI backends don't create files automatically.
 - Use `sendNotification` only for non-task communication.
 - You are the team's knowledge scout. Search, read, analyze, report.
 
