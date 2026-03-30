@@ -62,15 +62,15 @@ Technical knowledge chunks:
 -Output Format-
 Use this exact delimited format:
 
-FEATURE<|>{feature_name}<|>{feature_description}
+FEATURE<|>{{feature_name}}<|>{{feature_description}}
 ##
-SCENARIO<|>{scenario_name}<|>{given}<|>{when}<|>{then}
+SCENARIO<|>{{scenario_name}}<|>{{given}}<|>{{when}}<|>{{then}}
 ##
-SCENARIO<|>{scenario_name}<|>{given}<|>{when}<|>{then}
+SCENARIO<|>{{scenario_name}}<|>{{given}}<|>{{when}}<|>{{then}}
 ##
-IMPLEMENTS<|>{entity_name_1}<|>{entity_name_2}
+IMPLEMENTS<|>{{entity_name_1}}<|>{{entity_name_2}}
 ##
-DEPENDS_ON<|>{feature_name_1}<|>{feature_name_2}
+DEPENDS_ON<|>{{feature_name_1}}<|>{{feature_name_2}}
 ##
 <|COMPLETE|>
 
@@ -178,25 +178,26 @@ def gather_feature_context(graph, theme_name: str) -> list[dict]:
 
     if len(chunks) < 3:
         # Step 2: Expand via co-occurring entities (1 hop)
-        existing_ids = [c["id"] for c in chunks]
+        existing_ids = {c["id"] for c in chunks}
         result = graph.query(
             """
             MATCH (e:Entity {name: $theme})<-[:HAS_ENTITY]-(c1:Chunk)
                   -[:HAS_ENTITY]->(e2:Entity)<-[:HAS_ENTITY]-(c2:Chunk)
-            WHERE c2.id NOT IN $existing
             OPTIONAL MATCH (superseder:Chunk)-[:SUPERSEDES]->(c2)
-            WITH c2 WHERE superseder IS NULL
+            WITH c2, superseder WHERE superseder IS NULL
             RETURN DISTINCT c2.id, c2.content, c2.source, c2.section, c2.created_at
             ORDER BY c2.created_at DESC
-            LIMIT 5
+            LIMIT 10
             """,
-            params={"theme": theme_name, "existing": existing_ids},
+            params={"theme": theme_name},
         )
+        # Filter out already-collected chunks in Python
         chunks.extend([
             {"id": r[0], "content": r[1], "source": r[2],
              "section": r[3], "created_at": r[4]}
             for r in result.result_set
-        ])
+            if r[0] not in existing_ids
+        ][:5])
 
     return chunks[:10]
 
