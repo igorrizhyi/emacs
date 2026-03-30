@@ -431,7 +431,9 @@ async def _handle_submit_llm_result(arguments: dict) -> list[types.TextContent]:
             # no-ops if no theme entities were touched.
             feature_chunks = [{"id": cid} for cid in chunk_ids]
             if feature_chunks:
-                await extract_features_for_batch(graph, feature_chunks)
+                feature_task_ids = await extract_features_for_batch(graph, feature_chunks)
+                if feature_task_ids:
+                    asyncio.create_task(_dispatch_knowledge_agent(feature_task_ids))
 
             cleanup_task(PROJECT_ROOT, task_id)
             return [types.TextContent(

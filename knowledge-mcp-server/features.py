@@ -355,11 +355,13 @@ async def upsert_feature(graph, feature_data: dict):
 # ---------------------------------------------------------------------------
 
 
-async def extract_features_for_batch(graph, chunks: list[dict]):
+async def extract_features_for_batch(graph, chunks: list[dict]) -> list[str]:
     """Feature extraction pipeline -- called after entity extraction.
 
     Identifies touched theme entities from the given chunks, gathers context
     per theme, calls LLM for Feature extraction, deduplicates, and upserts.
+
+    Returns list of queued task UUIDs (agent backend) or empty list.
     """
     # 1. Identify touched theme entities
     chunk_ids = [c["id"] for c in chunks]
@@ -375,7 +377,7 @@ async def extract_features_for_batch(graph, chunks: list[dict]):
     themes = [{"name": r[0], "description": r[1] or ""} for r in result.result_set]
 
     if not themes:
-        return
+        return []
 
     # 2. Get existing Feature names (for dedup + cross-reference)
     existing_features = _fetch_existing_features(graph)
@@ -391,7 +393,7 @@ async def extract_features_for_batch(graph, chunks: list[dict]):
     entity_list = [f"{r[0]} ({r[1]})" for r in all_entities.result_set]
 
     # 4. For each theme, gather context and extract Feature
-    queued = 0
+    queued_task_ids: list[str] = []
     for theme in themes:
         context_chunks = gather_feature_context(graph, theme["name"])
         if len(context_chunks) < 2:
@@ -413,13 +415,13 @@ async def extract_features_for_batch(graph, chunks: list[dict]):
 
         # 5. LLM call (or queue for agent backend)
         if KNOWLEDGE_LLM_BACKEND == "agent":
-            queue_llm_task(
+            tid = queue_llm_task(
                 PROJECT_ROOT,
                 "feature_extraction",
                 prompt,
                 context={"theme": theme["name"]},
             )
-            queued += 1
+            queued_task_ids.append(tid)
             continue
 
         resp = await litellm.acompletion(
@@ -459,7 +461,9 @@ async def extract_features_for_batch(graph, chunks: list[dict]):
         if feature_data["name"] not in existing_features:
             existing_features.append(feature_data["name"])
 
-    if queued:
-        logger.info("Feature extraction: processed %d themes (%d queued for agent)", len(themes), queued)
+    if queued_task_ids:
+        logger.info("Feature extraction: processed %d themes (%d queued for agent)", len(themes), len(queued_task_ids))
     else:
         logger.info("Feature extraction: processed %d themes", len(themes))
+
+    return queued_task_ids
