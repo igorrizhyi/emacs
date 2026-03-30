@@ -177,6 +177,7 @@ not constraints. The value is in entity names and descriptions.
 - Do NOT extract specific line number references (e.g., 'line 790', 'lines 2283-2329')
 
 - Prefer ONE entity per feature/concept rather than splitting into sub-entities. For example, extract 'RESERVED AGENT STATUS' as one entity, not separate entities for 'reserved status detection', 'reserved dismiss guard', 'reserved sidebar UI', etc.
+- For 'theme' entities, prefer broad, reusable topics that can span multiple documents or discussions, even if the current chunk only touches on a specific aspect. For example, instead of 'FALKORDB NOT EXISTS SYNTAX FIX', prefer 'GRAPH DATABASE COMPATIBILITY'.
 - For relationships, use the relationship description to capture sub-aspects rather than creating separate entities.
 
 - Use the FULL 1-10 range for relationship_strength. Reserve 9-10 for direct dependencies (A uses B, A contains B). Use 5-7 for related concepts. Use 1-4 for loose associations.
