@@ -43,9 +43,10 @@
 
 ;; Auto-revert agent-shell files modified by agent processes
 (defun my/auto-revert-agent-shell-files ()
-  "Enable `auto-revert-mode' for files under .agent-shell/."
+  "Enable `auto-revert-mode' for files under .agent-shell/, excluding reports."
   (when (and buffer-file-name
-             (string-match-p "/\\.agent-shell/" buffer-file-name))
+             (string-match-p "/\\.agent-shell/" buffer-file-name)
+             (not (string-match-p "/\\.agent-shell/reports/" buffer-file-name)))
     (auto-revert-mode 1)))
 
 (add-hook 'find-file-hook #'my/auto-revert-agent-shell-files)
