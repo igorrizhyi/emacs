@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import logging.handlers
 import os
 import sys
 
@@ -36,7 +37,26 @@ from llm_queue import (
     submit_llm_result as _submit_llm_result, cleanup_task,
 )
 
+# Stderr fallback (useful when running manually in a terminal)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(name)s %(levelname)s %(message)s')
+
+# File handler — logs to knowledge-mcp-server/logs/server.log with rotation
+_log_dir = os.path.join(os.path.dirname(__file__), 'logs')
+os.makedirs(_log_dir, exist_ok=True)
+
+_ns_label = os.environ.get("NAMESPACE") or GRAPH_NAME
+_file_formatter = logging.Formatter(
+    f'%(asctime)s [pid:%(process)d ns:{_ns_label}] %(name)s %(levelname)s %(message)s'
+)
+_file_handler = logging.handlers.RotatingFileHandler(
+    os.path.join(_log_dir, 'server.log'),
+    maxBytes=5 * 1024 * 1024,  # 5 MB
+    backupCount=3,
+)
+_file_handler.setLevel(logging.INFO)
+_file_handler.setFormatter(_file_formatter)
+logging.getLogger().addHandler(_file_handler)
+
 logger = logging.getLogger(__name__)
 
 _project = _resolve_project()
