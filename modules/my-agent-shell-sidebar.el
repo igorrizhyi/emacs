@@ -1860,7 +1860,8 @@ collapse into one toggle."
   (let ((my/team-sidebar--toggling t)
         (sel-buf (window-buffer (selected-window))))
     (if (my/team-sidebar--team-related-buffer-p sel-buf)
-        (my/team-sidebar--show)
+        (unless (get-buffer-window my/team-sidebar-buffer-name)
+          (my/team-sidebar--show))
       (my/team-sidebar--hide))))
 
 ;;; ---- Refresh Timer ----------------------------------------------------------
