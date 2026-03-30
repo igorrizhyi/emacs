@@ -165,9 +165,22 @@ Entity type descriptions:
 - tool: A specific tool, database, or external dependency
 - identifier: A function name, variable, configuration key, or code symbol
 - location: A file path, directory, URL, or endpoint
-- theme: A broad topic or area that this knowledge relates to (e.g., "task persistence", "agent lifecycle", "graph search", "MCP protocol")
+- theme: A high-level, overarching topic or domain relevant to the team's work.
 
-Important: Extract ANY notable named thing regardless of type. The types above are hints, \
+---
+Special Instructions for 'theme' entities:
+- Aim for **broad, reusable topics** that provide meaningful context across multiple documents or discussions. Think several levels of abstraction above the immediate chunk content.
+- **Utilize chunk metadata:** The input text often begins with `[Source: ..., Section: ...]`. Use these to infer the broader context (e.g., from which file or document section this knowledge originates) and categorize the chunk's content into higher-level themes.
+- **Good Theme Examples (Prefer these over too-specific themes):**
+  - Instead of "FALKORDB NOT EXISTS SYNTAX FIX", prefer "GRAPH DATABASE COMPATIBILITY" or "DATABASE SCHEMA MIGRATION".
+  - Instead of "BUG IN AGENT-SHELL UI DISPLAY", prefer "USER INTERFACE DEBUGGING" or "AGENT STATE VISUALIZATION".
+  - Instead of "FIX FOR A PARTICULAR ERROR LOG", prefer "ERROR HANDLING STRATEGIES" or "LOGGING AND MONITORING".
+  - If a chunk is about a specific Emacs command, consider a broader theme like "EMACS LISP DEVELOPMENT" or "TEXT EDITOR CUSTOMIZATION".
+- If no broad, directly supported theme is apparent, do not invent one. Focus on accurately generalizing the core subject matter.
+
+---
+General Extraction Guidance:
+- Important: Extract ANY notable named thing regardless of type. The types above are hints, \
 not constraints. The value is in entity names and descriptions.
 - Do NOT extract git commit hashes (e.g., c5d4603, bacea92) as entities. They are ephemeral references, not meaningful concepts.
 - Do NOT extract programming language constructs or primitives (e.g., let*, defvar, nil, t, lambda, async/await)
@@ -177,7 +190,6 @@ not constraints. The value is in entity names and descriptions.
 - Do NOT extract specific line number references (e.g., 'line 790', 'lines 2283-2329')
 
 - Prefer ONE entity per feature/concept rather than splitting into sub-entities. For example, extract 'RESERVED AGENT STATUS' as one entity, not separate entities for 'reserved status detection', 'reserved dismiss guard', 'reserved sidebar UI', etc.
-- For 'theme' entities, prefer broad, reusable topics that can span multiple documents or discussions, even if the current chunk only touches on a specific aspect. For example, instead of 'FALKORDB NOT EXISTS SYNTAX FIX', prefer 'GRAPH DATABASE COMPATIBILITY'.
 - For relationships, use the relationship description to capture sub-aspects rather than creating separate entities.
 
 - Use the FULL 1-10 range for relationship_strength. Reserve 9-10 for direct dependencies (A uses B, A contains B). Use 5-7 for related concepts. Use 1-4 for loose associations.
