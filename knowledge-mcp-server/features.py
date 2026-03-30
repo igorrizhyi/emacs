@@ -405,24 +405,38 @@ async def extract_features_for_batch(graph, chunks: list[dict]) -> list[str]:
             for c in context_chunks
         )
 
-        prompt = FEATURE_EXTRACTION_PROMPT.format(
-            theme_name=theme["name"],
-            theme_description=theme["description"],
-            existing_features="\n".join(f"- {f}" for f in existing_features) or "None yet",
-            entity_list="\n".join(f"- {e}" for e in entity_list[:50]) or "None",
-            chunk_contents=chunk_contents,
-        )
+        existing_features_str = "\n".join(f"- {f}" for f in existing_features) or "None yet"
+        entity_list_str = "\n".join(f"- {e}" for e in entity_list[:50]) or "None"
 
         # 5. LLM call (or queue for agent backend)
         if KNOWLEDGE_LLM_BACKEND == "agent":
+            # Pass only dynamic context; agent applies cached template
+            dynamic_context = (
+                f"Theme: {theme['name']}\n"
+                f"Theme description: {theme['description']}\n\n"
+                f"Existing Features in the system (for @depends_on references):\n"
+                f"{existing_features_str}\n\n"
+                f"Key entities mentioned in the chunks:\n"
+                f"{entity_list_str}\n\n"
+                f"Technical knowledge chunks:\n"
+                f"{chunk_contents}"
+            )
             tid = queue_llm_task(
                 PROJECT_ROOT,
                 "feature_extraction",
-                prompt,
+                dynamic_context,
                 context={"theme": theme["name"]},
             )
             queued_task_ids.append(tid)
             continue
+
+        prompt = FEATURE_EXTRACTION_PROMPT.format(
+            theme_name=theme["name"],
+            theme_description=theme["description"],
+            existing_features=existing_features_str,
+            entity_list=entity_list_str,
+            chunk_contents=chunk_contents,
+        )
 
         resp = await litellm.acompletion(
             model=CLASSIFICATION_MODEL, messages=[{"role": "user", "content": prompt}]

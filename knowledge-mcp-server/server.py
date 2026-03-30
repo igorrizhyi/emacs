@@ -19,15 +19,17 @@ from common import (
     create_cross_role_edges,
     detect_supersession, create_supersedes_edges,
     _resolve_project, _CLASSIFY_PROMPT,
-    CLASSIFICATION_MODEL,
+    CLASSIFICATION_MODEL, SYSTEM_PROMPTS,
 )
 from entities import (
     extract_and_store_entities,
     merge_and_upsert_entities, merge_and_upsert_relationships,
     parse_extraction_output,
     format_extraction_prompt,
+    ENTITY_EXTRACTION_PROMPT, ENTITY_TYPES,
+    TUPLE_DELIMITER, RECORD_DELIMITER, COMPLETION_DELIMITER,
 )
-from features import extract_features_for_batch, parse_feature_extraction_output, upsert_feature
+from features import extract_features_for_batch, parse_feature_extraction_output, upsert_feature, FEATURE_EXTRACTION_PROMPT
 from llm_queue import (
     queue_llm_task, get_llm_task as _get_llm_task,
     submit_llm_result as _submit_llm_result, cleanup_task,
@@ -113,6 +115,14 @@ TOOLS = [
             "required": ["id", "result"],
         },
     ),
+    types.Tool(
+        name="get_prompts",
+        description="Get LLM prompt templates for entity/feature extraction and classification. Call once on startup to cache prompts for the session.",
+        inputSchema={
+            "type": "object",
+            "properties": {},
+        },
+    ),
 ]
 
 
@@ -137,10 +147,34 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             return await _handle_get_llm_task(arguments)
         elif name == "submit_llm_result":
             return await _handle_submit_llm_result(arguments)
+        elif name == "get_prompts":
+            return _handle_get_prompts()
         else:
             return [types.TextContent(type="text", text=f"Unknown tool: {name}")]
     except Exception as e:
         return [types.TextContent(type="text", text=f"Error: {e}")]
+
+
+def _handle_get_prompts() -> list[types.TextContent]:
+    """Return all LLM prompt templates as a JSON object."""
+    entity_types_str = ", ".join(ENTITY_TYPES)
+    prompts = {
+        "entity_extraction": {
+            "template": ENTITY_EXTRACTION_PROMPT,
+            "entity_types": entity_types_str,
+            "tuple_delimiter": TUPLE_DELIMITER,
+            "record_delimiter": RECORD_DELIMITER,
+            "completion_delimiter": COMPLETION_DELIMITER,
+        },
+        "feature_extraction": {
+            "template": FEATURE_EXTRACTION_PROMPT,
+        },
+        "supersession_classification": {
+            "template": _CLASSIFY_PROMPT,
+        },
+        "synthesis": SYSTEM_PROMPTS,
+    }
+    return [types.TextContent(type="text", text=json.dumps(prompts, indent=2))]
 
 
 async def _handle_query(arguments: dict) -> list[types.TextContent]:
@@ -316,14 +350,14 @@ async def _store_and_queue_llm(content: str, source: str, roles: list[str]) -> l
         if supersessions:
             create_supersedes_edges(graph, supersessions)
 
-        # Entity extraction: queue one task per chunk with the full
-        # extraction prompt (entity types, format, examples).  This is the
-        # single source of truth — derived from ENTITY_TYPES in entities.py.
+        # Entity extraction: queue one task per chunk with raw content only.
+        # The agent fetches prompt templates via get_prompts() on startup
+        # and applies the entity_extraction template to the raw content.
         for chunk in chunks:
             tid = queue_llm_task(
                 PROJECT_ROOT,
                 "entity_extraction",
-                format_extraction_prompt(chunk["content"]),
+                chunk["content"],
                 context={"chunk_ids": [chunk["id"]]},
             )
             task_ids.append(tid)

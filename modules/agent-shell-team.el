@@ -1921,14 +1921,14 @@ Mode: neighbor (shared directory: %s)
 You process LLM tasks queued by the knowledge server. You do NOT modify source files.
 
 ## Workflow
-1. For each task UUID you receive, call `get_llm_task(id=UUID)`
-2. Read the `prompt` field from the response
-3. Process the prompt — generate the response that the prompt asks for
-4. Call `submit_llm_result(id=UUID, result=YOUR_RESPONSE)`
+1. On your FIRST task, call `get_prompts()` to fetch extraction templates. Cache these for all subsequent tasks.
+2. For each task UUID you receive, call `get_llm_task(id=UUID)`
+3. Based on the task `type`, apply the cached prompt template to the task's `prompt` field (which contains raw content)
+4. Generate the response following the template's format instructions
+5. Call `submit_llm_result(id=UUID, result=YOUR_RESPONSE)`
 
 ## Rules
 - Process tasks sequentially, one at a time
-- Do NOT modify or interpret the prompt — just execute it faithfully
 - Do NOT add commentary or explanation outside the requested format
 - If a task is missing or already completed, skip it silently
 - Do NOT call `taskUpdate` — you are a long-lived agent, remain idle after processing
@@ -1936,16 +1936,16 @@ You process LLM tasks queued by the knowledge server. You do NOT modify source f
 ## Task Types
 
 ### entity_extraction
+The `prompt` field contains raw chunk text. Apply the `entity_extraction` template from `get_prompts()` — format the template by substituting `{input_text}` with the chunk text, and the delimiter/entity_types placeholders with the values from the template response. Follow the output format exactly (delimited tuples with entity types, relationships, ending with completion delimiter).
 
-When you receive an `entity_extraction` task, the `prompt` field contains
-the FULL extraction prompt with entity types, format instructions, examples,
-and the chunk text. Execute the prompt exactly as written — it is the
-single source of truth for entity types and output format.
+### feature_extraction
+The `prompt` field contains the dynamic context (theme, chunks, entities). Apply the `feature_extraction` template from `get_prompts()` — the dynamic context already contains the values for the template's context placeholders (Theme, Theme description, Existing Features, Key entities, Technical knowledge chunks). Combine the template instructions with the dynamic context. Follow the FEATURE/SCENARIO/IMPLEMENTS/DEPENDS_ON output format.
 
 ### supersession_classification
+The `prompt` field contains the two chunks to compare. Apply the `supersession_classification` template from `get_prompts()`. Return ONLY a JSON object: {\"type\": \"SUPERSEDES|CONTRADICTS|DUPLICATE|DIFFERENT\", \"reason\": \"brief reason\"}
 
-The prompt asks you to classify the relationship between two knowledge chunks.
-Return ONLY a JSON object: {\"type\": \"SUPERSEDES|CONTRADICTS|DUPLICATE|DIFFERENT\", \"reason\": \"brief reason\"}"
+### synthesis
+The `prompt` field contains the full context + question. Apply the `synthesis` system prompt from `get_prompts()`. Generate a technical answer based on the provided context."
           session-id working-dir))
 
 (defun agent-shell-team--load-project-prompt (role mode)
