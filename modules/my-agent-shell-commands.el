@@ -28,12 +28,22 @@ Changes take effect for newly spawned researcher agents."
                        ("Gemini 2.5 Pro"         . "gemini-2.5-pro")
                        ("Gemini 2.5 Flash"       . "gemini-2.5-flash")
                        ("Gemini 2.5 Flash Lite"  . "gemini-2.5-flash-lite")))
-         ;; Look up current researcher model from config
-         (current-model (or (alist-get 'researcher agent-shell-team-role-models)
-                            (cdr (assoc "researcher" agent-shell-team-role-models))
-                            (let ((backend (or (alist-get 'researcher agent-shell-team-role-backends)
-                                               (cdr (assoc "researcher" agent-shell-team-role-backends)))))
-                              (if (eq backend 'gemini) "gemini-2.5-flash" "claude-sonnet-4-6"))))
+         ;; Look up current researcher model from config (supports both symbol and string keys)
+         (raw-model (or (alist-get 'researcher agent-shell-team-role-models)
+                        (cdr (assoc "researcher" agent-shell-team-role-models))))
+         (backend (or (alist-get 'researcher agent-shell-team-role-backends)
+                      (cdr (assoc "researcher" agent-shell-team-role-backends))))
+         ;; Normalize to a full model ID that exists in all-models
+         (current-model
+          (or (and raw-model
+                   (or ;; Exact match against full IDs
+                       (and (seq-find (lambda (e) (equal (cdr e) raw-model)) all-models)
+                            raw-model)
+                       ;; Substring match for short names like "sonnet" → "claude-sonnet-4-6"
+                       (cdr (seq-find (lambda (e) (string-match-p (regexp-quote raw-model) (cdr e)))
+                                      all-models))))
+              ;; Fallback: derive from backend
+              (if (eq backend 'gemini) "gemini-2.5-flash" "claude-sonnet-4-6")))
          ;; Build "Default (<label>)" entry and prepend it
          (default-entry (seq-find (lambda (e) (equal (cdr e) current-model)) all-models))
          (default-label (format "Default (%s)" (or (car default-entry) current-model)))
