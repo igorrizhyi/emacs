@@ -816,9 +816,13 @@ Does NOT attempt OAuth refresh — the CLI handles token refresh."
 
 (defun my/team-sidebar--gemini-model-short-name (model-id)
   "Return a short display name for Gemini MODEL-ID.
-E.g., \"models/gemini-2.5-pro\" → \"2.5-pro\"."
+E.g., \"models/gemini-2.5-pro\" → \"pro\"."
   (cond
    ((null model-id) "?")
+   ((string-match-p "flash-lite" model-id) "lit")
+   ((string-match-p "2\\.5-flash" model-id) "fls")
+   ((string-match-p "2\\.5-pro" model-id) "pro")
+   ((string-match-p "2\\.0-flash" model-id) "2.0")
    ((string-match "gemini-\\(.+\\)" model-id)
     (match-string 1 model-id))
    (t model-id)))
@@ -881,7 +885,7 @@ E.g., \"models/gemini-2.5-pro\" → \"2.5-pro\"."
              (reset-str (alist-get 'resetTime bucket))
              (reset-ts (my/team-sidebar--gemini-parse-reset-time reset-str)))
         (my/team-sidebar--quota-render-bar
-         (truncate-string-to-width label 3 nil nil "") util reset-ts)))
+         label util reset-ts)))
     (insert "\n")
     t)
    ((not (file-exists-p my/team-sidebar--gemini-creds-file))
