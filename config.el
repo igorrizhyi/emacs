@@ -1222,6 +1222,21 @@
 (autoload 'agent-shell-team-status "agent-shell-team" "Team dashboard." t)
 (setq agent-shell-team-lead-quick-research-backend 'flash-lite)
 
+(defun my/toggle-researcher-backend ()
+  "Select researcher agent backend from predefined options.
+Changes take effect for newly spawned researcher agents."
+  (interactive)
+  (let* ((options '(("Claude Sonnet"          . (claude  . "claude-sonnet-4-6"))
+                    ("Gemini 2.5 Flash"       . (gemini  . "gemini-2.5-flash"))
+                    ("Gemini 2.5 Flash Lite"  . (gemini  . "gemini-2.5-flash-lite"))))
+         (choice (completing-read "Researcher backend: " (mapcar #'car options) nil t))
+         (entry (alist-get choice options nil nil #'equal))
+         (backend (car entry))
+         (model (cdr entry)))
+    (setf (alist-get 'researcher agent-shell-team-role-backends) backend)
+    (setf (alist-get 'researcher agent-shell-team-role-models) model)
+    (message "Researcher backend: %s / %s" backend model)))
+
 (defvar my/agent-shell-pending-worktree-path nil
   "Dynamic variable carrying worktree-path during agent-shell--start.
 Used by `my/agent-shell-bwrap-prefix' to access the worktree path before
