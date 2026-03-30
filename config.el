@@ -844,6 +844,10 @@
    ((evil-insert-state-p)
     (newline))
 
+   ;; In team sidebar, use sidebar's smart-enter
+   ((derived-mode-p 'my/team-sidebar-mode)
+    (call-interactively #'my/team-sidebar-switch-to-agent))
+
    ;; In agent-shell buffers, toggle sections or activate buttons
    ((derived-mode-p 'agent-shell-mode)
       ;; Simulate insert-mode RET so button keymaps fire correctly
