@@ -161,7 +161,8 @@ def gather_feature_context(graph, theme_name: str) -> list[dict]:
     result = graph.query(
         """
         MATCH (c:Chunk)-[:HAS_ENTITY]->(e:Entity {name: $theme})
-        WHERE NOT EXISTS { MATCH (c2:Chunk)-[:SUPERSEDES]->(c) }
+        OPTIONAL MATCH (superseder:Chunk)-[:SUPERSEDES]->(c)
+        WITH c WHERE superseder IS NULL
         RETURN c.id, c.content, c.source, c.section, c.created_at
         ORDER BY c.created_at DESC
         LIMIT 15
@@ -183,7 +184,8 @@ def gather_feature_context(graph, theme_name: str) -> list[dict]:
             MATCH (e:Entity {name: $theme})<-[:HAS_ENTITY]-(c1:Chunk)
                   -[:HAS_ENTITY]->(e2:Entity)<-[:HAS_ENTITY]-(c2:Chunk)
             WHERE c2.id NOT IN $existing
-              AND NOT EXISTS { MATCH (c3:Chunk)-[:SUPERSEDES]->(c2) }
+            OPTIONAL MATCH (superseder:Chunk)-[:SUPERSEDES]->(c2)
+            WITH c2 WHERE superseder IS NULL
             RETURN DISTINCT c2.id, c2.content, c2.source, c2.section, c2.created_at
             ORDER BY c2.created_at DESC
             LIMIT 5
