@@ -498,6 +498,14 @@ _SESSION-ID is unused but kept for consistency."
     ;; Clean up any queued messages for this buffer
     (remhash (current-buffer) agent-shell-team--message-queue)))
 
+(defun agent-shell-team-teardown ()
+  "Remove all global hooks and timers registered by agent-shell-team.
+Call this to cleanly unload the module or reset team state."
+  (interactive)
+  (remove-hook 'kill-buffer-hook #'agent-shell-team--buffer-kill-hook)
+  (agent-shell-team--stop-drain-timer))
+
+(remove-hook 'kill-buffer-hook #'agent-shell-team--buffer-kill-hook)
 (add-hook 'kill-buffer-hook #'agent-shell-team--buffer-kill-hook)
 
 ;;; Agent spawning
