@@ -898,7 +898,6 @@
       "<return>" #'my/smart-enter  ; Smart Enter behavior
       "<tab>" #'evilem-motion-find-char  ; Find char forward
       "<backtab>" #'evilem-motion-find-char-backward  ; Find char backward
-      "C-w" #'kill-current-buffer  ; Kill buffer with C-w
       "S" #'diff-hl-show-hunk  ; Show diff hunk with S
       "U" #'evil-redo)  ; Redo with U (undo is u)
 
