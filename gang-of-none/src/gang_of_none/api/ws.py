@@ -11,6 +11,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from gang_of_none.api.connection_manager import ConnectionManager
 from gang_of_none.api.rpc_router import RPCRouter
 from gang_of_none.core.agent_manager import AgentManager
+from gang_of_none.core.namespace_manager import NamespaceManager
 from gang_of_none.core.task_manager import TaskManager
 from gang_of_none.models.enums import ApprovalType, TaskStatus
 from gang_of_none.models.task import TaskCreate, TaskUpdate
@@ -22,10 +23,6 @@ router = APIRouter()
 # Pending approval requests: request_id → approval data
 _pending_approvals: dict[str, dict[str, Any]] = {}
 
-# Peer connections: session_id → peer info (pid, hostname, project_root)
-_peer_info: dict[str, dict[str, Any]] = {}
-
-
 def _get_managers(ws: WebSocket) -> tuple[ConnectionManager, AgentManager, TaskManager]:
     """Retrieve managers from app state (set during lifespan)."""
     app = ws.app
@@ -35,6 +32,11 @@ def _get_managers(ws: WebSocket) -> tuple[ConnectionManager, AgentManager, TaskM
 def _get_orchestrator(ws: WebSocket):
     """Retrieve orchestrator from app state."""
     return ws.app.state.orchestrator
+
+
+def _get_namespace_manager(ws: WebSocket) -> NamespaceManager | None:
+    """Retrieve namespace manager from app state."""
+    return getattr(ws.app.state, "namespace_manager", None)
 
 
 def build_rpc_router(
@@ -162,35 +164,31 @@ def build_rpc_router(
 
     async def handle_message_namespace_peer(params: dict[str, Any]) -> dict[str, Any]:
         conn_mgr, _, _ = _get_managers(websocket)
+        ns_mgr = _get_namespace_manager(websocket)
         target_pid = params.get("target_pid")
         message = params.get("message", "")
 
-        # Find peer session by pid
-        target_session = None
-        for sid, info in _peer_info.items():
-            if info.get("pid") == target_pid:
-                target_session = sid
-                break
+        if ns_mgr is not None:
+            # Use file-based IPC for cross-instance messaging
+            ns_mgr.send_to_peer(target_pid, message)
+            return {"success": True}
 
-        if target_session is None:
-            return {"success": False, "message": f"Peer with pid={target_pid} not found"}
-
-        await conn_mgr.broadcast(target_session, {
-            "jsonrpc": "2.0",
-            "method": "peer/message",
-            "params": {
-                "from_session": session_id,
-                "message": message,
-            },
-        })
-        return {"success": True}
+        # Fallback: try to deliver via WebSocket if peer is in this instance
+        return {"success": False, "message": f"Peer with pid={target_pid} not found"}
 
     async def handle_list_namespace_peers(params: dict[str, Any]) -> dict[str, Any]:
-        peers = [
-            {"pid": info.get("pid"), "hostname": info.get("hostname", ""), "project_root": info.get("project_root", "")}
-            for info in _peer_info.values()
-        ]
-        return {"success": True, "peers": peers, "count": len(peers)}
+        ns_mgr = _get_namespace_manager(websocket)
+        if ns_mgr is not None:
+            peers = ns_mgr.list_peers()
+            return {
+                "success": True,
+                "peers": [
+                    {"pid": p.pid, "hostname": p.hostname, "project_root": p.project_root}
+                    for p in peers
+                ],
+                "count": len(peers),
+            }
+        return {"success": True, "peers": [], "count": 0}
 
     rpc.register("tasksPut", handle_tasks_put)
     rpc.register("taskUpdate", handle_task_update)
@@ -204,14 +202,25 @@ def build_rpc_router(
     return rpc
 
 
-def register_peer(session_id: str, peer_info: dict[str, Any]) -> None:
+def register_peer(session_id: str, peer_info: dict[str, Any], ns_mgr: NamespaceManager | None = None) -> None:
     """Register peer info for namespace peer discovery."""
-    _peer_info[session_id] = peer_info
+    if ns_mgr is not None:
+        from gang_of_none.models.namespace import Peer
+        from datetime import datetime, timezone
+        peer = Peer(
+            pid=peer_info.get("pid", 0),
+            hostname=peer_info.get("hostname", ""),
+            project_root=peer_info.get("project_root", ""),
+            namespace=peer_info.get("namespace", ""),
+            connected_at=datetime.now(timezone.utc),
+        )
+        ns_mgr.register_peer(session_id, peer)
 
 
-def unregister_peer(session_id: str) -> None:
+def unregister_peer(session_id: str, ns_mgr: NamespaceManager | None = None) -> None:
     """Remove peer info on disconnect."""
-    _peer_info.pop(session_id, None)
+    if ns_mgr is not None:
+        ns_mgr.unregister_peer(session_id)
 
 
 def resolve_approval(request_id: str) -> dict[str, Any] | None:
@@ -245,4 +254,4 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
         logger.exception("ws.error", session_id=session_id)
     finally:
         conn_mgr.disconnect(session_id, websocket)
-        unregister_peer(session_id)
+        unregister_peer(session_id, _get_namespace_manager(websocket))
