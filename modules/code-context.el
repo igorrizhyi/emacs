@@ -209,6 +209,12 @@ Changes when crossing function/class boundaries.")
     (setq-local code-context--overlay nil))
   (remove-overlays (point-min) (point-max) 'type 'code-context--overlay))
 
+(defun code-context--cleanup ()
+  "Clean up code-context resources in the current buffer.
+Intended for `kill-buffer-hook' to prevent orphaned overlays."
+  (when (overlayp code-context--overlay)
+    (delete-overlay code-context--overlay)))
+
 ;;; Hook functions
 
 (defun code-context--on-scroll (window display-start)
@@ -330,6 +336,7 @@ Uses `syntax-ppss' to reliably skip strings and comments."
         (advice-add #'window-resize :before #'code-context--window-resize-before)
         (advice-add #'window-resize :after #'code-context--window-resize-after)
 
+        (add-hook 'kill-buffer-hook #'code-context--cleanup nil t)
         (add-hook 'pre-command-hook #'code-context--pre-command-hook nil t)
         (add-hook 'post-command-hook #'code-context--post-command-hook nil t)
         (add-hook 'window-scroll-functions #'code-context--on-scroll nil t)
@@ -341,6 +348,7 @@ Uses `syntax-ppss' to reliably skip strings and comments."
     (code-context--remove)
     (advice-remove #'window-resize #'code-context--window-resize-before)
     (advice-remove #'window-resize #'code-context--window-resize-after)
+    (remove-hook 'kill-buffer-hook #'code-context--cleanup t)
     (remove-hook 'pre-command-hook #'code-context--pre-command-hook t)
     (remove-hook 'post-command-hook #'code-context--post-command-hook t)
     (remove-hook 'window-scroll-functions #'code-context--on-scroll t)
