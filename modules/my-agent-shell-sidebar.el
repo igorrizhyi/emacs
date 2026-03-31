@@ -45,6 +45,7 @@
 (defvar agent-shell-team--task-groups)
 (defvar agent-shell-team--request-to-group)
 (declare-function agent-shell-team--load-all-sessions "agent-shell-team")
+(declare-function agent-shell-team--invalidate-sessions-cache "agent-shell-team")
 (declare-function agent-shell-team--load-tasks "agent-shell-team")
 (declare-function agent-shell-team--get-lead "agent-shell-team")
 (declare-function agent-shell-team--queue-message "agent-shell-team")
@@ -1789,6 +1790,8 @@ Cancels any pending preview timer before scheduling a new one."
   (setq my/team-sidebar--history-cache nil
         my/team-sidebar--history-cache-time 0
         my/team-sidebar--manually-collapsed nil)
+  (when (fboundp 'agent-shell-team--invalidate-sessions-cache)
+    (agent-shell-team--invalidate-sessions-cache))
   (clrhash my/team-sidebar--file-exists-cache)
   (my/team-sidebar--render))
 

@@ -921,27 +921,45 @@ starts with \"kb-auto-\".  Rewrites only files that had entries removed."
             (pp filtered (current-buffer))))))
     (message "Purged %d knowledge entries from %d task files" cleaned files-modified)))
 
+(defvar agent-shell-team--sessions-cache nil
+  "Cached result of `agent-shell-team--load-all-sessions'.")
+
+(defvar agent-shell-team--sessions-cache-time nil
+  "Float-time when `agent-shell-team--sessions-cache' was last populated.
+Set to nil to force a reload on next call.")
+
+(defun agent-shell-team--invalidate-sessions-cache ()
+  "Invalidate the sessions cache so the next load hits disk."
+  (setq agent-shell-team--sessions-cache-time nil))
+
 (defun agent-shell-team--load-all-sessions ()
-  "Scan tasks dir, return ((session-id . tasks-list) ...) sorted by most recent."
-  (let ((dir (agent-shell-team--tasks-dir))
-        (sessions nil))
-    (dolist (file (directory-files dir nil "\\.el$"))
-      (let* ((sid (file-name-sans-extension file)))
-        ;; Skip non-UUID filenames (e.g. worktree-named orphan files)
-        (when (string-match-p
-               "^[0-9a-f]\\{8\\}-[0-9a-f]\\{4\\}-[0-9a-f]\\{4\\}-[0-9a-f]\\{4\\}-[0-9a-f]\\{12\\}$"
-               sid)
-          (let* ((tasks (sort (copy-sequence (agent-shell-team--load-tasks sid))
-                              (lambda (a b)
-                                (> (or (plist-get a :created-at) 0)
-                                   (or (plist-get b :created-at) 0)))))
-                 (latest (cl-reduce #'max
-                                    (mapcar (lambda (tk) (or (plist-get tk :created-at) 0)) tasks)
-                                    :initial-value 0)))
-            (when tasks
-              (push (cons sid (cons latest tasks)) sessions))))))
-    (mapcar (lambda (entry) (cons (car entry) (cddr entry)))
-            (sort sessions (lambda (a b) (> (cadr a) (cadr b)))))))
+  "Scan tasks dir, return ((session-id . tasks-list) ...) sorted by most recent.
+Results are cached with a 60-second TTL."
+  (let ((now (float-time)))
+    (when (or (null agent-shell-team--sessions-cache-time)
+              (> (- now agent-shell-team--sessions-cache-time) 60))
+      (let ((dir (agent-shell-team--tasks-dir))
+            (sessions nil))
+        (dolist (file (directory-files dir nil "\\.el$"))
+          (let* ((sid (file-name-sans-extension file)))
+            ;; Skip non-UUID filenames (e.g. worktree-named orphan files)
+            (when (string-match-p
+                   "^[0-9a-f]\\{8\\}-[0-9a-f]\\{4\\}-[0-9a-f]\\{4\\}-[0-9a-f]\\{4\\}-[0-9a-f]\\{12\\}$"
+                   sid)
+              (let* ((tasks (sort (copy-sequence (agent-shell-team--load-tasks sid))
+                                  (lambda (a b)
+                                    (> (or (plist-get a :created-at) 0)
+                                       (or (plist-get b :created-at) 0)))))
+                     (latest (cl-reduce #'max
+                                        (mapcar (lambda (tk) (or (plist-get tk :created-at) 0)) tasks)
+                                        :initial-value 0)))
+                (when tasks
+                  (push (cons sid (cons latest tasks)) sessions))))))
+        (setq agent-shell-team--sessions-cache
+              (mapcar (lambda (entry) (cons (car entry) (cddr entry)))
+                      (sort sessions (lambda (a b) (> (cadr a) (cadr b)))))
+              agent-shell-team--sessions-cache-time now))))
+  agent-shell-team--sessions-cache)
 
 (defun agent-shell-team--find-session-for-request (request-id)
   "Find the session-id that contains a task with REQUEST-ID.
@@ -3012,7 +3030,8 @@ Route the status update directly to the lead agent's queue."
                                 (list :request-id rid
                                       :status st
                                       :commit cmt
-                                      :completed-at (float-time))))))
+                                      :completed-at (float-time)))
+                               (agent-shell-team--invalidate-sessions-cache))))
                          ;; Clean up tracking tables and handle group completion when finished.
                          ;; NOTE: We only remove from active-tasks here. The request-to-buffer
                          ;; and request-to-session mappings are kept so that dismissAgent can
