@@ -11,6 +11,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from gang_of_none.api.connection_manager import ConnectionManager
 from gang_of_none.api.rpc_router import RPCRouter
 from gang_of_none.core.agent_manager import AgentManager
+from gang_of_none.core.approval_manager import ApprovalManager
 from gang_of_none.core.namespace_manager import NamespaceManager
 from gang_of_none.core.task_manager import TaskManager
 from gang_of_none.models.enums import ApprovalType, TaskStatus
@@ -19,9 +20,6 @@ from gang_of_none.models.task import TaskCreate, TaskUpdate
 logger = structlog.get_logger()
 
 router = APIRouter()
-
-# Pending approval requests: request_id → approval data
-_pending_approvals: dict[str, dict[str, Any]] = {}
 
 def _get_managers(ws: WebSocket) -> tuple[ConnectionManager, AgentManager, TaskManager]:
     """Retrieve managers from app state (set during lifespan)."""
@@ -32,6 +30,11 @@ def _get_managers(ws: WebSocket) -> tuple[ConnectionManager, AgentManager, TaskM
 def _get_orchestrator(ws: WebSocket):
     """Retrieve orchestrator from app state."""
     return ws.app.state.orchestrator
+
+
+def _get_approval_manager(ws: WebSocket) -> ApprovalManager:
+    """Retrieve approval manager from app state."""
+    return ws.app.state.approval_manager
 
 
 def _get_namespace_manager(ws: WebSocket) -> NamespaceManager | None:
@@ -133,34 +136,41 @@ def build_rpc_router(
 
     async def handle_present_options(params: dict[str, Any]) -> dict[str, Any]:
         conn_mgr, _, _ = _get_managers(websocket)
+        approval_mgr = _get_approval_manager(websocket)
         request_id = params.get("request_id", "")
         title = params.get("title", "")
         approval_type = params.get("type", ApprovalType.CHECKLIST)
         items = params.get("items", [])
         description = params.get("description")
 
-        _pending_approvals[request_id] = {
-            "request_id": request_id,
-            "title": title,
-            "type": approval_type,
-            "items": items,
-            "description": description,
-            "session_id": session_id,
-        }
+        approval_mgr.create_request(
+            request_id=request_id,
+            title=title,
+            type=approval_type,
+            items=items,
+            description=description,
+            session_id=session_id,
+        )
 
         await conn_mgr.broadcast(session_id, {
             "jsonrpc": "2.0",
             "method": "approval/request",
-            "params": _pending_approvals[request_id],
+            "params": {
+                "request_id": request_id,
+                "title": title,
+                "type": approval_type,
+                "items": items,
+                "description": description,
+                "session_id": session_id,
+            },
         })
         return {"success": True, "message": f"Options presented: {title}"}
 
     async def handle_list_pending_reviews(params: dict[str, Any]) -> dict[str, Any]:
-        pending = [
-            rid for rid, data in _pending_approvals.items()
-            if data.get("session_id") == session_id
-        ]
-        return {"success": True, "pending": pending, "count": len(pending)}
+        approval_mgr = _get_approval_manager(websocket)
+        pending = approval_mgr.list_pending(session_id=session_id)
+        pending_ids = [r.request_id for r in pending]
+        return {"success": True, "pending": pending_ids, "count": len(pending_ids)}
 
     async def handle_message_namespace_peer(params: dict[str, Any]) -> dict[str, Any]:
         conn_mgr, _, _ = _get_managers(websocket)
@@ -223,9 +233,9 @@ def unregister_peer(session_id: str, ns_mgr: NamespaceManager | None = None) -> 
         ns_mgr.unregister_peer(session_id)
 
 
-def resolve_approval(request_id: str) -> dict[str, Any] | None:
-    """Remove and return a pending approval."""
-    return _pending_approvals.pop(request_id, None)
+def resolve_approval(request_id: str, approval_mgr: ApprovalManager) -> bool:
+    """Dismiss a pending approval via the manager. Returns True if it existed."""
+    return approval_mgr.dismiss(request_id)
 
 
 @router.websocket("/ws/{session_id}")

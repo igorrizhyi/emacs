@@ -10,8 +10,10 @@ from gang_of_none.api.ws import router as ws_router
 from gang_of_none.config import Settings
 from gang_of_none.core.acp_session import ACPSessionManager
 from gang_of_none.core.agent_manager import AgentManager
+from gang_of_none.core.approval_manager import ApprovalManager
 from gang_of_none.core.namespace_manager import NamespaceManager
 from gang_of_none.core.orchestrator import Orchestrator
+from gang_of_none.core.report_manager import ReportManager
 from gang_of_none.core.task_manager import TaskManager
 from gang_of_none.core.worktree_manager import WorktreeManager
 
@@ -30,12 +32,15 @@ async def lifespan(app: FastAPI):
     app.state.task_manager = TaskManager(reports_dir=settings.reports_dir)
     app.state.acp_session_manager = ACPSessionManager(settings)
     app.state.worktree_manager = WorktreeManager(settings)
+    app.state.report_manager = ReportManager(reports_dir=settings.reports_dir)
+    app.state.approval_manager = ApprovalManager()
     app.state.orchestrator = Orchestrator(
         settings=settings,
         task_manager=app.state.task_manager,
         agent_manager=app.state.agent_manager,
         acp_session_manager=app.state.acp_session_manager,
         worktree_manager=app.state.worktree_manager,
+        report_manager=app.state.report_manager,
     )
 
     # Initialize namespace manager

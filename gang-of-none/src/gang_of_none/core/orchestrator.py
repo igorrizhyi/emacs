@@ -13,6 +13,7 @@ import structlog
 from gang_of_none.config import Settings
 from gang_of_none.core.acp_session import ACPSessionManager
 from gang_of_none.core.agent_manager import AgentManager
+from gang_of_none.core.report_manager import ReportManager
 from gang_of_none.core.task_manager import TaskManager
 from gang_of_none.core.worktree_manager import WorktreeManager
 from gang_of_none.models.agent import AgentCreate
@@ -31,12 +32,14 @@ class Orchestrator:
         agent_manager: AgentManager,
         acp_session_manager: ACPSessionManager,
         worktree_manager: WorktreeManager,
+        report_manager: ReportManager | None = None,
     ) -> None:
         self.settings = settings
         self.task_mgr = task_manager
         self.agent_mgr = agent_manager
         self.acp_mgr = acp_session_manager
         self.worktree_mgr = worktree_manager
+        self.report_mgr = report_manager
         self._drain_task: asyncio.Task[None] | None = None
 
     # ── Drain loop ─────────────────────────────────────────────────
@@ -122,6 +125,10 @@ class Orchestrator:
         self, task: Any, agent_id: str, session_id: str
     ) -> None:
         """Mark task assigned, mark agent busy, prompt via ACP."""
+        # Pre-create the report file so agents can write to it immediately
+        if self.report_mgr is not None:
+            self.report_mgr.pre_create(session_id, task.request_id)
+
         self.task_mgr.mark_assigned(task.request_id, agent_id)
         self.agent_mgr.mark_busy(agent_id, task.request_id)
         self.agent_mgr.assign_request(task.request_id, agent_id)

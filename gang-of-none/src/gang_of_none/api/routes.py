@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -239,7 +238,7 @@ async def submit_approval(
     approval = approval_mgr.get_approval(request_id)
     if approval is None:
         raise HTTPException(404, f"Approval {request_id} not found")
-    await approval_mgr.submit(
+    approval_mgr.submit(
         request_id,
         selected_items=body.selected_items,
         refine=body.refine,
@@ -256,7 +255,7 @@ async def dismiss_approval(request_id: str, request: Request):
     approval = approval_mgr.get_approval(request_id)
     if approval is None:
         raise HTTPException(404, f"Approval {request_id} not found")
-    await approval_mgr.dismiss(request_id)
+    approval_mgr.dismiss(request_id)
     return SuccessResponse(success=True, message=f"Approval {request_id} dismissed")
 
 
@@ -294,15 +293,10 @@ async def message_peer(pid: int, body: PeerMessageRequest, request: Request):
 
 @router.get("/reports/{session_id}/{request_id}", response_model=ReportResponse)
 async def get_report(session_id: str, request_id: str, request: Request):
-    settings = getattr(request.app.state, "settings", None)
-    if settings is None:
-        raise HTTPException(503, "Settings not available")
-    sessions_map = getattr(request.app.state, "sessions", {})
-    session = sessions_map.get(session_id)
-    if session is None:
-        raise HTTPException(404, f"Session {session_id} not found")
-    report_path = Path(session.project_root) / settings.reports_dir / session_id / f"{request_id}.md"
-    if not report_path.is_file():
+    report_mgr = getattr(request.app.state, "report_manager", None)
+    if report_mgr is None:
+        raise HTTPException(503, "Report manager not initialized")
+    content = report_mgr.read_report(session_id, request_id)
+    if content is None:
         raise HTTPException(404, f"Report not found: {request_id}")
-    content = report_path.read_text(encoding="utf-8", errors="replace")
     return ReportResponse(request_id=request_id, content=content)
