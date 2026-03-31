@@ -1010,38 +1010,68 @@ Keys are file paths, values are (RESULT . TIMESTAMP).")
   "Debounce timer for preview during rapid j/k navigation.")
 
 (defun my/team-sidebar--compute-render-hash ()
-  "Compute a hash of key sidebar state to detect changes.
-Returns a string hash; cheap to compute."
-  (secure-hash
-   'md5
-   (format "%S|%S|%S|%S|%S|%S|%S"
-           (when (and (boundp 'agent-shell-team--sessions)
-                      (hash-table-p agent-shell-team--sessions))
-             (let (entries)
-               (maphash
-                (lambda (sid agents)
-                  (push (cons sid
-                              (mapcar (lambda (a)
-                                        (cons (alist-get 'buffer a)
-                                              (when (fboundp 'agent-shell-team--agent-status)
-                                                (agent-shell-team--agent-status
-                                                 (alist-get 'buffer a)))))
-                                      agents))
-                        entries))
-                agent-shell-team--sessions)
-               entries))
-           (when (boundp 'agent-shell-team--task-queue)
-             (length agent-shell-team--task-queue))
-           (list my/team-sidebar--quota-5h-util
-                 my/team-sidebar--quota-7d-util
-                 my/team-sidebar--quota-error)
-           (list my/team-sidebar--gemini-quota-buckets
-                 my/team-sidebar--gemini-quota-error
-                 my/team-sidebar--quota-provider)
-           my/team-sidebar--foreign-agents
-           (when (boundp 'agent-shell-team--task-groups)
-             agent-shell-team--task-groups)
-           my/team-sidebar--history-cache)))
+  "Compute a hash of stable, visually-relevant scalar values.
+Uses `sxhash' on sorted scalar data to avoid non-deterministic
+serialization of alists and hash tables."
+  (sxhash
+   (list
+    ;; 1. Agent statuses: sorted (buffer-name . status) pairs
+    (when (and (boundp 'agent-shell-team--sessions)
+               (hash-table-p agent-shell-team--sessions))
+      (let (pairs)
+        (maphash
+         (lambda (_sid agents)
+           (dolist (a agents)
+             (let ((buf (alist-get 'buffer a)))
+               (push (cons buf
+                           (when (fboundp 'agent-shell-team--agent-status)
+                             (agent-shell-team--agent-status buf)))
+                     pairs))))
+         agent-shell-team--sessions)
+        (sort pairs (lambda (a b) (string< (or (car a) "") (or (car b) ""))))))
+    ;; 2. Session count
+    (when (and (boundp 'agent-shell-team--sessions)
+               (hash-table-p agent-shell-team--sessions))
+      (hash-table-count agent-shell-team--sessions))
+    ;; 3. Queue length
+    (when (boundp 'agent-shell-team--task-queue)
+      (length agent-shell-team--task-queue))
+    ;; 4. Quota scalars
+    my/team-sidebar--quota-5h-util
+    my/team-sidebar--quota-7d-util
+    my/team-sidebar--quota-error
+    (when my/team-sidebar--gemini-quota-buckets
+      (sort (mapcar (lambda (b)
+                      (cons (alist-get 'modelId b)
+                            (alist-get 'remainingFraction b)))
+                    my/team-sidebar--gemini-quota-buckets)
+            (lambda (a b) (string< (or (car a) "") (or (car b) "")))))
+    my/team-sidebar--gemini-quota-error
+    my/team-sidebar--quota-provider
+    ;; 5. Foreign agents: sorted (pid name . status) triples
+    (when my/team-sidebar--foreign-agents
+      (let (pairs)
+        (dolist (peer my/team-sidebar--foreign-agents)
+          (let ((pid (car peer)))
+            (dolist (agent (cdr peer))
+              (push (list pid
+                          (alist-get 'worktree-name agent)
+                          (alist-get 'status agent))
+                    pairs))))
+        (sort pairs (lambda (a b)
+                      (string< (format "%s/%s" (car a) (cadr a))
+                               (format "%s/%s" (car b) (cadr b)))))))
+    ;; 6. Task groups: sorted (group-id . status) pairs
+    (when (and (boundp 'agent-shell-team--task-groups)
+               (hash-table-p agent-shell-team--task-groups))
+      (let (pairs)
+        (maphash
+         (lambda (gid group)
+           (push (cons gid (alist-get 'status group)) pairs))
+         agent-shell-team--task-groups)
+        (sort pairs (lambda (a b) (string< (car a) (car b))))))
+    ;; 7. History cache timestamp (not the full cache content)
+    my/team-sidebar--history-cache-time)))
 
 ;;; ---- Utility ----------------------------------------------------------------
 
