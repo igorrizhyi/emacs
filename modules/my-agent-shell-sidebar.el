@@ -27,7 +27,7 @@
 
 (defconst my/team-sidebar--agent-shell-report-regexp
   (rx "/.agent-shell/re" (or "ports" "views") "/")
-  "Pre-compiled regexp matching .agent-shell/reports/ or .agent-shell/reviews/ paths.")
+  "Pre-compiled regexp matching agent-shell report/review paths.")
 
 (declare-function shell-maker-submit "shell-maker")
 (declare-function evil-define-key* "evil-core")
