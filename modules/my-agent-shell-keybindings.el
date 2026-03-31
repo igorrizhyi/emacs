@@ -34,12 +34,11 @@ Only deletes from the end of the prompt to end of line, respecting
 read-only prompt regions."
   (interactive)
   (if (derived-mode-p 'eshell-mode)
-      (let ((interprogram-cut-function nil))
-        (save-excursion
-          (let ((bol (progn (eshell-bol) (point)))
-                (eol (progn (end-of-line) (point))))
-            (when (> eol bol)
-              (delete-region bol eol)))))
+      (save-excursion
+        (let ((bol (progn (eshell-bol) (point)))
+              (eol (progn (end-of-line) (point))))
+          (when (> eol bol)
+            (delete-region bol eol))))
     ;; Fallback for non-eshell: standard dd
     (evil-delete-whole-line)))
 
@@ -47,18 +46,17 @@ read-only prompt regions."
   "Delete the editable portion of the current shell-maker line (dd equivalent).
 Deletes from after the prompt to end of line."
   (interactive)
-  (let ((interprogram-cut-function nil))
-    (save-excursion
-      (let* ((eol (progn (end-of-line) (point)))
-             (bol (progn (beginning-of-line)
-                         ;; Skip past any read-only prompt text
-                         (let ((p (point)))
-                           (while (and (< p eol)
-                                       (get-text-property p 'read-only))
-                             (setq p (next-single-property-change p 'read-only nil eol)))
-                           p))))
-        (when (> eol bol)
-          (delete-region bol eol))))))
+  (save-excursion
+    (let* ((eol (progn (end-of-line) (point)))
+           (bol (progn (beginning-of-line)
+                       ;; Skip past any read-only prompt text
+                       (let ((p (point)))
+                         (while (and (< p eol)
+                                     (get-text-property p 'read-only))
+                           (setq p (next-single-property-change p 'read-only nil eol)))
+                         p))))
+      (when (> eol bol)
+        (delete-region bol eol)))))
 
 (defun my/delete-selection-no-clipboard ()
   "Delete visual selection without affecting system clipboard."
