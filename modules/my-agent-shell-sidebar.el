@@ -21,6 +21,14 @@
 (defvar json-object-type)
 (defvar json-key-type)
 
+(defconst my/team-sidebar--team-buffer-regexp
+  (rx "*team:" (>= 4 (any "a-z0-9")) ":")
+  "Pre-compiled regexp matching team buffer names like *team:XXXX:*.")
+
+(defconst my/team-sidebar--agent-shell-report-regexp
+  (rx "/.agent-shell/re" (or "ports" "views") "/")
+  "Pre-compiled regexp matching .agent-shell/reports/ or .agent-shell/reviews/ paths.")
+
 (declare-function shell-maker-submit "shell-maker")
 (declare-function evil-define-key* "evil-core")
 (declare-function evil-set-initial-state "evil-core")
@@ -1059,8 +1067,14 @@ serialization of alists and hash tables."
                           (alist-get 'status agent))
                     pairs))))
         (sort pairs (lambda (a b)
-                      (string< (format "%s/%s" (car a) (cadr a))
-                               (format "%s/%s" (car b) (cadr b)))))))
+                      (let ((pid-a (car a))
+                            (wt-a (cadr a))
+                            (pid-b (car b))
+                            (wt-b (cadr b)))
+                        (cond
+                         ((string< pid-a pid-b) t)
+                         ((string> pid-a pid-b) nil)
+                         (t (string< wt-a wt-b))))))))
     ;; 6. Task groups: sorted (group-id . status) pairs
     (when (and (boundp 'agent-shell-team--task-groups)
                (hash-table-p agent-shell-team--task-groups))
@@ -1862,11 +1876,11 @@ A buffer is team-related if any of:
 - It is visiting a file under .agent-shell/reports/ or .agent-shell/reviews/"
   (and (buffer-live-p buf)
        (let ((name (buffer-name buf)))
-         (or (string-match-p "\\*team:[a-z0-9]\\{4\\}:" name)
+         (or (string-match-p my/team-sidebar--team-buffer-regexp name)
              (equal name my/team-sidebar-buffer-name)
              (equal name my/approval-buffer-name)
              (when-let ((file (buffer-file-name buf)))
-               (string-match-p "/\\.agent-shell/re\\(ports\\|views\\)/" file))))))
+               (string-match-p my/team-sidebar--agent-shell-report-regexp file))))))
 
 (defvar my/team-sidebar--toggle-timer nil
   "Debounce timer for `my/team-sidebar--auto-toggle'.")
