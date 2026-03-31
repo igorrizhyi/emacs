@@ -2,6 +2,7 @@ import React from 'react';
 import { NavigationContainer, DefaultTheme } from '@react-navigation/native';
 import { createDrawerNavigator } from '@react-navigation/drawer';
 import { theme } from '../theme';
+import { TeamSidebar } from '../components/sidebar';
 import ChatScreen from '../screens/ChatScreen';
 import ProjectSelectorScreen from '../screens/ProjectSelectorScreen';
 
@@ -24,6 +25,7 @@ export default function RootNavigator() {
   return (
     <NavigationContainer theme={navTheme}>
       <Drawer.Navigator
+        drawerContent={(props) => <TeamSidebar {...props} />}
         screenOptions={{
           drawerPosition: 'right',
           drawerStyle: {
