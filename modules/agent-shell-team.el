@@ -326,6 +326,19 @@ Used to match tasks with model overrides to agents running the same model.")
 Set by `agent-shell-team--auto-spawn-agent' when the triggering task has a
 `:model' field, so `make-gemini-config'/`make-claude-config' can pick it up.")
 
+(defvar-local agent-shell-team--max-turns nil
+  "Buffer-local max turns for this agent's ACP session.
+Set during spawning for Gemini agents based on role.")
+
+(defvar agent-shell-team-gemini-max-turns-alist
+  '(("researcher" . 30)
+    ("dev" . 20)
+    ("tester" . 20)
+    ("knowledge" . 15))
+  "Max turns per role for Gemini agents.
+Each entry is (ROLE . MAX-TURNS).  Only applied when the agent
+backend is Gemini; Claude agents manage their own turn limits.")
+
 ;;; HTTP MCP server state
 
 (defvar agent-shell-team--emacs-mcp-http-port nil
@@ -2165,17 +2178,20 @@ WORKTREE-PATH, WORKTREE-NAME, WORKING-DIR depend on role/mode."
 
 ;;; ACP request decorator — inject systemPrompt at session creation
 
-(defun agent-shell-team--make-request-decorator (system-prompt)
+(defun agent-shell-team--make-request-decorator (system-prompt &optional max-turns)
   "Create a request decorator that appends SYSTEM-PROMPT to session/new requests.
 The decorator intercepts session/new ACP requests and adds _meta.systemPrompt
-with append mode, so the role prompt is appended to the agent's default system prompt."
+with append mode, so the role prompt is appended to the agent's default system prompt.
+When MAX-TURNS is non-nil, also inject maxTurns into the params."
   (lambda (request)
     (when (equal (map-elt request :method) "session/new")
       (let ((params (map-elt request :params)))
         ;; nconc modifies the params list in place (appends to end),
         ;; which propagates back to the request since params shares structure
         (nconc params (list (cons '_meta
-                                  `((systemPrompt . ((append . ,system-prompt)))))))))
+                                  `((systemPrompt . ((append . ,system-prompt)))))))
+        (when max-turns
+          (nconc params (list (cons 'maxTurns max-turns))))))
     request))
 
 ;;; ACP-based notification routing
@@ -3677,7 +3693,12 @@ WORKTREE-PATH and WORKTREE-NAME are for isolated mode."
          (default-directory (or directory default-directory))
          (system-prompt (agent-shell-team--get-system-prompt
                          role mode session-id worktree-path worktree-name default-directory))
-         (config (agent-shell-team--make-config session-id role buf-name)))
+         (config (agent-shell-team--make-config session-id role buf-name))
+         (max-turns (let ((override agent-shell-team--spawn-model-override)
+                          (explicit-backend (cdr (assoc role agent-shell-team-role-backends))))
+                     (when (or (and override (string-prefix-p "gemini" override))
+                               (and (not override) (eq explicit-backend 'gemini)))
+                       (cdr (assoc role agent-shell-team-gemini-max-turns-alist))))))
     (message "agent-shell-team: about to call agent-shell--start with buffer-name=%s" buf-name)
     (let ((buffer (let ((my/agent-shell-pending-worktree-path worktree-path)
                         (my/agent-shell-pending-role role))
@@ -3687,13 +3708,17 @@ WORKTREE-PATH and WORKTREE-NAME are for isolated mode."
                     :new-session t
                     :session-strategy 'new
                     :outgoing-request-decorator
-                    (agent-shell-team--make-request-decorator system-prompt)))))
+                    (agent-shell-team--make-request-decorator system-prompt max-turns)))))
       (message "agent-shell-team: agent-shell--start returned buffer=%s (process=%s)"
                buffer (get-buffer-process buffer))
       ;; Store the model ID used for this agent (for idle-agent matching)
       (when agent-shell-team--spawn-model-override
         (with-current-buffer buffer
           (setq agent-shell-team--model-id agent-shell-team--spawn-model-override)))
+      ;; Store max-turns for this agent
+      (when max-turns
+        (with-current-buffer buffer
+          (setq agent-shell-team--max-turns max-turns)))
       ;; Register in team session
       (message "agent-shell-team: registering agent...")
       (agent-shell-team--register-agent session-id buffer role mode worktree-path worktree-name)
