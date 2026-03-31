@@ -37,8 +37,8 @@ def _print_result(result: dict):
 def main():
     parser = argparse.ArgumentParser(description="Query the hybrid knowledge graph")
     parser.add_argument("question", nargs="*", help="Natural language question")
-    parser.add_argument("--mode", choices=["summary", "technical"], default="summary",
-                        help="Response mode: summary (default) or technical")
+    parser.add_argument("--mode", choices=["summary", "technical", "behavioral"], default="summary",
+                        help="Response mode: summary (default), technical, or behavioral")
     parser.add_argument("--project-root",
                         help="Project root for graph name derivation (overrides PROJECT_ROOT env var)")
     args = parser.parse_args()
