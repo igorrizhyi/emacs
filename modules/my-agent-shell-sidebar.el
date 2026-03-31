@@ -851,8 +851,8 @@ E.g., \"models/gemini-2.5-pro\" → \"pro\"."
          (gemini-label (if (eq my/team-sidebar--quota-provider 'gemini)
                            (propertize "[Gemini]" 'face '(:weight bold :foreground "#ffb000"))
                          (propertize " Gemini " 'face 'font-lock-comment-face))))
-    (insert claude-label " " gemini-label "\n")
-    (put-text-property tab-start (1- (point)) 'my/sidebar-quota-tab t)
+    (insert "\n" claude-label " " gemini-label "\n\n")
+    (put-text-property tab-start (- (point) 1) 'my/sidebar-quota-tab t)
     t))
 
 (defun my/team-sidebar--insert-claude-quota ()
@@ -884,16 +884,18 @@ E.g., \"models/gemini-2.5-pro\" → \"pro\"."
     t)
    (my/team-sidebar--gemini-quota-buckets
     (dolist (bucket my/team-sidebar--gemini-quota-buckets)
-      (let* ((model-id (alist-get 'modelId bucket))
-             (label (my/team-sidebar--gemini-model-short-name model-id))
-             (remaining-frac (alist-get 'remainingFraction bucket))
-             (util (if (and remaining-frac (numberp remaining-frac))
-                       (- 1.0 remaining-frac)
-                     0.0))
-             (reset-str (alist-get 'resetTime bucket))
-             (reset-ts (my/team-sidebar--gemini-parse-reset-time reset-str)))
-        (my/team-sidebar--quota-render-bar
-         label util reset-ts)))
+      (let* ((model-id (alist-get 'modelId bucket)))
+        (when (and model-id
+                   (not (string-match-p "preview" model-id)))
+          (let* ((label (my/team-sidebar--gemini-model-short-name model-id))
+                 (remaining-frac (alist-get 'remainingFraction bucket))
+                 (util (if (and remaining-frac (numberp remaining-frac))
+                           (- 1.0 remaining-frac)
+                         0.0))
+                 (reset-str (alist-get 'resetTime bucket))
+                 (reset-ts (my/team-sidebar--gemini-parse-reset-time reset-str)))
+            (my/team-sidebar--quota-render-bar
+             label util reset-ts)))))
     (insert "\n")
     t)
    ((not (file-exists-p my/team-sidebar--gemini-creds-file))
@@ -1448,7 +1450,7 @@ Returns t if anything was inserted, nil otherwise."
         truncate-lines t
         buffer-read-only t
         buffer-invisibility-spec nil
-        header-line-format (propertize " Team Dashboard" 'face 'bold)
+        header-line-format nil
         mode-line-format nil)
   (setq-local face-remapping-alist
               '((default (:background "#1a1400" :foreground "#ffb000"))
@@ -1471,7 +1473,7 @@ Returns t if anything was inserted, nil otherwise."
     (kbd "<up>") #'my/team-sidebar-prev-item
     (kbd "<down>") #'my/team-sidebar-next-item
     "r" #'my/team-sidebar-toggle-reserve
-    (kbd "<tab>") #'my/team-sidebar-toggle-section))
+    (kbd "<tab>") #'my/team-sidebar-smart-tab))
 
 ;; Open sidebar in normal state (not motion state from special-mode parent)
 (when (fboundp 'evil-set-initial-state)
@@ -1789,6 +1791,16 @@ Cancels any pending preview timer before scheduling a new one."
         my/team-sidebar--manually-collapsed nil)
   (clrhash my/team-sidebar--file-exists-cache)
   (my/team-sidebar--render))
+
+(defun my/team-sidebar-smart-tab ()
+  "Context-aware TAB: cycle quota provider on tab line, toggle section elsewhere."
+  (interactive)
+  (if (get-text-property (line-beginning-position) 'my/sidebar-quota-tab)
+      (progn
+        (setq my/team-sidebar--quota-provider
+              (if (eq my/team-sidebar--quota-provider 'claude) 'gemini 'claude))
+        (my/team-sidebar--render))
+    (my/team-sidebar-toggle-section)))
 
 (defun my/team-sidebar-toggle-section ()
   "Toggle collapse/expand of history session at point."
