@@ -1692,7 +1692,38 @@ container management needed after `devcontainer up`.
 
 ### Fallback
 If no `.devcontainer/<role>/` config exists AND the user declines creating one,
-the tester runs on the host in a git worktree (no containerization)."
+the tester runs on the host in a git worktree (no containerization).
+
+### Common Pitfalls
+
+1. **Always use `devcontainer up`, never raw `docker compose up`**
+   `devcontainer exec` finds containers by special labels (`devcontainer.local_folder`,
+   `devcontainer.config_file`), not by container name. Containers created via
+   `docker compose up` only get compose labels — `devcontainer exec` says
+   \\\"Dev container not found.\\\" Building images (`docker compose build`) is fine —
+   labels are a container concern, not an image concern.
+
+2. **Python venvs must be outside the workspace mount**
+   If the Dockerfile builds a venv at `/code/.venv`, the compose volume `.:/code`
+   shadows it with the host's `.venv` (host-only shebangs/symlinks that break in
+   the container). Fix: build venv at `/opt/venv` with explicit `python -m venv
+   /opt/venv` + `POETRY_VIRTUALENVS_CREATE=0`.
+
+3. **Poetry venv naming is unpredictable**
+   `POETRY_VIRTUALENVS_PATH=/opt` creates venvs like `project-name-py3.13`.
+   Instead: create venv explicitly with `python -m venv`, set `VIRTUAL_ENV`,
+   add to `PATH`, set `POETRY_VIRTUALENVS_CREATE=0`.
+
+4. **Stale bind mounts after host binary updates**
+   When the host `claude-agent-acp` binary is updated (inode replaced), the
+   container's bind mount goes stale — error shows `(deleted)` in the path.
+   Fix: `docker compose down <service> && devcontainer up` (full recreate,
+   not just restart).
+
+5. **Podman storage config missing in agent worktrees**
+   Dev agents in worktrees can't verify container builds —
+   `/etc/containers/storage.conf` is absent. Container build verification
+   must be done by the lead or on the host."
           session-id
           (agent-shell-team--lead-quick-research-section))))
     (let ((knowledge-content (let ((f (agent-shell-team--knowledge-file "lead")))
