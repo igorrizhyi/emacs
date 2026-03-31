@@ -2710,6 +2710,59 @@ Return the number of tasks actually enqueued, or signal an error if
                          (error nil)))))
       enqueued)))
 
+(defun agent-shell-team--auto-route-to-dev (session-id researcher-request-id content report-path agent-buf)
+  "Auto-route a researcher's dev-ready result to a new dev agent.
+SESSION-ID is the team session.  RESEARCHER-REQUEST-ID is the
+researcher's request.  CONTENT is the taskUpdate content (with
+Routing line stripped).  REPORT-PATH is the researcher's report.
+AGENT-BUF is the researcher buffer to dismiss."
+  (let* ((dev-request-id (agent-shell-team--generate-request-id))
+         (reports-dir (agent-shell-team--reports-dir session-id))
+         (dev-report-path (expand-file-name (concat dev-request-id ".md") reports-dir))
+         ;; Strip the "Routing: dev-ready" line from content
+         (clean-content (replace-regexp-in-string
+                         "\\(?:^\\|\n\\)Routing: dev-ready[^\n]*" "" (or content "")))
+         (dev-message (format "## Auto-routed from research\n\nResearcher report: %s\n\n%s"
+                              (or report-path "N/A")
+                              (string-trim clean-content)))
+         (worktree-path (when (and agent-buf (buffer-live-p agent-buf))
+                          (buffer-local-value 'agent-shell-team--worktree-path agent-buf)))
+         (entry (list :role "dev"
+                      :message dev-message
+                      :request-id dev-request-id
+                      :group-id nil
+                      :target nil
+                      :priority nil
+                      :model nil
+                      :session-id session-id
+                      :report-path dev-report-path
+                      :created-at (float-time))))
+    ;; Pre-create report file
+    (write-region "" nil dev-report-path nil 'silent)
+    ;; Persist queued state
+    (agent-shell-team--persist-task
+     session-id
+     (list :request-id dev-request-id
+           :role "dev"
+           :message (truncate-string-to-width dev-message 200 nil nil "...")
+           :group-id nil
+           :target nil
+           :session-id session-id
+           :status "queued"
+           :created-at (plist-get entry :created-at)))
+    ;; Track request → session
+    (puthash dev-request-id session-id agent-shell-team--request-to-session)
+    ;; Enqueue
+    (setq agent-shell-team--task-queue
+          (append agent-shell-team--task-queue (list entry)))
+    ;; Dismiss the researcher
+    (agent-shell-team--cleanup-agent agent-buf session-id worktree-path)
+    ;; Try to assign the dev task
+    (agent-shell-team--try-assign-tasks)
+    (agent-shell-team--log session-id
+     (format "[auto-route] Routed researcher %s → dev %s (report: %s)"
+             researcher-request-id dev-request-id report-path))))
+
 (defun agent-shell-team--handle-task-update (raw-input)
   "Process a taskUpdate tool call with RAW-INPUT.
 Route the status update directly to the lead agent's queue."
@@ -2791,6 +2844,12 @@ Route the status update directly to the lead agent's queue."
       (agent-shell-team--log (or session-id "<nil>")
                              (format "[taskUpdate] %s from request %s"
                                      status request-id))
+      ;; Suppress idle-fallback notification for auto-routed researchers
+      ;; (synchronous, before run-at-time, to close the race window)
+      (when (and (equal status "finished")
+                 (equal agent-role "researcher")
+                 (string-match-p "Routing: dev-ready" (or content "")))
+        (puthash request-id t agent-shell-team--idle-fallback-notified))
       ;; Defer all side effects (notify, deliver, persist, group completion)
       ;; out of the websocket process filter to avoid blocking Emacs.
       (let* ((msg message-text)
@@ -2799,54 +2858,67 @@ Route the status update directly to the lead agent's queue."
              (rid request-id)
              (st status)
              (cmt commit)
+             (arole agent-role)
+             (abuf agent-buf)
+             (rpath report-path)
+             (cnt content)
              (knowledge-p (or (string-prefix-p "kb-auto-" rid)
                               (equal "knowledge"
                                      (plist-get (gethash rid agent-shell-team--active-tasks) :role)))))
         (run-at-time 0 nil
                      (lambda ()
-                       (unless knowledge-p
-                         ;; Desktop notification for task lifecycle events
-                         (when (member st '("finished" "blocked"))
-                           (agent-shell-team--notify
-                            (format "Task %s" (capitalize st))
-                            (format "%s" rid)))
-                         (if lbuf
-                             ;; Deliver or queue to lead
-                             (let ((lead-status (agent-shell-team--agent-status lbuf)))
-                               (pcase lead-status
-                                 ('idle (agent-shell-team--prompt-agent lbuf msg))
-                                 ((or 'busy 'initializing)
-                                  (agent-shell-team--queue-message sid lbuf
-                                                                   (list :from "agent" :title "Task Update" :message msg)))
-                                 ('dead (agent-shell-team--log sid "WARNING: lead buffer is dead"))))
-                           ;; No lead yet — queue for later delivery
-                           (when sid
-                             (agent-shell-team--log sid "taskUpdate queued pending lead registration")
-                             (let ((existing (gethash sid agent-shell-team--pending-for-lead)))
-                               (puthash sid (append existing (list msg))
-                                        agent-shell-team--pending-for-lead))
-                             (agent-shell-team--start-drain-timer))))
-                       ;; Persist task status update (skip knowledge tasks)
-                       (when sid
-                         (let ((role (plist-get (gethash rid agent-shell-team--active-tasks) :role)))
-                           (unless (equal role "knowledge")
-                             (agent-shell-team--persist-task
-                              sid
-                              (list :request-id rid
-                                    :status st
-                                    :commit cmt
-                                    :completed-at (float-time))))))
-                       ;; Clean up tracking tables and handle group completion when finished.
-                       ;; NOTE: We only remove from active-tasks here. The request-to-buffer
-                       ;; and request-to-session mappings are kept so that dismissAgent can
-                       ;; still find agents by request-id after task completion. Those entries
-                       ;; are cleaned up by cleanup-agent when the agent is actually dismissed,
-                       ;; and by assign-task-to-agent which proactively clears stale entries.
-                       (when (equal st "finished")
-                         (remhash rid agent-shell-team--active-tasks)
-                         (remhash rid agent-shell-team--idle-fallback-notified)
-                         (when-let ((group-id (gethash rid agent-shell-team--request-to-group)))
-                           (agent-shell-team--handle-task-completion rid sid nil))))))
+                       ;; Auto-route researcher dev-ready results directly to a dev agent
+                       (let ((auto-routed
+                              (when (and (not knowledge-p)
+                                         (equal st "finished")
+                                         (equal arole "researcher")
+                                         (string-match-p "Routing: dev-ready" (or cnt "")))
+                                (agent-shell-team--auto-route-to-dev sid rid cnt rpath abuf)
+                                t)))
+                         (unless knowledge-p
+                           (unless auto-routed
+                             ;; Desktop notification for task lifecycle events
+                             (when (member st '("finished" "blocked"))
+                               (agent-shell-team--notify
+                                (format "Task %s" (capitalize st))
+                                (format "%s" rid)))
+                             (if lbuf
+                                 ;; Deliver or queue to lead
+                                 (let ((lead-status (agent-shell-team--agent-status lbuf)))
+                                   (pcase lead-status
+                                     ('idle (agent-shell-team--prompt-agent lbuf msg))
+                                     ((or 'busy 'initializing)
+                                      (agent-shell-team--queue-message sid lbuf
+                                                                       (list :from "agent" :title "Task Update" :message msg)))
+                                     ('dead (agent-shell-team--log sid "WARNING: lead buffer is dead"))))
+                               ;; No lead yet — queue for later delivery
+                               (when sid
+                                 (agent-shell-team--log sid "taskUpdate queued pending lead registration")
+                                 (let ((existing (gethash sid agent-shell-team--pending-for-lead)))
+                                   (puthash sid (append existing (list msg))
+                                            agent-shell-team--pending-for-lead))
+                                 (agent-shell-team--start-drain-timer)))))
+                         ;; Persist task status update (skip knowledge tasks)
+                         (when sid
+                           (let ((role (plist-get (gethash rid agent-shell-team--active-tasks) :role)))
+                             (unless (equal role "knowledge")
+                               (agent-shell-team--persist-task
+                                sid
+                                (list :request-id rid
+                                      :status st
+                                      :commit cmt
+                                      :completed-at (float-time))))))
+                         ;; Clean up tracking tables and handle group completion when finished.
+                         ;; NOTE: We only remove from active-tasks here. The request-to-buffer
+                         ;; and request-to-session mappings are kept so that dismissAgent can
+                         ;; still find agents by request-id after task completion. Those entries
+                         ;; are cleaned up by cleanup-agent when the agent is actually dismissed,
+                         ;; and by assign-task-to-agent which proactively clears stale entries.
+                         (when (equal st "finished")
+                           (remhash rid agent-shell-team--active-tasks)
+                           (remhash rid agent-shell-team--idle-fallback-notified)
+                           (when-let ((group-id (gethash rid agent-shell-team--request-to-group)))
+                             (agent-shell-team--handle-task-completion rid sid nil)))))))
       t)))
 
 (defun agent-shell-team--find-idle-agent (session-id role)
