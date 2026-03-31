@@ -4,6 +4,7 @@ from fastapi import FastAPI
 import structlog
 
 from gang_of_none.api.connection_manager import ConnectionManager
+from gang_of_none.api.routes import router as rest_router
 from gang_of_none.api.ws import router as ws_router
 from gang_of_none.config import Settings
 from gang_of_none.core.acp_session import ACPSessionManager
@@ -45,6 +46,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="gang-of-none", lifespan=lifespan)
 app.include_router(ws_router)
+app.include_router(rest_router)
 
 
 @app.get("/health")
