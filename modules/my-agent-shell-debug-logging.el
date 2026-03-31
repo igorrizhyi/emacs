@@ -3,20 +3,44 @@
 ;;; Commentary:
 ;;
 ;; TEMPORARY DEBUG LOGGING — remove this file when done diagnosing
-;; the tester agent init hang.
+;; the tester agent init hang and Gemini agent issues.
 ;;
-;; All log messages use the `[acp-init]' prefix for easy grepping
-;; in *Messages*.
+;; All log messages use the `[acp-init]' or `[acp-debug]' prefix for
+;; easy grepping in *Messages*.
 ;;
 ;; What's logged:
 ;;   1. agent-shell--handle pipeline steps (via advice)
 ;;   2. acp--route-incoming-message callback errors (via advice)
 ;;   3. acp--start-client sentinel event + stderr preservation (via advice)
 ;;   4. acp--start-client raw process filter output + filter error catching (via advice)
+;;   5. agent-shell--initiate-new-session on-session-init callback (via advice)
+;;   6. agent-shell--emit-event emissions during init (via advice)
+;;   7. session/new MCP payload — mcp-servers arg, buffer, agent type (via advice)
+;;   8. session/new response — session ID on success (via advice)
+;;   9. ACP request errors — error details with buffer context (via advice)
 
 ;;; Code:
 
 (require 'map)
+
+;; Suppress byte-compiler "not known to be defined" for advice functions
+;; defined inside `after!' blocks (which are deferred and invisible at
+;; compile time).  This prevents false-positive "error" grep matches
+;; in the pre-commit hook.
+(declare-function my/acp-init--log-handle-step "my-agent-shell-debug-logging")
+(declare-function my/acp-init--log-route-message "my-agent-shell-debug-logging")
+(declare-function my/acp-init--log-sentinel "my-agent-shell-debug-logging")
+(declare-function my/acp-init--log-start-client "my-agent-shell-debug-logging")
+(declare-function my/acp-init--log-new-session "my-agent-shell-debug-logging")
+(declare-function my/acp-init--log-emit-event "my-agent-shell-debug-logging")
+(declare-function my/acp-debug-log-session-new-request "my-agent-shell-debug-logging")
+(declare-function my/acp-debug-log-session-new-response "my-agent-shell-debug-logging")
+(declare-function my/acp-debug-log-err-handler "my-agent-shell-debug-logging")
+(declare-function agent-shell--state "agent-shell")
+(declare-function agent-shell--mcp-servers "agent-shell")
+(defvar agent-shell--state)  ; buffer-local, defined in agent-shell.el
+(defvar agent-shell)  ; feature symbol used by after!
+(defvar acp)          ; feature symbol used by after!
 
 ;; ---------------------------------------------------------------------------
 ;; 1. agent-shell--handle — log each pipeline step
@@ -64,7 +88,7 @@
 
 (after! acp
   (defun my/acp-init--log-route-message (orig-fn &rest args)
-    "Around advice on `acp--route-incoming-message': log request routing and protect callbacks."
+    "Log request routing and protect callbacks."
     (let* ((message (plist-get args :message))
            (object (and message (map-elt message :object)))
            (id (and object (map-elt object 'id)))
@@ -218,7 +242,87 @@
   (advice-add 'agent-shell--emit-event :around #'my/acp-init--log-emit-event))
 
 ;; ---------------------------------------------------------------------------
-;; 7. Removal helper
+;; 7. session/new MCP payload — log mcp-servers, buffer, agent type
+;; ---------------------------------------------------------------------------
+
+(after! agent-shell
+  (defun my/acp-debug-log-session-new-request (orig-fn &rest args)
+    "Around advice on `agent-shell--initiate-new-session': log MCP payload."
+    (let* ((buf-name (buffer-name))
+           (state agent-shell--state)
+           (agent-id (map-elt (map-elt state :agent-config) :identifier))
+           (mcp-servers (agent-shell--mcp-servers))
+           (server-count (if mcp-servers (length mcp-servers) 0))
+           (server-names (when mcp-servers
+                           (mapcar (lambda (s) (or (map-elt s 'name) "?"))
+                                   (append mcp-servers nil)))))
+      (message "[acp-debug] session/new: buf=%s agent=%s mcp-server-count=%d names=%S"
+               buf-name agent-id server-count server-names)
+      (when (and mcp-servers (> server-count 0))
+        (message "[acp-debug] session/new: mcp-servers=%S"
+                 (mapcar (lambda (s)
+                           (let ((name (map-elt s 'name))
+                                 (type (map-elt s 'type))
+                                 (url (map-elt s 'url)))
+                             (format "%s[%s]%s" (or name "?") (or type "?")
+                                     (if url (format " url=%s" url) ""))))
+                         (append mcp-servers nil))))
+      (when (eq agent-id 'gemini-cli)
+        (message "[acp-debug] session/new: GEMINI AGENT — full mcp-servers payload: %S"
+                 mcp-servers)))
+    (apply orig-fn args))
+  (advice-add 'agent-shell--initiate-new-session :around #'my/acp-debug-log-session-new-request))
+
+;; ---------------------------------------------------------------------------
+;; 8. session/new response — log session ID on success
+;; ---------------------------------------------------------------------------
+
+(after! agent-shell
+  (defun my/acp-debug-log-session-new-response (orig-fn &rest args)
+    "Wrap on-success to log session/new response."
+    (let* ((buf (current-buffer))
+           (buf-name (buffer-name buf))
+           (state agent-shell--state)
+           (agent-id (map-elt (map-elt state :agent-config) :identifier))
+           (orig-on-session-init (plist-get args :on-session-init))
+           (logged-on-session-init
+            (lambda ()
+              (let ((session-id (map-nested-elt agent-shell--state '(:session :id))))
+                (message "[acp-debug] session/new SUCCESS: buf=%s agent=%s session-id=%s"
+                         buf-name agent-id session-id))
+              (funcall orig-on-session-init))))
+      (setq args (plist-put args :on-session-init logged-on-session-init))
+      (apply orig-fn args)))
+  (advice-add 'agent-shell--initiate-new-session :around #'my/acp-debug-log-session-new-response))
+
+;; ---------------------------------------------------------------------------
+;; 9. Error/abort capture — log ACP request failures with context
+;; ---------------------------------------------------------------------------
+
+(after! agent-shell
+  (defun my/acp-debug-log-err-handler (orig-fn &rest args)
+    "Wrap returned lambda to log ACP request failures."
+    (let* ((_state (plist-get args :state))
+           (shell-buffer (plist-get args :shell-buffer))
+           (buf-name (when (buffer-live-p shell-buffer)
+                       (buffer-name shell-buffer)))
+           (agent-id (when (buffer-live-p shell-buffer)
+                       (with-current-buffer shell-buffer
+                         (map-elt (map-elt agent-shell--state :agent-config) :identifier))))
+           (orig-handler (apply orig-fn args)))
+      (lambda (acp-error raw-message)
+        (let* ((err-msg (map-elt acp-error 'message))
+               (err-code (map-elt acp-error 'code))
+               (err-id (map-elt acp-error 'id))
+               (raw-method (and raw-message (map-elt raw-message 'method))))
+          (message "[acp-debug] REQUEST ERROR: buf=%s agent=%s code=%s id=%s method=%s msg=%s"
+                   buf-name agent-id err-code err-id raw-method err-msg)
+          (message "[acp-debug] REQUEST ERROR raw: %S" raw-message))
+        (funcall orig-handler acp-error raw-message))))
+  (advice-add 'agent-shell--make-error-handler :around #'my/acp-debug-log-err-handler))
+
+;; ---------------------------------------------------------------------------
+;; 10. Removal helper
 ;; ---------------------------------------------------------------------------
 
 (defun my/acp-init-debug-logging-remove ()
@@ -230,6 +334,9 @@
   (advice-remove 'acp--start-client #'my/acp-init--log-start-client)
   (advice-remove 'agent-shell--initiate-new-session #'my/acp-init--log-new-session)
   (advice-remove 'agent-shell--emit-event #'my/acp-init--log-emit-event)
+  (advice-remove 'agent-shell--initiate-new-session #'my/acp-debug-log-session-new-request)
+  (advice-remove 'agent-shell--initiate-new-session #'my/acp-debug-log-session-new-response)
+  (advice-remove 'agent-shell--make-error-handler #'my/acp-debug-log-err-handler)
   (message "[acp-init] All debug logging advice removed"))
 
 (message "[acp-init] Debug logging module loaded — all advice installed")
