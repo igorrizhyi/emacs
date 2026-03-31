@@ -38,7 +38,7 @@ read-only prompt regions."
         (let ((bol (progn (eshell-bol) (point)))
               (eol (progn (end-of-line) (point))))
           (when (> eol bol)
-            (delete-region bol eol))))
+            (kill-region bol eol))))
     ;; Fallback for non-eshell: standard dd
     (evil-delete-whole-line)))
 
@@ -56,7 +56,7 @@ Deletes from after the prompt to end of line."
                            (setq p (next-single-property-change p 'read-only nil eol)))
                          p))))
       (when (> eol bol)
-        (delete-region bol eol)))))
+        (kill-region bol eol)))))
 
 (defun my/delete-selection-no-clipboard ()
   "Delete visual selection without affecting system clipboard."
