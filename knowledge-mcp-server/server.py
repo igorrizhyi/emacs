@@ -457,15 +457,17 @@ async def _store_and_queue_llm(content: str, source: str, roles: list[str]) -> l
         if supersessions:
             create_supersedes_edges(graph, supersessions)
 
-        # Entity extraction: queue one task per chunk with raw content only.
+        # Entity extraction: batch all chunks into a single LLM task.
         # The agent fetches prompt templates via get_prompts() on startup
         # and applies the entity_extraction template to the raw content.
-        for chunk in chunks:
+        if chunks:
+            batch_content = "\n\n---CHUNK BOUNDARY---\n\n".join(c["content"] for c in chunks)
+            all_chunk_ids = [c["id"] for c in chunks]
             tid = queue_llm_task(
                 PROJECT_ROOT,
                 "entity_extraction",
-                chunk["content"],
-                context={"chunk_ids": [chunk["id"]]},
+                batch_content,
+                context={"chunk_ids": all_chunk_ids},
             )
             task_ids.append(tid)
 
