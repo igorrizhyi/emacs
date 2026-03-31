@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useCallback } from 'react';
 import { ScrollView } from 'react-native';
 import styled from 'styled-components/native';
 import { DrawerContentComponentProps } from '@react-navigation/drawer';
@@ -8,6 +8,7 @@ import { AgentData } from './AgentRow';
 import ForeignAgents from './ForeignAgents';
 import PendingTasks from './PendingTasks';
 import HistorySection from './HistorySection';
+import { useUIStore } from '../../store/uiStore';
 
 const Container = styled.ScrollView`
   flex: 1;
@@ -59,11 +60,16 @@ const MOCK_HISTORY = [
 
 interface TeamSidebarProps extends DrawerContentComponentProps {}
 
-export default function TeamSidebar(_props: TeamSidebarProps) {
-  const handleAgentPress = (agent: AgentData) => {
-    // TODO: Switch active chat to agent
-    console.log('Switch to agent:', agent.id);
-  };
+export default function TeamSidebar(props: TeamSidebarProps) {
+  const setActiveAgent = useUIStore((s) => s.setActiveAgent);
+
+  const handleAgentPress = useCallback(
+    (agent: AgentData) => {
+      setActiveAgent(agent.id);
+      props.navigation.navigate('Chat', { agentId: agent.id });
+    },
+    [props.navigation, setActiveAgent],
+  );
 
   return (
     <Container>

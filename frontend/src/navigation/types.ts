@@ -1,5 +1,5 @@
 export type RootDrawerParamList = {
-  Chat: undefined;
+  Chat: { agentId: string } | undefined;
   ProjectSelector: undefined;
 };
 
