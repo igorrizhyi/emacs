@@ -1472,31 +1472,35 @@ With prefix argument ARG (C-u), switch to the most recent terminal directly."
                          
                          ;; For vertico, disable sorting and add preview
                          ((and (boundp 'vertico-mode) vertico-mode)
-                          (let ((vertico-sort-function nil))
+                          (let ((vertico-sort-function nil)
+                                (preview-fn nil))
                             (minibuffer-with-setup-hook
                                 (lambda ()
                                   ;; Hook into vertico's selection change
                                   (when (boundp 'vertico--index)
-                                    (let ((preview-function 
-                                           (lambda ()
-                                             (when (and (boundp 'vertico--candidates) 
-                                                        (boundp 'vertico--index)
-                                                        vertico--candidates
-                                                        vertico--index
-                                                        (>= vertico--index 0)
-                                                        (< vertico--index (length vertico--candidates)))
-                                               (let* ((selected-candidate (nth vertico--index vertico--candidates))
-                                                      (choice-entry (assoc selected-candidate choices))
-                                                      (term (when choice-entry (cdr choice-entry)))
-                                                      (buffer (when term (plist-get term :buffer))))
-                                                 (when (and buffer (buffer-live-p buffer))
-                                                   (with-selected-window (minibuffer-selected-window)
-                                                     (switch-to-buffer buffer))))))))
-                                      ;; Add hook for navigation changes
-                                      (add-hook 'post-command-hook preview-function nil t)
-                                      ;; Also trigger preview immediately for initial selection
-                                      (run-with-timer 0.01 nil preview-function))))
-                              (completing-read "Switch to terminal (recent first): " choices nil t))))
+                                    (setq preview-fn
+                                          (lambda ()
+                                            (when (and (boundp 'vertico--candidates)
+                                                       (boundp 'vertico--index)
+                                                       vertico--candidates
+                                                       vertico--index
+                                                       (>= vertico--index 0)
+                                                       (< vertico--index (length vertico--candidates)))
+                                              (let* ((selected-candidate (nth vertico--index vertico--candidates))
+                                                     (choice-entry (assoc selected-candidate choices))
+                                                     (term (when choice-entry (cdr choice-entry)))
+                                                     (buffer (when term (plist-get term :buffer))))
+                                                (when (and buffer (buffer-live-p buffer))
+                                                  (with-selected-window (minibuffer-selected-window)
+                                                    (switch-to-buffer buffer)))))))
+                                    ;; Add hook for navigation changes
+                                    (add-hook 'post-command-hook preview-fn)
+                                    ;; Also trigger preview immediately for initial selection
+                                    (run-with-timer 0.01 nil preview-fn)))
+                              (unwind-protect
+                                  (completing-read "Switch to terminal (recent first): " choices nil t)
+                                (when preview-fn
+                                  (remove-hook 'post-command-hook preview-fn))))))
                          
                          ;; For helm, disable sorting and add preview
                          ((and (boundp 'helm-mode) helm-mode)
