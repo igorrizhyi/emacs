@@ -822,6 +822,7 @@ def create_supersedes_edges(graph, supersessions: list[tuple[str, str, dict]]):
 MAX_CONTEXT_CHARS = 12000
 MAX_EXPANDED_CHUNKS = 5
 SCORE_THRESHOLD = 0.5  # cosine distance; lower = better
+FEATURE_SCORE_THRESHOLD = 0.75  # Features have shorter text → higher cosine distance
 EXPANSION_SCORE_THRESHOLD = 0.6  # slightly more lenient for graph-expanded chunks
 
 
@@ -924,7 +925,7 @@ def _query_behavioral(graph, question: str, q_vec: list[float], role: str = None
             WHERE score <= $threshold
             RETURN node.name AS name, node.description AS description, score
             """,
-            params={"k": top_k, "vec": q_vec, "threshold": SCORE_THRESHOLD},
+            params={"k": top_k, "vec": q_vec, "threshold": FEATURE_SCORE_THRESHOLD},
             timeout=5000,
         )
         feature_names = [row[0] for row in feat_knn.result_set]
