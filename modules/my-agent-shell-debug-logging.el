@@ -36,6 +36,7 @@
 (declare-function my/acp-debug-log-session-new-request "my-agent-shell-debug-logging")
 (declare-function my/acp-debug-log-session-new-response "my-agent-shell-debug-logging")
 (declare-function my/acp-debug-log-err-handler "my-agent-shell-debug-logging")
+(declare-function my/acp-stderr--cleanup-old-buffers "my-agent-shell-debug-logging")
 (declare-function agent-shell--state "agent-shell")
 (declare-function agent-shell--mcp-servers "agent-shell")
 (defvar agent-shell--state)  ; buffer-local, defined in agent-shell.el
