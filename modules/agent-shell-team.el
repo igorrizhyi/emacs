@@ -395,6 +395,11 @@ here and delivered immediately when the agent finishes its current turn.")
 Prevents repeated notifications on every poll cycle when a researcher
 goes idle without calling taskUpdate.")
 
+(defvar agent-shell-team--idle-fallback-retry-count (make-hash-table :test 'equal)
+  "Map of request-id to number of idle fallback retry attempts.
+When a researcher goes idle with an empty report, we nudge them up to 5
+times before notifying the lead.")
+
 ;;; Idle inhibit (hypridle / screensaver)
 
 (defvar agent-shell-team--idle-inhibit-cookie nil
@@ -531,7 +536,6 @@ hasn't been notified yet, deliver a system message to the lead."
                (gethash request-id agent-shell-team--active-tasks)
                ;; Haven't notified for this request-id yet
                (not (gethash request-id agent-shell-team--idle-fallback-notified)))
-      (puthash request-id t agent-shell-team--idle-fallback-notified)
       (let* ((task (gethash request-id agent-shell-team--active-tasks))
              (report-path (plist-get task :report-path))
              (report-has-content
@@ -539,37 +543,52 @@ hasn't been notified yet, deliver a system message to the lead."
                    (file-readable-p report-path)
                    (> (or (file-attribute-size (file-attributes report-path)) 0)
                       50)))
-             (message-text
-              (if report-has-content
-                  (format "[System] Researcher %s (request-id: %s) went idle without calling taskUpdate. Report file may contain results: %s"
-                          agent-id request-id report-path)
-                (format "[System] Researcher %s (request-id: %s) went idle without calling taskUpdate. Report file is empty — agent may have failed silently."
-                        agent-id request-id)))
-             (lead-buf (agent-shell-team--get-lead session-id)))
-        (agent-shell-team--log session-id
-                               (format "[idle-fallback] %s" message-text))
-        (when lead-buf
-          (let ((lead-status (agent-shell-team--agent-status lead-buf)))
-            (pcase lead-status
-              ('idle
-               (agent-shell-team--prompt-agent lead-buf message-text))
-              ((or 'busy 'initializing)
-               (agent-shell-team--queue-message
-                session-id lead-buf
-                (list :from "system"
-                      :title "Researcher Idle Fallback"
-                      :message message-text)))
-              ('dead
-               (agent-shell-team--log session-id
-                                      "WARNING: lead buffer is dead, cannot deliver idle fallback")))))
-        ;; Clean up task state — same as handle-task-update does on "finished".
-        ;; Remove from active-tasks so the task isn't stuck forever.
-        ;; Keep request-to-buffer and request-to-session for dismissAgent lookup
-        ;; (same rationale as handle-task-update; cleaned up by cleanup-agent).
-        (remhash request-id agent-shell-team--active-tasks)
-        ;; Handle group completion if this task was part of a group
-        (when-let ((group-id (gethash request-id agent-shell-team--request-to-group)))
-          (agent-shell-team--handle-task-completion request-id session-id nil))))))
+             (retry-count (or (gethash request-id agent-shell-team--idle-fallback-retry-count) 0)))
+        (if (and (not report-has-content) (< retry-count 5))
+            ;; Empty report and retries remaining: nudge the researcher
+            (progn
+              (puthash request-id (1+ retry-count) agent-shell-team--idle-fallback-retry-count)
+              (agent-shell-team--log session-id
+               (format "[idle-fallback] Nudging researcher %s (request-id: %s, attempt %d/5)"
+                       agent-id request-id (1+ retry-count)))
+              (when (buffer-live-p buf)
+                (agent-shell-team--prompt-agent buf
+                 "Your report file is empty and you appear to be idle. Please continue your task and write your findings to the report file. Call taskUpdate when done.")))
+          ;; Either report has content, or retries exhausted: notify the lead
+          (puthash request-id t agent-shell-team--idle-fallback-notified)
+          (let* ((message-text
+                  (cond
+                   (report-has-content
+                    (format "[System] Researcher %s (request-id: %s) went idle without calling taskUpdate. Report file may contain results: %s"
+                            agent-id request-id report-path))
+                   (t
+                    (format "[System] Researcher %s (request-id: %s) went idle without calling taskUpdate after %d retry attempts. Report file is empty — agent may have failed silently."
+                            agent-id request-id retry-count))))
+                 (lead-buf (agent-shell-team--get-lead session-id)))
+            (agent-shell-team--log session-id
+                                   (format "[idle-fallback] %s" message-text))
+            (when lead-buf
+              (let ((lead-status (agent-shell-team--agent-status lead-buf)))
+                (pcase lead-status
+                  ('idle
+                   (agent-shell-team--prompt-agent lead-buf message-text))
+                  ((or 'busy 'initializing)
+                   (agent-shell-team--queue-message
+                    session-id lead-buf
+                    (list :from "system"
+                          :title "Researcher Idle Fallback"
+                          :message message-text)))
+                  ('dead
+                   (agent-shell-team--log session-id
+                                          "WARNING: lead buffer is dead, cannot deliver idle fallback")))))
+            ;; Clean up task state — same as handle-task-update does on "finished".
+            ;; Remove from active-tasks so the task isn't stuck forever.
+            ;; Keep request-to-buffer and request-to-session for dismissAgent lookup
+            ;; (same rationale as handle-task-update; cleaned up by cleanup-agent).
+            (remhash request-id agent-shell-team--active-tasks)
+            ;; Handle group completion if this task was part of a group
+            (when-let ((group-id (gethash request-id agent-shell-team--request-to-group)))
+              (agent-shell-team--handle-task-completion request-id session-id nil))))))))
 
 (defun agent-shell-team--sync-idle-inhibit ()
   "Scan all registered agents, sync busy files with actual status.
@@ -2563,7 +2582,8 @@ agent's CLI process dies."
                  (remhash k agent-shell-team--request-to-buffer)
                  (remhash k agent-shell-team--request-to-session)
                  (remhash k agent-shell-team--active-tasks)
-                 (remhash k agent-shell-team--idle-fallback-notified)))
+                 (remhash k agent-shell-team--idle-fallback-notified)
+                 (remhash k agent-shell-team--idle-fallback-retry-count)))
              (copy-hash-table agent-shell-team--request-to-buffer))
     ;; Clean up group tracking for removed request-ids
     (dolist (rid removed-request-ids)
@@ -2939,6 +2959,7 @@ Route the status update directly to the lead agent's queue."
                          (when (equal st "finished")
                            (remhash rid agent-shell-team--active-tasks)
                            (remhash rid agent-shell-team--idle-fallback-notified)
+                           (remhash rid agent-shell-team--idle-fallback-retry-count)
                            (when-let ((group-id (gethash rid agent-shell-team--request-to-group)))
                              (agent-shell-team--handle-task-completion rid sid nil)))))))
       t)))
