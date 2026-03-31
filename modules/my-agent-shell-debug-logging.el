@@ -42,6 +42,10 @@
 (defvar agent-shell)  ; feature symbol used by after!
 (defvar acp)          ; feature symbol used by after!
 
+(defvar my/acp-stderr-max-buffers 5
+  "Maximum number of preserved acp-client-stderr buffers to keep.
+Oldest buffers beyond this limit are killed after each new preservation.")
+
 ;; ---------------------------------------------------------------------------
 ;; 1. agent-shell--handle — log each pipeline step
 ;; ---------------------------------------------------------------------------
@@ -121,6 +125,20 @@
   ;; 3. acp--start-client sentinel — log event string + preserve stderr on error
   ;; ---------------------------------------------------------------------------
 
+  (defun my/acp-stderr--cleanup-old-buffers ()
+    "Kill oldest acp-client-stderr buffers exceeding `my/acp-stderr-max-buffers'."
+    (let ((stderr-bufs (seq-filter
+                        (lambda (buf)
+                          (string-prefix-p "acp-client-stderr(" (buffer-name buf)))
+                        (buffer-list))))
+      (when (> (length stderr-bufs) my/acp-stderr-max-buffers)
+        ;; buffer-list returns buffers in MRU order; reverse to get oldest first
+        (let ((to-kill (seq-take (reverse stderr-bufs)
+                                 (- (length stderr-bufs) my/acp-stderr-max-buffers))))
+          (dolist (buf to-kill)
+            (message "[acp-init] cleaning up old stderr buffer: %s" (buffer-name buf))
+            (kill-buffer buf))))))
+
   (defun my/acp-init--log-sentinel (orig-fn &rest args)
     "Around advice on `acp--start-client': wrap sentinel and filter to log events."
     (apply orig-fn args)
@@ -157,7 +175,8 @@
                                       (message "[acp-init] preserved stderr buffer: %s" stderr-buf-name)
                                     (funcall real-kill buf))))))
                      (when orig-sentinel
-                       (funcall orig-sentinel proc event))))
+                       (funcall orig-sentinel proc event)))
+                   (my/acp-stderr--cleanup-old-buffers))
                (when orig-sentinel
                  (funcall orig-sentinel proc event))))))
         ;; Wrap the process filter to log raw output and catch filter errors
