@@ -158,6 +158,12 @@ def init_schema(graph):
         except Exception:
             pass  # already exists
 
+    # Vector index on Feature.embedding (for behavioral query mode)
+    try:
+        graph.create_node_vector_index("Feature", "embedding", dim=EMBED_DIM, similarity_function="cosine")
+    except Exception:
+        pass  # already exists
+
     # Seed roles
     for role in ("dev", "researcher", "tester", "lead"):
         graph.query("MERGE (:Role {name: $name})", params={"name": role})
@@ -859,6 +865,19 @@ SYSTEM_PROMPTS = {
         "- [recommendation]: This is research/investigation that may not be implemented yet — "
         "present it as a suggestion, not a fact."
     ),
+    "behavioral": (
+        "You are a behavioral knowledge assistant. Given Features and Scenarios from the "
+        "knowledge graph, describe system behavior using Given/When/Then style.\n"
+        "Focus on:\n"
+        "- What the system does (observable behavior), not how it's implemented\n"
+        "- Feature interactions and dependencies\n"
+        "- Edge cases and boundary conditions captured in scenarios\n"
+        "Structure your response by Feature, listing relevant Scenarios under each. "
+        "Use the exact Feature names as section headers. "
+        "Cite Feature names in [Feature: name] format as sources. "
+        "If no Features match the query, say so clearly. "
+        "Do NOT infer behavior beyond what the Scenarios explicitly describe."
+    ),
 }
 
 
@@ -888,6 +907,255 @@ def _build_fulltext_query(question: str) -> str:
     return ' '.join(f'%{w}%' for w in words)
 
 
+def _query_behavioral(graph, question: str, q_vec: list[float], role: str = None, top_k: int = 8, project: str = None) -> dict:
+    """Behavioral query mode: retrieve Features and Scenarios for the question.
+
+    Primary: Feature vector KNN search on Feature.embedding.
+    Fallback: chunk retrieval → traverse to Features via HAS_SCENARIO / IMPLEMENTS.
+    """
+    feature_names: list[str] = []
+
+    # --- Primary: Feature vector KNN ---
+    try:
+        feat_knn = graph.query(
+            """
+            CALL db.idx.vector.queryNodes('Feature', 'embedding', $k, vecf32($vec))
+            YIELD node, score
+            WHERE score <= $threshold
+            RETURN node.name AS name, node.description AS description, score
+            """,
+            params={"k": top_k, "vec": q_vec, "threshold": SCORE_THRESHOLD},
+            timeout=5000,
+        )
+        feature_names = [row[0] for row in feat_knn.result_set]
+    except Exception:
+        logger.debug("Feature vector KNN failed (index may not exist yet)", exc_info=True)
+
+    # --- Fallback: chunk retrieval → traverse to Features ---
+    if not feature_names:
+        # Use existing chunk retrieval (vector KNN + fulltext + entity)
+        fallback_cids: list[str] = []
+
+        # Vector KNN on chunks
+        try:
+            chunk_knn = graph.query(
+                """
+                CALL db.idx.vector.queryNodes('Chunk', 'embedding', $k, vecf32($vec))
+                YIELD node, score
+                WHERE score <= $threshold
+                OPTIONAL MATCH (superseder:Chunk)-[:SUPERSEDES]->(node)
+                WITH node, score WHERE superseder IS NULL
+                RETURN node.id
+                """,
+                params={"k": top_k * 2, "vec": q_vec, "threshold": SCORE_THRESHOLD},
+                timeout=5000,
+            )
+            fallback_cids = [row[0] for row in chunk_knn.result_set]
+        except Exception:
+            logger.debug("Chunk vector KNN failed in behavioral fallback", exc_info=True)
+
+        # Fulltext fallback
+        if not fallback_cids:
+            try:
+                ft = graph.query(
+                    """
+                    CALL db.idx.fulltext.queryNodes('Chunk', $q)
+                    YIELD node
+                    OPTIONAL MATCH (superseder:Chunk)-[:SUPERSEDES]->(node)
+                    WITH node WHERE superseder IS NULL
+                    RETURN node.id
+                    LIMIT $k
+                    """,
+                    params={"q": _build_fulltext_query(question), "k": top_k},
+                )
+                fallback_cids = [row[0] for row in ft.result_set]
+            except Exception:
+                pass
+
+        if fallback_cids:
+            # Traverse: Chunk ← HAS_SCENARIO ← Feature
+            try:
+                scenario_res = graph.query(
+                    """
+                    UNWIND $cids AS cid
+                    MATCH (f:Feature)-[:HAS_SCENARIO]->(c:Chunk {id: cid})
+                    RETURN DISTINCT f.name
+                    """,
+                    params={"cids": fallback_cids},
+                )
+                feature_names.extend(row[0] for row in scenario_res.result_set)
+            except Exception:
+                pass
+
+            # Traverse: Chunk → HAS_ENTITY → Entity ← IMPLEMENTS ← Feature
+            try:
+                entity_res = graph.query(
+                    """
+                    UNWIND $cids AS cid
+                    MATCH (c:Chunk {id: cid})-[:HAS_ENTITY]->(e:Entity)<-[:IMPLEMENTS]-(f:Feature)
+                    RETURN DISTINCT f.name
+                    """,
+                    params={"cids": fallback_cids},
+                )
+                feature_names.extend(row[0] for row in entity_res.result_set)
+            except Exception:
+                pass
+
+            # Deduplicate while preserving order
+            seen = set()
+            unique_names = []
+            for n in feature_names:
+                if n not in seen:
+                    seen.add(n)
+                    unique_names.append(n)
+            feature_names = unique_names[:top_k]
+
+    # --- No features found: graceful fallback ---
+    if not feature_names:
+        return {
+            "response": "No relevant Features found in the knowledge graph.",
+            "chunks": [],
+            "sources": [],
+            "expanded_count": 0,
+        }
+
+    # --- Detail retrieval for each Feature ---
+    context_parts = []
+    all_sources = []
+
+    for fname in feature_names:
+        # Fetch feature description
+        try:
+            feat_res = graph.query(
+                "MATCH (f:Feature {name: $name}) RETURN f.description",
+                params={"name": fname},
+            )
+            feat_desc = feat_res.result_set[0][0] if feat_res.result_set else ""
+        except Exception:
+            feat_desc = ""
+
+        # Fetch scenarios (ordered)
+        scenarios = []
+        try:
+            sc_res = graph.query(
+                """
+                MATCH (f:Feature {name: $name})-[r:HAS_SCENARIO]->(c:Chunk)
+                RETURN c.content
+                ORDER BY r.order
+                """,
+                params={"name": fname},
+            )
+            scenarios = [row[0] for row in sc_res.result_set]
+        except Exception:
+            pass
+
+        # Fetch IMPLEMENTS entities
+        implements = []
+        try:
+            impl_res = graph.query(
+                """
+                MATCH (f:Feature {name: $name})-[:IMPLEMENTS]->(e:Entity)
+                RETURN e.name
+                """,
+                params={"name": fname},
+            )
+            implements = [row[0] for row in impl_res.result_set]
+        except Exception:
+            pass
+
+        # Fetch DEPENDS_ON features
+        depends_on = []
+        try:
+            dep_res = graph.query(
+                """
+                MATCH (f:Feature {name: $name})-[:DEPENDS_ON]->(f2:Feature)
+                RETURN f2.name
+                """,
+                params={"name": fname},
+            )
+            depends_on = [row[0] for row in dep_res.result_set]
+        except Exception:
+            pass
+
+        # Format context block
+        parts = [f"## Feature: {fname}"]
+        if feat_desc:
+            parts.append(feat_desc)
+        if scenarios:
+            parts.append("")
+            for sc in scenarios:
+                parts.append(sc)
+        if implements:
+            parts.append(f"\nImplements: {', '.join(implements)}")
+        if depends_on:
+            parts.append(f"Depends on: {', '.join(depends_on)}")
+
+        context_parts.append("\n".join(parts))
+        all_sources.append(f"Feature: {fname}")
+
+    context_text = "\n\n---\n\n".join(context_parts)
+
+    # Safety net: truncate
+    if len(context_text) > MAX_CONTEXT_CHARS:
+        context_text = context_text[:MAX_CONTEXT_CHARS] + "\n... [context truncated]"
+
+    system_prompt = SYSTEM_PROMPTS["behavioral"]
+
+    # Cache the result
+    cache_path = None
+    try:
+        from knowledge_cache import cache_query_result
+        cache_path = cache_query_result(PROJECT_ROOT, question, q_vec, context_text)
+    except Exception:
+        logger.debug("Cache write failed", exc_info=True)
+
+    # Skip synthesis mode
+    if KNOWLEDGE_SKIP_SYNTHESIS:
+        return {
+            "response": None,
+            "chunks": [],
+            "sources": all_sources,
+            "expanded_count": 0,
+            "context_text": context_text,
+            "cache_path": cache_path,
+        }
+
+    # Agent backend: queue synthesis
+    if KNOWLEDGE_LLM_BACKEND == "agent":
+        from llm_queue import queue_llm_task
+        full_prompt = f"System: {system_prompt}\n\nContext:\n{context_text}\n\nQuestion: {question}"
+        task_id = queue_llm_task(
+            PROJECT_ROOT,
+            "synthesis",
+            full_prompt,
+            context={"sources": all_sources, "expanded_count": 0},
+        )
+        return {
+            "response": None,
+            "chunks": [],
+            "sources": all_sources,
+            "expanded_count": 0,
+            "pending_llm_tasks": [task_id],
+            "cache_path": cache_path,
+        }
+
+    # Direct LLM synthesis
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": f"Context:\n{context_text}\n\nQuestion: {question}"},
+    ]
+    llm_resp = completion(model=LLM_MODEL, messages=messages)
+    answer = llm_resp.choices[0].message.content
+
+    return {
+        "response": answer,
+        "chunks": [],
+        "sources": all_sources,
+        "expanded_count": 0,
+        "cache_path": cache_path,
+    }
+
+
 def query_knowledge(graph, question: str, role: str = None, top_k: int = 8, mode: str = "summary", project: str = None) -> dict:
     """Vector search + graph expansion + LLM answer.
 
@@ -911,6 +1179,10 @@ def query_knowledge(graph, question: str, role: str = None, top_k: int = 8, mode
             }
     except Exception:
         logger.debug("Cache lookup failed", exc_info=True)
+
+    # --- Behavioral mode: Feature-centric retrieval ---
+    if mode == "behavioral":
+        return _query_behavioral(graph, question, q_vec, role=role, top_k=top_k, project=project)
 
     # 2. Vector KNN search — fetch extra candidates to account for
     #    project filtering and superseded-chunk filtering

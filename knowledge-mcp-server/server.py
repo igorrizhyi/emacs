@@ -90,7 +90,7 @@ TOOLS = [
             "properties": {
                 "query": {"type": "string", "description": "Natural language question"},
                 "role": {"type": "string", "description": "Filter by role: dev, tester, researcher, lead"},
-                "mode": {"type": "string", "enum": ["summary", "technical"], "description": "Response mode: 'summary' for narrative answers, 'technical' for structured technical briefs suitable as dev context"},
+                "mode": {"type": "string", "enum": ["summary", "technical", "behavioral"], "description": "Response mode: 'summary' for narrative answers, 'technical' for structured technical briefs suitable as dev context, 'behavioral' for system behavior descriptions using Features and Given/When/Then Scenarios"},
                 "project": {"type": "string", "description": "Filter by project (omit to search all projects in the namespace)"},
             },
             "required": ["query"],

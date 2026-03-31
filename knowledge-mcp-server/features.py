@@ -11,7 +11,7 @@ from difflib import SequenceMatcher
 
 import litellm
 
-from common import CLASSIFICATION_MODEL, KNOWLEDGE_LLM_BACKEND, PROJECT_ROOT, chunk_id
+from common import CLASSIFICATION_MODEL, KNOWLEDGE_LLM_BACKEND, PROJECT_ROOT, chunk_id, embed_texts
 from entities import normalize_entity_name
 from llm_queue import queue_llm_task
 
@@ -284,15 +284,31 @@ async def upsert_feature(graph, feature_data: dict):
     name = feature_data["name"]
     now = datetime.now(timezone.utc).isoformat()
 
+    # Embed the feature for behavioral vector search
+    embed_text = f"Feature: {name}. Description: {feature_data['description']}"
+    vecs = embed_texts([embed_text])
+    feat_vec = vecs[0] if vecs else None
+
     # Upsert Feature node
-    graph.query(
-        """
-        MERGE (f:Feature {name: $name})
-        SET f.description = $desc,
-            f.updated_at = $ts
-        """,
-        params={"name": name, "desc": feature_data["description"], "ts": now},
-    )
+    if feat_vec:
+        graph.query(
+            """
+            MERGE (f:Feature {name: $name})
+            SET f.description = $desc,
+                f.updated_at = $ts,
+                f.embedding = vecf32($vec)
+            """,
+            params={"name": name, "desc": feature_data["description"], "ts": now, "vec": feat_vec},
+        )
+    else:
+        graph.query(
+            """
+            MERGE (f:Feature {name: $name})
+            SET f.description = $desc,
+                f.updated_at = $ts
+            """,
+            params={"name": name, "desc": feature_data["description"], "ts": now},
+        )
 
     # Delete old Scenario chunks for this Feature
     graph.query(
