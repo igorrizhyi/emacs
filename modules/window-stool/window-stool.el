@@ -459,8 +459,13 @@ CAUTION: This can have some major performance impact on scrolling."
              (when (buffer-file-name)
                (cl-pushnew (current-buffer) window-stool-buffer-list))
 
-             ;; remove from window-stool-buffer-list if buffer iskilled
-             (add-hook 'kill-buffer-hook (lambda () (cl-remove (current-buffer) window-stool-buffer-list)) nil t)
+             ;; clean up overlay and remove from window-stool-buffer-list if buffer is killed
+             (add-hook 'kill-buffer-hook
+                       (lambda ()
+                         (when (overlayp window-stool-overlay)
+                           (delete-overlay window-stool-overlay))
+                         (cl-remove (current-buffer) window-stool-buffer-list))
+                       nil t)
 
              ;; prevents a (void-function: nil) error when we switch to a non-hooked mode i.e. in fundamental mode,
              ;; which will break the global window-scroll-functions' window-stool--scroll-function
