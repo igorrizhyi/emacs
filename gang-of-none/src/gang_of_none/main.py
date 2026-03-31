@@ -11,6 +11,7 @@ from gang_of_none.core.acp_session import ACPSessionManager
 from gang_of_none.core.agent_manager import AgentManager
 from gang_of_none.core.orchestrator import Orchestrator
 from gang_of_none.core.task_manager import TaskManager
+from gang_of_none.core.worktree_manager import WorktreeManager
 
 logger = structlog.get_logger()
 
@@ -26,11 +27,13 @@ async def lifespan(app: FastAPI):
     app.state.agent_manager = AgentManager(settings)
     app.state.task_manager = TaskManager(reports_dir=settings.reports_dir)
     app.state.acp_session_manager = ACPSessionManager(settings)
+    app.state.worktree_manager = WorktreeManager(settings)
     app.state.orchestrator = Orchestrator(
         settings=settings,
         task_manager=app.state.task_manager,
         agent_manager=app.state.agent_manager,
         acp_session_manager=app.state.acp_session_manager,
+        worktree_manager=app.state.worktree_manager,
     )
 
     # Start the periodic drain loop

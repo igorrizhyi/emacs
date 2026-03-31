@@ -5,6 +5,14 @@ from pydantic import BaseModel, Field
 from .enums import AgentRole, AgentStatus
 
 
+class WorktreeInfo(BaseModel):
+    """Info about an agent's git worktree."""
+
+    path: str
+    name: str
+    branch: str
+
+
 class Agent(BaseModel):
     id: str
     role: AgentRole

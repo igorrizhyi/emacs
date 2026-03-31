@@ -14,6 +14,7 @@ from gang_of_none.config import Settings
 from gang_of_none.core.acp_session import ACPSessionManager
 from gang_of_none.core.agent_manager import AgentManager
 from gang_of_none.core.task_manager import TaskManager
+from gang_of_none.core.worktree_manager import WorktreeManager
 from gang_of_none.models.agent import AgentCreate
 from gang_of_none.models.enums import AgentRole, AgentStatus, TaskStatus
 
@@ -29,11 +30,13 @@ class Orchestrator:
         task_manager: TaskManager,
         agent_manager: AgentManager,
         acp_session_manager: ACPSessionManager,
+        worktree_manager: WorktreeManager,
     ) -> None:
         self.settings = settings
         self.task_mgr = task_manager
         self.agent_mgr = agent_manager
         self.acp_mgr = acp_session_manager
+        self.worktree_mgr = worktree_manager
         self._drain_task: asyncio.Task[None] | None = None
 
     # ── Drain loop ─────────────────────────────────────────────────
@@ -165,12 +168,29 @@ class Orchestrator:
         role: AgentRole,
         session_id: str,
         model: str | None = None,
+        project_root: str | None = None,
     ) -> Any | None:
-        """Spawn a new agent and start its ACP session."""
+        """Spawn a new agent: create worktree, then start ACP session."""
         create = AgentCreate(role=role, session_id=session_id)
         agent = self.agent_mgr.create_agent(create)
 
-        work_dir = f"{self.settings.worktree_subdir}/{agent.worktree_name}"
+        # Create worktree for agent isolation
+        wt_info = None
+        if project_root is not None:
+            try:
+                wt_info = await self.worktree_mgr.create_worktree(
+                    agent.worktree_name or agent.id, project_root,
+                )
+                agent.worktree_path = wt_info.path
+                agent.worktree_name = wt_info.name
+            except Exception:
+                logger.exception("worktree.create_failed", agent_id=agent.id)
+                self.agent_mgr.dismiss_agent(agent.id)
+                return None
+
+        work_dir = wt_info.path if wt_info else (
+            f"{self.settings.worktree_subdir}/{agent.worktree_name}"
+        )
         try:
             await self.acp_mgr.create_session(
                 agent_id=agent.id,
@@ -179,9 +199,48 @@ class Orchestrator:
             )
         except Exception:
             logger.exception("agent.spawn_failed", agent_id=agent.id)
+            # Clean up worktree on ACP failure
+            if wt_info is not None:
+                await self.worktree_mgr.remove_worktree(wt_info.path)
             self.agent_mgr.dismiss_agent(agent.id)
             return None
 
         self.agent_mgr.mark_init_finished(agent.id)
         logger.info("agent.spawned", agent_id=agent.id, role=str(role))
         return agent
+
+    async def dismiss_agent(self, agent_id: str, force: bool = False) -> bool:
+        """Dismiss an agent: stop ACP session, remove worktree, unregister."""
+        agent = self.agent_mgr.get_agent(agent_id)
+        if agent is None:
+            return False
+
+        allowed, reason = self.agent_mgr.can_dismiss(agent_id, force)
+        if not allowed:
+            logger.warning("agent.dismiss_denied", agent_id=agent_id, reason=reason)
+            return False
+
+        # Stop ACP session first
+        acp_session = self.acp_mgr.get_session(agent_id)
+        if acp_session is not None:
+            try:
+                await acp_session.stop()
+            except Exception:
+                logger.exception("acp.stop_failed", agent_id=agent_id)
+
+        # Remove worktree
+        if agent.worktree_path:
+            await self.worktree_mgr.remove_worktree(agent.worktree_path)
+
+        self.agent_mgr.dismiss_agent(agent_id)
+        logger.info("agent.dismissed", agent_id=agent_id)
+        return True
+
+    async def cleanup_session(self, session_id: str, project_root: str) -> None:
+        """Clean up all agents and worktrees for a session."""
+        agents = self.agent_mgr.get_session_agents(session_id)
+        for agent in agents:
+            await self.dismiss_agent(agent.id, force=True)
+
+        # Final worktree prune
+        await self.worktree_mgr.cleanup_all(project_root)
