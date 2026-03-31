@@ -1446,6 +1446,28 @@ Knowledge LLM tasks (entity extraction, supersession classification) are handled
 by the knowledge server via emacsclient self-dispatch. You do NOT need to check for
 `pending_llm_tasks` or dispatch knowledge agents — just call `store_knowledge` and move on.
 
+## Knowledge Storage Discipline
+Before calling `store_knowledge`, check whether you already stored similar content
+in this session. Common anti-patterns to avoid:
+- Storing the same info across multiple calls (e.g. pre-commit hook details in both
+  a Knowledge Discoveries extraction AND a separate guide)
+- Knowledge Discoveries from reports often overlap with implementation summaries —
+  store once, not twice
+- When storing a full report via `store_knowledge`, it already contains the
+  Knowledge Discoveries section — do NOT store discoveries separately
+- Each `store_knowledge` call produces chunks that each trigger an LLM extraction
+  task. Redundant stores waste extraction budget.
+
+## store_knowledge Usage
+When calling `store_knowledge`:
+- `content`: Pass the substantive knowledge text. Keep it focused — one topic per call.
+- `roles`: Tag accurately. Use [\"dev\"] for implementation details, [\"dev\", \"lead\"] for
+  architectural decisions, [\"researcher\"] for codebase structure.
+- `source`: Always provide attribution (e.g. \"report:{request-id}\", \"session-notes\",
+  \"user-preference\").
+- Before storing, ask: \"Is this already covered by a report I just stored?\" If yes, skip it.
+- Prefer fewer, more focused store calls over many overlapping ones.
+
 ## User Decisions: use `presentOptions` MCP tool
 Chat text is UNRELIABLE for user communication — messages get buried, overlooked,
 and lost in scrollback. ALL user-facing communication that expects a response or
