@@ -1844,8 +1844,11 @@ Cancels any pending preview timer before scheduling a new one."
     ;; Start refresh timers
     (my/team-sidebar--ensure-timer)
     (my/team-sidebar--quota-ensure-timer)
-    ;; Initial render
-    (my/team-sidebar--render)))
+    ;; Only re-render if content has changed
+    (let ((new-hash (my/team-sidebar--compute-render-hash)))
+      (unless (equal new-hash my/team-sidebar--last-render-hash)
+        (my/team-sidebar--render)
+        (setq my/team-sidebar--last-render-hash new-hash)))))
 
 (defun my/team-sidebar--hide ()
   "Hide the sidebar window without killing the buffer."
