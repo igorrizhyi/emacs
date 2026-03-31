@@ -1723,7 +1723,13 @@ the tester runs on the host in a git worktree (no containerization).
 5. **Podman storage config missing in agent worktrees**
    Dev agents in worktrees can't verify container builds —
    `/etc/containers/storage.conf` is absent. Container build verification
-   must be done by the lead or on the host."
+   must be done by the lead or on the host.
+
+### Report Path Mapping
+Containerized agents receive report paths transformed to their container workspace
+(e.g., `/code/.agent-shell/reports/...` instead of the host path). The lead always
+stores and reads the HOST path. Path transformation uses `agent-shell-path-resolver-function`
+set per-buffer during agent registration."
           session-id
           (agent-shell-team--lead-quick-research-section))))
     (let ((knowledge-content (let ((f (agent-shell-team--knowledge-file "lead")))
@@ -2366,14 +2372,24 @@ TITLE and MESSAGE are the notification content."
       ;; Deliver or queue per target
       (dolist (agent targets)
         (let* ((buf (alist-get 'buffer agent))
-               (status (agent-shell-team--agent-status buf)))
+               (status (agent-shell-team--agent-status buf))
+               ;; Transform report path for container agents
+               (agent-message
+                (if (and request-id report-path)
+                    (let ((resolver (buffer-local-value 'agent-shell-path-resolver-function buf)))
+                      (if resolver
+                          (let ((resolved-path (funcall resolver report-path)))
+                            (format "%s\n\n[Request ID: %s]\nWrite your detailed report to: %s\nReference this Request ID in your completion notification."
+                                    message request-id resolved-path))
+                        enriched-message))
+                  enriched-message)))
           (pcase status
             ('idle
              (agent-shell-team--prompt-agent
-              buf (format "Message from %s: %s -- %s" from-role title enriched-message)))
+              buf (format "Message from %s: %s -- %s" from-role title agent-message)))
             ((or 'busy 'initializing)
              (agent-shell-team--queue-message
-              session-id buf (list :from from-role :title title :message enriched-message)))
+              session-id buf (list :from from-role :title title :message agent-message)))
             ('dead
              (agent-shell-team--log session-id
                                     (format "WARNING: target %s buffer is dead, message dropped"
@@ -3230,9 +3246,14 @@ reached its max agent count, auto-spawn a new agent."
          (session-id (plist-get task :session-id))
          (role (plist-get task :role))
          (message (plist-get task :message))
+         (agent-report-path
+          (if report-path
+              (let ((resolver (buffer-local-value 'agent-shell-path-resolver-function buf)))
+                (if resolver (funcall resolver report-path) report-path))
+            nil))
          (enriched (if report-path
                       (format "%s\n\n[Request ID: %s]\nWrite your detailed report to: %s\nReference this Request ID in your completion notification."
-                              message request-id report-path)
+                              message request-id agent-report-path)
                     (format "%s\n\n[Request ID: %s]\nReference this Request ID in your completion notification."
                             message request-id)))
          (enriched (if (buffer-local-value 'agent-shell-team--reserved-p buf)
