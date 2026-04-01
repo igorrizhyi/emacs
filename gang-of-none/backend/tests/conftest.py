@@ -1,7 +1,7 @@
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from gang_of_none.main import app
+from src.main import app
 
 
 @pytest.fixture

@@ -12,7 +12,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from gang_of_none.config import Settings
+from ..config import Settings
 
 logger = logging.getLogger(__name__)
 

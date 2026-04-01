@@ -8,14 +8,14 @@ from typing import Any
 import structlog
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from gang_of_none.api.connection_manager import ConnectionManager
-from gang_of_none.api.rpc_router import RPCRouter
-from gang_of_none.core.agent_manager import AgentManager
-from gang_of_none.core.approval_manager import ApprovalManager
-from gang_of_none.core.namespace_manager import NamespaceManager
-from gang_of_none.core.task_manager import TaskManager
-from gang_of_none.models.enums import ApprovalType, TaskStatus
-from gang_of_none.models.task import TaskCreate, TaskUpdate
+from .connection_manager import ConnectionManager
+from .rpc_router import RPCRouter
+from ..core.agent_manager import AgentManager
+from ..core.approval_manager import ApprovalManager
+from ..core.namespace_manager import NamespaceManager
+from ..core.task_manager import TaskManager
+from ..models.enums import ApprovalType, TaskStatus
+from ..models.task import TaskCreate, TaskUpdate
 
 logger = structlog.get_logger()
 
@@ -215,7 +215,7 @@ def build_rpc_router(
 def register_peer(session_id: str, peer_info: dict[str, Any], ns_mgr: NamespaceManager | None = None) -> None:
     """Register peer info for namespace peer discovery."""
     if ns_mgr is not None:
-        from gang_of_none.models.namespace import Peer
+        from ..models.namespace import Peer
         from datetime import datetime, timezone
         peer = Peer(
             pid=peer_info.get("pid", 0),

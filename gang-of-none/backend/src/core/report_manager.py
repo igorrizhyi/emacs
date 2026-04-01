@@ -7,7 +7,7 @@ from pathlib import Path
 
 import structlog
 
-from gang_of_none.models.report import ReportInfo
+from ..models.report import ReportInfo
 
 logger = structlog.get_logger()
 

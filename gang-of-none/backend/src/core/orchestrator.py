@@ -10,18 +10,18 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
-from gang_of_none.config import Settings
-from gang_of_none.core.acp_session import ACPSessionManager
-from gang_of_none.core.agent_manager import AgentManager
-from gang_of_none.core.prompt_manager import PromptManager
-from gang_of_none.core.report_manager import ReportManager
-from gang_of_none.core.task_manager import TaskManager
-from gang_of_none.core.worktree_manager import WorktreeManager
+from ..config import Settings
+from .acp_session import ACPSessionManager
+from .agent_manager import AgentManager
+from .prompt_manager import PromptManager
+from .report_manager import ReportManager
+from .task_manager import TaskManager
+from .worktree_manager import WorktreeManager
 
 if TYPE_CHECKING:
-    from gang_of_none.core.session_manager import SessionManager
-from gang_of_none.models.agent import AgentCreate
-from gang_of_none.models.enums import AgentRole, AgentStatus, TaskStatus
+    from .session_manager import SessionManager
+from ..models.agent import AgentCreate
+from ..models.enums import AgentRole, AgentStatus, TaskStatus
 
 logger = structlog.get_logger()
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from gang_of_none.models.enums import AgentRole
+from ..models.enums import AgentRole
 
 logger = logging.getLogger(__name__)
 

@@ -4,21 +4,21 @@ import os
 from fastapi import FastAPI
 import structlog
 
-from gang_of_none.api.connection_manager import ConnectionManager
-from gang_of_none.api.routes import router as rest_router
-from gang_of_none.api.ws import router as ws_router
-from gang_of_none.config import Settings
-from gang_of_none.core.acp_session import ACPSessionManager
-from gang_of_none.core.agent_manager import AgentManager
-from gang_of_none.core.approval_manager import ApprovalManager
-from gang_of_none.core.database import Database
-from gang_of_none.core.namespace_manager import NamespaceManager
-from gang_of_none.core.orchestrator import Orchestrator
-from gang_of_none.core.prompt_manager import PromptManager
-from gang_of_none.core.report_manager import ReportManager
-from gang_of_none.core.session_manager import SessionManager
-from gang_of_none.core.task_manager import TaskManager
-from gang_of_none.core.worktree_manager import WorktreeManager
+from .api.connection_manager import ConnectionManager
+from .api.routes import router as rest_router
+from .api.ws import router as ws_router
+from .config import Settings
+from .core.acp_session import ACPSessionManager
+from .core.agent_manager import AgentManager
+from .core.approval_manager import ApprovalManager
+from .core.database import Database
+from .core.namespace_manager import NamespaceManager
+from .core.orchestrator import Orchestrator
+from .core.prompt_manager import PromptManager
+from .core.report_manager import ReportManager
+from .core.session_manager import SessionManager
+from .core.task_manager import TaskManager
+from .core.worktree_manager import WorktreeManager
 
 logger = structlog.get_logger()
 

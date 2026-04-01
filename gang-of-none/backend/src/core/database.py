@@ -9,14 +9,14 @@ from typing import Any
 import aiosqlite
 import structlog
 
-from gang_of_none.models.enums import (
+from ..models.enums import (
     AgentRole,
     AgentStatus,
     TaskPriority,
     TaskStatus,
 )
-from gang_of_none.models.session import Session
-from gang_of_none.models.task import Task, TaskGroup
+from ..models.session import Session
+from ..models.task import Task, TaskGroup
 
 logger = structlog.get_logger()
 

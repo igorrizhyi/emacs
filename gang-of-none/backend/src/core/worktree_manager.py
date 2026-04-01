@@ -7,8 +7,8 @@ import shutil
 
 import structlog
 
-from gang_of_none.config import Settings
-from gang_of_none.models.agent import WorktreeInfo
+from ..config import Settings
+from ..models.agent import WorktreeInfo
 
 logger = structlog.get_logger()
 

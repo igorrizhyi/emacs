@@ -8,13 +8,13 @@ from uuid import uuid4
 
 import structlog
 
-from gang_of_none.config import Settings
-from gang_of_none.core.agent_manager import AgentManager
-from gang_of_none.models.session import Session, SessionHistory, TaskSummary
-from gang_of_none.models.task import Task
+from ..config import Settings
+from .agent_manager import AgentManager
+from ..models.session import Session, SessionHistory, TaskSummary
+from ..models.task import Task
 
 if TYPE_CHECKING:
-    from gang_of_none.core.database import Database
+    from .database import Database
 
 logger = structlog.get_logger()
 

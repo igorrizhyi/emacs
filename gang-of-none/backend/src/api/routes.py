@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
-from gang_of_none.api.schemas import (
+from .schemas import (
     AgentListResponse,
     AgentResponse,
     ApprovalListResponse,
@@ -24,10 +24,10 @@ from gang_of_none.api.schemas import (
     TaskListResponse,
     TaskResponse,
 )
-from gang_of_none.models.enums import AgentRole, TaskStatus
+from ..models.enums import AgentRole, TaskStatus
 
 if TYPE_CHECKING:
-    from gang_of_none.core.agent_manager import AgentManager
+    from ..core.agent_manager import AgentManager
 
 router = APIRouter(prefix="/api")
 

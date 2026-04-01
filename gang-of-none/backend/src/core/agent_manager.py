@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import random
 
-from gang_of_none.config import Settings
-from gang_of_none.models.agent import Agent, AgentCreate
-from gang_of_none.models.enums import AgentRole, AgentStatus
+from ..config import Settings
+from ..models.agent import Agent, AgentCreate
+from ..models.enums import AgentRole, AgentStatus
 
 _ADJECTIVES = [
     "brave", "calm", "daring", "eager", "fair", "gentle", "happy",

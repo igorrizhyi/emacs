@@ -6,7 +6,7 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
-from gang_of_none.models.enums import (
+from ..models.enums import (
     AgentRole,
     AgentStatus,
     ApprovalType,

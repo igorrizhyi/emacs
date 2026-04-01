@@ -7,12 +7,12 @@ from typing import Any
 
 import structlog
 
-from gang_of_none.models.approval import (
+from ..models.approval import (
     ApprovalItem,
     ApprovalRequest,
     ApprovalSubmission,
 )
-from gang_of_none.models.enums import ApprovalType
+from ..models.enums import ApprovalType
 
 logger = structlog.get_logger()
 

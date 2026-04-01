@@ -3,7 +3,7 @@ name = "gang-of-none"
 version = "0.1.0"
 description = "Standalone multi-agent orchestrator server"
 authors = []
-packages = [{include = "gang_of_none", from = "src"}]
+packages = [{include = "src"}]
 
 [tool.poetry.dependencies]
 python = "^3.12"

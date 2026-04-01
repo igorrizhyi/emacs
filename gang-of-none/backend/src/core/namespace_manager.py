@@ -13,7 +13,7 @@ from typing import Any, Callable, Coroutine
 
 import structlog
 
-from gang_of_none.models.namespace import NamespaceConfig, Peer
+from ..models.namespace import NamespaceConfig, Peer
 
 logger = structlog.get_logger()
 
