@@ -41,6 +41,13 @@
 (after! lsp-mode
   (add-to-list 'lsp-file-watch-ignored-directories "[/\\\\]\\.agent-shell\\'"))
 
+;; Exclude .agent-shell from project-find-regexp (project.el VC backend)
+(setq project-vc-ignores '(".agent-shell/"))
+
+;; Also cover grep-based searches
+(after! grep
+  (add-to-list 'grep-find-ignored-directories ".agent-shell"))
+
 ;; Auto-revert agent-shell files modified by agent processes
 (defun my/auto-revert-agent-shell-files ()
   "Enable `auto-revert-mode' for files under .agent-shell/, excluding reports."
