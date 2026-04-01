@@ -4,3 +4,4 @@ export { default as tasksReducer } from './tasksSlice';
 export { default as messagesReducer } from './messagesSlice';
 export { default as connectionReducer } from './connectionSlice';
 export { default as approvalReducer } from './approvalSlice';
+export { default as notificationsReducer } from './notificationsSlice';
