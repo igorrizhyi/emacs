@@ -13,6 +13,7 @@ import structlog
 from gang_of_none.config import Settings
 from gang_of_none.core.acp_session import ACPSessionManager
 from gang_of_none.core.agent_manager import AgentManager
+from gang_of_none.core.prompt_manager import PromptManager
 from gang_of_none.core.report_manager import ReportManager
 from gang_of_none.core.task_manager import TaskManager
 from gang_of_none.core.worktree_manager import WorktreeManager
@@ -37,6 +38,7 @@ class Orchestrator:
         worktree_manager: WorktreeManager,
         report_manager: ReportManager | None = None,
         session_manager: SessionManager | None = None,
+        prompt_manager: PromptManager | None = None,
     ) -> None:
         self.settings = settings
         self.task_mgr = task_manager
@@ -45,6 +47,7 @@ class Orchestrator:
         self.worktree_mgr = worktree_manager
         self.report_mgr = report_manager
         self.session_mgr = session_manager
+        self.prompt_mgr = prompt_manager or PromptManager()
         self._drain_task: asyncio.Task[None] | None = None
 
     # ── Drain loop ─────────────────────────────────────────────────
@@ -214,11 +217,16 @@ class Orchestrator:
         work_dir = wt_info.path if wt_info else (
             f"{self.settings.worktree_subdir}/{agent.worktree_name}"
         )
+
+        # Build role-specific system prompt
+        system_prompt = self.prompt_mgr.get_prompt_for_role(role)
+
         try:
             await self.acp_mgr.create_session(
                 agent_id=agent.id,
                 work_dir=work_dir,
                 model=model,
+                system_prompt=system_prompt,
             )
         except Exception:
             logger.exception("agent.spawn_failed", agent_id=agent.id)

@@ -13,6 +13,7 @@ from gang_of_none.core.agent_manager import AgentManager
 from gang_of_none.core.approval_manager import ApprovalManager
 from gang_of_none.core.namespace_manager import NamespaceManager
 from gang_of_none.core.orchestrator import Orchestrator
+from gang_of_none.core.prompt_manager import PromptManager
 from gang_of_none.core.report_manager import ReportManager
 from gang_of_none.core.session_manager import SessionManager
 from gang_of_none.core.task_manager import TaskManager
@@ -56,6 +57,7 @@ async def lifespan(app: FastAPI):
         settings=settings,
         agent_manager=app.state.agent_manager,
     )
+    app.state.prompt_manager = PromptManager()
     app.state.orchestrator = Orchestrator(
         settings=settings,
         task_manager=app.state.task_manager,
@@ -64,6 +66,7 @@ async def lifespan(app: FastAPI):
         worktree_manager=app.state.worktree_manager,
         report_manager=app.state.report_manager,
         session_manager=app.state.session_manager,
+        prompt_manager=app.state.prompt_manager,
     )
 
     # Wire session registry and factory/destroy callables for REST routes
