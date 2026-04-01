@@ -5,8 +5,10 @@ import {
   tasksReducer,
   messagesReducer,
   connectionReducer,
+  notificationsReducer,
 } from './slices';
 import { websocketMiddleware } from './middleware/websocketMiddleware';
+import { notificationMiddleware } from './middleware/notificationMiddleware';
 
 export const store = configureStore({
   reducer: {
@@ -15,9 +17,10 @@ export const store = configureStore({
     tasks: tasksReducer,
     messages: messagesReducer,
     connection: connectionReducer,
+    notifications: notificationsReducer,
   },
   middleware: (getDefaultMiddleware) =>
-    getDefaultMiddleware().concat(websocketMiddleware),
+    getDefaultMiddleware().concat(websocketMiddleware, notificationMiddleware),
 });
 
 export type RootState = ReturnType<typeof store.getState>;

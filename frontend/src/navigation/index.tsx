@@ -5,6 +5,8 @@ import { theme } from '../theme';
 import { TeamSidebar } from '../components/sidebar';
 import ChatScreen from '../screens/ChatScreen';
 import ProjectSelectorScreen from '../screens/ProjectSelectorScreen';
+import NotificationsScreen from '../screens/NotificationsScreen';
+import NotificationBanner from '../components/NotificationBanner';
 
 const Drawer = createDrawerNavigator();
 
@@ -24,6 +26,7 @@ const navTheme = {
 export default function RootNavigator() {
   return (
     <NavigationContainer theme={navTheme}>
+      <NotificationBanner />
       <Drawer.Navigator
         drawerContent={(props) => <TeamSidebar {...props} />}
         screenOptions={{
@@ -40,6 +43,7 @@ export default function RootNavigator() {
       >
         <Drawer.Screen name="Chat" component={ChatScreen} />
         <Drawer.Screen name="ProjectSelector" component={ProjectSelectorScreen} />
+        <Drawer.Screen name="Notifications" component={NotificationsScreen} />
       </Drawer.Navigator>
     </NavigationContainer>
   );
