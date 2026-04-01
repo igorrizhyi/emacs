@@ -85,6 +85,15 @@ class TaskListResponse(BaseModel):
     tasks: list[TaskResponse]
 
 
+class TaskCreateRequest(BaseModel):
+    role: AgentRole
+    message: str
+    priority: TaskPriority = TaskPriority.NORMAL
+    group_id: str | None = None
+    target: str | None = None
+    model: str | None = None
+
+
 class GroupResponse(BaseModel):
     group_id: str
     session_id: str

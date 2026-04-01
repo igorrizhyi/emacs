@@ -21,10 +21,12 @@ from .schemas import (
     SessionListResponse,
     SessionResponse,
     SuccessResponse,
+    TaskCreateRequest,
     TaskListResponse,
     TaskResponse,
 )
 from ..models.enums import AgentRole, TaskStatus
+from ..models.task import TaskCreate
 
 if TYPE_CHECKING:
     from ..core.agent_manager import AgentManager
@@ -109,9 +111,15 @@ async def delete_session(session_id: str, request: Request):
 # ── Agents ─────────────────────────────────────────────────────────────
 
 @router.get("/sessions/{session_id}/agents", response_model=AgentListResponse)
-async def list_session_agents(session_id: str, request: Request):
+async def list_session_agents(
+    session_id: str,
+    request: Request,
+    role: AgentRole | None = Query(None),
+):
     mgr = _get_agent_manager(request)
     agents = mgr.get_session_agents(session_id)
+    if role is not None:
+        agents = [a for a in agents if a.role == role]
     return AgentListResponse(agents=[_agent_to_response(a) for a in agents])
 
 
@@ -166,6 +174,30 @@ async def list_session_tasks(
         tasks = [t for t in tasks if t.status == status]
     if role is not None:
         tasks = [t for t in tasks if t.role == role]
+    return TaskListResponse(tasks=[TaskResponse(**t.model_dump()) for t in tasks])
+
+
+@router.post(
+    "/sessions/{session_id}/tasks",
+    response_model=TaskListResponse,
+    status_code=201,
+)
+async def create_task(session_id: str, body: TaskCreateRequest, request: Request):
+    task_mgr = getattr(request.app.state, "task_manager", None)
+    if task_mgr is None:
+        raise HTTPException(503, "Task manager not initialized")
+    tc = TaskCreate(
+        role=body.role,
+        message=body.message,
+        priority=body.priority,
+        group_id=body.group_id,
+        target=body.target,
+        model=body.model,
+    )
+    tasks = task_mgr.enqueue_tasks(tasks=[tc], session_id=session_id)
+    orchestrator = getattr(request.app.state, "orchestrator", None)
+    if orchestrator is not None:
+        await orchestrator.try_assign_tasks(session_id)
     return TaskListResponse(tasks=[TaskResponse(**t.model_dump()) for t in tasks])
 
 
