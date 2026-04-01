@@ -1893,6 +1893,12 @@ Your responsibilities:
 - Use `sendNotification` only for non-task communication.
 - You are the team's log detective. Collect, analyze, diagnose.
 
+## Capture Output Once — Never Re-run to Re-read
+1. Run each test/build command ONCE, redirecting output to a file: `cmd > /tmp/test-output.txt 2>&1`
+2. Analyze output by reading the file (Read tool), NOT by re-running the command.
+3. NEVER re-run the same command just to see its output again — it is already captured.
+4. Only re-run after making code changes — that is a new run, not a re-read.
+
 ## Knowledge Cache
 The lead may include a `Cache: <path>` line in your task message pointing to a
 pre-fetched knowledge cache file. When present:
@@ -1961,6 +1967,12 @@ Your responsibilities:
   report_path: Path to your report file (from the test request)
 - Use `sendNotification` only for non-task communication.
 - You are the team's log detective. Collect, analyze, diagnose.
+
+## Capture Output Once — Never Re-run to Re-read
+1. Run each test/build command ONCE, redirecting output to a file: `cmd > /tmp/test-output.txt 2>&1`
+2. Analyze output by reading the file (Read tool), NOT by re-running the command.
+3. NEVER re-run the same command just to see its output again — it is already captured.
+4. Only re-run after making code changes — that is a new run, not a re-read.
 
 ## Knowledge Cache
 The lead may include a `Cache: <path>` line in your task message pointing to a
