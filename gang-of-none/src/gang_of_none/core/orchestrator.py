@@ -6,7 +6,7 @@ Handles task-to-agent assignment, agent spawning, and completion cycling.
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
@@ -16,6 +16,9 @@ from gang_of_none.core.agent_manager import AgentManager
 from gang_of_none.core.report_manager import ReportManager
 from gang_of_none.core.task_manager import TaskManager
 from gang_of_none.core.worktree_manager import WorktreeManager
+
+if TYPE_CHECKING:
+    from gang_of_none.core.session_manager import SessionManager
 from gang_of_none.models.agent import AgentCreate
 from gang_of_none.models.enums import AgentRole, AgentStatus, TaskStatus
 
@@ -33,6 +36,7 @@ class Orchestrator:
         acp_session_manager: ACPSessionManager,
         worktree_manager: WorktreeManager,
         report_manager: ReportManager | None = None,
+        session_manager: SessionManager | None = None,
     ) -> None:
         self.settings = settings
         self.task_mgr = task_manager
@@ -40,6 +44,7 @@ class Orchestrator:
         self.acp_mgr = acp_session_manager
         self.worktree_mgr = worktree_manager
         self.report_mgr = report_manager
+        self.session_mgr = session_manager
         self._drain_task: asyncio.Task[None] | None = None
 
     # ── Drain loop ─────────────────────────────────────────────────
@@ -157,10 +162,21 @@ class Orchestrator:
     async def handle_agent_completion(
         self, request_id: str, status: TaskStatus, session_id: str
     ) -> None:
-        """Mark task complete, mark agent idle, trigger re-assignment."""
+        """Mark task complete, persist to disk, mark agent idle, re-assign."""
         task = self.task_mgr.mark_completed(request_id, status)
         if task is None:
             return
+
+        # Persist completed task to disk
+        if self.session_mgr is not None:
+            try:
+                self.session_mgr.persist_task(session_id, task)
+            except Exception:
+                logger.exception(
+                    "task.persist_failed",
+                    request_id=request_id,
+                    session_id=session_id,
+                )
 
         agent = self.agent_mgr.get_agent_for_request(request_id)
         if agent is not None:

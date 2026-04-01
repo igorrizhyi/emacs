@@ -3,7 +3,7 @@ from .approval import ApprovalItem, ApprovalRequest, ApprovalSubmission
 from .enums import AgentRole, AgentStatus, ApprovalType, TaskPriority, TaskStatus
 from .namespace import NamespaceConfig, Peer, PeerMessage
 from .report import ReportInfo
-from .session import Session, SessionInfo
+from .session import Session, SessionHistory, SessionInfo, TaskSummary
 from .task import Task, TaskCreate, TaskGroup, TaskUpdate
 
 __all__ = [
@@ -20,7 +20,9 @@ __all__ = [
     "PeerMessage",
     "ReportInfo",
     "Session",
+    "SessionHistory",
     "SessionInfo",
+    "TaskSummary",
     "Task",
     "TaskCreate",
     "TaskGroup",

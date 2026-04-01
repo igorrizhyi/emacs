@@ -8,4 +8,5 @@ class Settings(BaseModel):
     acp_binary: str = "claude-agent-acp"
     default_model: str = ""
     drain_interval_seconds: float = 2.0
+    tasks_dir: str = ".agent-shell/tasks"
     worktree_subdir: str = ".claude/worktrees"

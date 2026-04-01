@@ -226,6 +226,24 @@ class TaskManager:
         """Return all currently assigned (in-flight) tasks."""
         return list(self._active_tasks.values())
 
+    def get_session_tasks(self, session_id: str) -> list[Task]:
+        """Return all tasks (queued, active, completed) for a session."""
+        result: list[Task] = []
+        for t in self._queue:
+            if t.session_id == session_id:
+                result.append(t)
+        for t in self._active_tasks.values():
+            if t.session_id == session_id:
+                result.append(t)
+        for t in self._completed_tasks.values():
+            if t.session_id == session_id:
+                result.append(t)
+        return result
+
+    def get_group(self, group_id: str) -> TaskGroup | None:
+        """Return the TaskGroup for *group_id*, or None."""
+        return self._groups.get(group_id)
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
