@@ -11,6 +11,7 @@ from gang_of_none.config import Settings
 from gang_of_none.core.acp_session import ACPSessionManager
 from gang_of_none.core.agent_manager import AgentManager
 from gang_of_none.core.approval_manager import ApprovalManager
+from gang_of_none.core.database import Database
 from gang_of_none.core.namespace_manager import NamespaceManager
 from gang_of_none.core.orchestrator import Orchestrator
 from gang_of_none.core.prompt_manager import PromptManager
@@ -25,7 +26,7 @@ logger = structlog.get_logger()
 def _make_create_session(session_mgr: SessionManager):
     """Return an async callable that creates a session via SessionManager."""
     async def create_session(project_root: str):
-        return session_mgr.create_session(project_root)
+        return await session_mgr.create_session_async(project_root)
     return create_session
 
 
@@ -35,7 +36,7 @@ def _make_destroy_session(session_mgr: SessionManager, orchestrator: Orchestrato
         session = session_mgr.get_session(session_id)
         if session is not None:
             await orchestrator.cleanup_session(session_id, session.project_root)
-        session_mgr.destroy_session(session_id)
+        await session_mgr.destroy_session_async(session_id)
     return destroy_session
 
 
@@ -44,6 +45,11 @@ async def lifespan(app: FastAPI):
     logger.info("gang-of-none starting")
 
     settings = Settings()
+
+    # Initialize database
+    db = Database(settings.db_path)
+    await db.init()
+    app.state.db = db
 
     # Initialize core managers
     app.state.connection_manager = ConnectionManager()
@@ -56,6 +62,7 @@ async def lifespan(app: FastAPI):
     app.state.session_manager = SessionManager(
         settings=settings,
         agent_manager=app.state.agent_manager,
+        db=db,
     )
     app.state.prompt_manager = PromptManager()
     app.state.orchestrator = Orchestrator(
@@ -68,6 +75,9 @@ async def lifespan(app: FastAPI):
         session_manager=app.state.session_manager,
         prompt_manager=app.state.prompt_manager,
     )
+
+    # Restore sessions from database
+    await app.state.session_manager.restore_from_db()
 
     # Wire session registry and factory/destroy callables for REST routes
     app.state.sessions = app.state.session_manager.list_sessions()
@@ -102,6 +112,7 @@ async def lifespan(app: FastAPI):
     await app.state.orchestrator.stop_drain_loop()
     await ns_mgr.stop_bus()
     await app.state.acp_session_manager.shutdown()
+    await db.close()
     logger.info("gang-of-none shutting down")
 
 

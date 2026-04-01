@@ -170,10 +170,10 @@ class Orchestrator:
         if task is None:
             return
 
-        # Persist completed task to disk
+        # Persist completed task to database
         if self.session_mgr is not None:
             try:
-                self.session_mgr.persist_task(session_id, task)
+                await self.session_mgr.persist_task(session_id, task)
             except Exception:
                 logger.exception(
                     "task.persist_failed",

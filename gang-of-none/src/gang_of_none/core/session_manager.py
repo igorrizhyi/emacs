@@ -2,32 +2,35 @@
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
-from pathlib import Path
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import structlog
 
 from gang_of_none.config import Settings
 from gang_of_none.core.agent_manager import AgentManager
-from gang_of_none.models.enums import AgentRole, TaskStatus
 from gang_of_none.models.session import Session, SessionHistory, TaskSummary
 from gang_of_none.models.task import Task
+
+if TYPE_CHECKING:
+    from gang_of_none.core.database import Database
 
 logger = structlog.get_logger()
 
 
 class SessionManager:
-    """Manages session lifecycle and persists task data to disk."""
+    """Manages session lifecycle and persists task data via Database."""
 
     def __init__(
         self,
         settings: Settings,
         agent_manager: AgentManager,
+        db: Database | None = None,
     ) -> None:
         self._settings = settings
         self._agent_mgr = agent_manager
+        self._db = db
         self._sessions: dict[str, Session] = {}
 
     # ── Session CRUD ──────────────────────────────────────────────────
@@ -40,6 +43,13 @@ class SessionManager:
         )
         self._sessions[session.id] = session
         logger.info("session.created", session_id=session.id, project_root=project_root)
+        return session
+
+    async def create_session_async(self, project_root: str) -> Session:
+        """Create session and persist to DB."""
+        session = self.create_session(project_root)
+        if self._db is not None:
+            await self._db.save_session(session)
         return session
 
     def get_session(self, session_id: str) -> Session | None:
@@ -56,72 +66,51 @@ class SessionManager:
         if removed is not None:
             logger.info("session.destroyed", session_id=session_id)
 
+    async def destroy_session_async(self, session_id: str) -> None:
+        """Remove session from registry and DB."""
+        self.destroy_session(session_id)
+        if self._db is not None:
+            await self._db.delete_session(session_id)
+
     # ── Task Persistence ──────────────────────────────────────────────
 
-    def _tasks_dir(self, project_root: str) -> Path:
-        """Resolve the tasks directory for a project."""
-        return Path(project_root) / self._settings.tasks_dir
+    async def persist_task(self, session_id: str, task: Task) -> None:
+        """Persist task data to SQLite."""
+        if self._db is not None:
+            await self._db.save_task(task)
+            logger.debug(
+                "task.persisted",
+                session_id=session_id,
+                request_id=task.request_id,
+            )
 
-    def persist_task(self, session_id: str, task: Task) -> None:
-        """Write task data to {tasks_dir}/{session_id}/{request_id}.json."""
-        session = self._sessions.get(session_id)
-        if session is None:
-            logger.warning("persist_task.no_session", session_id=session_id)
-            return
-
-        task_dir = self._tasks_dir(session.project_root) / session_id
-        task_dir.mkdir(parents=True, exist_ok=True)
-        task_file = task_dir / f"{task.request_id}.json"
-
-        data = task.model_dump(mode="json")
-        task_file.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
-        logger.debug(
-            "task.persisted",
-            session_id=session_id,
-            request_id=task.request_id,
-            path=str(task_file),
-        )
-
-    def load_tasks(self, session_id: str, project_root: str) -> list[Task]:
-        """Read all persisted tasks for a session from disk."""
-        task_dir = self._tasks_dir(project_root) / session_id
-        if not task_dir.is_dir():
+    async def load_tasks(self, session_id: str) -> list[Task]:
+        """Read all persisted tasks for a session from DB."""
+        if self._db is None:
             return []
+        return await self._db.list_tasks(session_id)
 
-        tasks: list[Task] = []
-        for task_file in sorted(task_dir.glob("*.json")):
-            try:
-                data = json.loads(task_file.read_text(encoding="utf-8"))
-                tasks.append(Task.model_validate(data))
-            except Exception:
-                logger.exception("task.load_failed", path=str(task_file))
-        return tasks
+    # ── Session Restore ───────────────────────────────────────────────
 
-    def load_all_sessions(self, project_root: str) -> dict[str, list[Task]]:
-        """Scan tasks dir for all sessions and their persisted tasks."""
-        tasks_root = self._tasks_dir(project_root)
-        if not tasks_root.is_dir():
-            return {}
-
-        result: dict[str, list[Task]] = {}
-        for session_dir in tasks_root.iterdir():
-            if session_dir.is_dir():
-                sid = session_dir.name
-                tasks = self.load_tasks(sid, project_root)
-                if tasks:
-                    result[sid] = tasks
-        return result
+    async def restore_from_db(self) -> None:
+        """Rehydrate in-memory session registry from SQLite on startup."""
+        if self._db is None:
+            return
+        sessions = await self._db.list_sessions()
+        for session in sessions:
+            self._sessions[session.id] = session
+        if sessions:
+            logger.info("sessions.restored", count=len(sessions))
 
     # ── Session History ───────────────────────────────────────────────
 
-    def get_session_history(self, session_id: str) -> SessionHistory | None:
+    async def get_session_history(self, session_id: str) -> SessionHistory | None:
         """Build a SessionHistory for the given session."""
         session = self._sessions.get(session_id)
         if session is None:
             return None
 
-        # Gather persisted tasks from disk
-        persisted = self.load_tasks(session_id, session.project_root)
+        persisted = await self.load_tasks(session_id)
 
         task_summaries = [
             TaskSummary(
