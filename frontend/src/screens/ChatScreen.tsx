@@ -1,4 +1,5 @@
 import React, { useCallback } from 'react';
+import { TouchableOpacity } from 'react-native';
 import styled from 'styled-components/native';
 import { useSelector } from 'react-redux';
 import { useRoute } from '@react-navigation/native';
@@ -6,8 +7,10 @@ import type { RouteProp } from '@react-navigation/native';
 import type { RootDrawerParamList } from '../navigation/types';
 import { useUIStore } from '../store/uiStore';
 import type { RootState } from '../store';
+import { selectPendingCount } from '../store/slices/approvalSlice';
 import MessageList from '../components/chat/MessageList';
 import MessageInput from '../components/chat/MessageInput';
+import { ApprovalSheet } from '../components/approval';
 import { websocketService } from '../services/websocket';
 
 // ── Styled components ───────────────────────────────────────────────
@@ -59,6 +62,23 @@ const EmptyText = styled.Text`
   color: ${({ theme }) => theme.colors.hint};
 `;
 
+const HeaderSpacer = styled.View`
+  flex: 1;
+`;
+
+const ApprovalBadge = styled.View`
+  background-color: ${({ theme }) => theme.colors.foreground};
+  border-radius: 8px;
+  padding: 1px 6px;
+  margin-left: ${({ theme }) => theme.spacing.sm}px;
+`;
+
+const ApprovalBadgeText = styled.Text`
+  font-family: ${({ theme }) => theme.fonts.monoBold};
+  font-size: ${({ theme }) => theme.sizes.fontSizeSmall}px;
+  color: ${({ theme }) => theme.colors.background};
+`;
+
 // ── Helpers ─────────────────────────────────────────────────────────
 
 const statusColors: Record<string, string> = {
@@ -76,6 +96,9 @@ export default function ChatScreen() {
   const route = useRoute<ChatRouteProp>();
   const routeAgentId = route.params?.agentId;
   const zustandAgentId = useUIStore((s) => s.activeAgentId);
+  const approvalVisible = useUIStore((s) => s.approvalVisible);
+  const setApprovalVisible = useUIStore((s) => s.setApprovalVisible);
+  const pendingCount = useSelector(selectPendingCount);
   // Prefer route param, fall back to Zustand active agent
   const agentId = routeAgentId ?? zustandAgentId ?? undefined;
 
@@ -118,9 +141,18 @@ export default function ChatScreen() {
         <StatusDot color={statusColors[agentStatus] ?? '#555555'} />
         <AgentName>{agentLabel}</AgentName>
         <StatusLabel>{agentStatus}</StatusLabel>
+        <HeaderSpacer />
+        {pendingCount > 0 && (
+          <TouchableOpacity onPress={() => setApprovalVisible(!approvalVisible)}>
+            <ApprovalBadge>
+              <ApprovalBadgeText>{pendingCount}</ApprovalBadgeText>
+            </ApprovalBadge>
+          </TouchableOpacity>
+        )}
       </Header>
       <MessageList blocks={blocks} />
       <MessageInput onSend={handleSend} disabled={agentStatus === 'offline'} />
+      <ApprovalSheet />
     </Container>
   );
 }

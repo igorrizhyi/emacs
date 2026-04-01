@@ -4,6 +4,8 @@ import { setConnectionStatus, setUrl } from '../slices/connectionSlice';
 import { updateTaskStatus } from '../slices/tasksSlice';
 import { updateGroupProgress } from '../slices/tasksSlice';
 import { updateAgentStatus } from '../slices/agentsSlice';
+import { addRequest } from '../slices/approvalSlice';
+import type { ApprovalRequest } from '../slices/approvalSlice';
 
 // ── Action types the middleware listens for ─────────────────────────
 
@@ -102,10 +104,18 @@ export const websocketMiddleware: Middleware = (storeApi) => {
 
       unsubscribers.push(
         websocketService.onNotification('approval/request', (params) => {
-          // Dispatch to Zustand approvalStore — import dynamically to avoid
-          // circular deps between Redux middleware and Zustand store.
-          // The uiStore exposes setApprovalVisible; a dedicated approval store
-          // can be added later. For now, signal the UI.
+          const p = params as ApprovalRequestPayload;
+          const request: ApprovalRequest = {
+            id: p.id,
+            title: (p['title'] as string) ?? 'Approval',
+            type: (p['type'] as 'checklist' | 'choice') ?? 'checklist',
+            items: (p['items'] as ApprovalRequest['items']) ?? [],
+            description: p['description'] as string | undefined,
+            timestamp: Date.now(),
+          };
+          storeApi.dispatch(addRequest(request));
+
+          // Also toggle approval sheet visible via Zustand
           try {
             // eslint-disable-next-line @typescript-eslint/no-require-imports
             const { useUIStore } = require('../uiStore') as {
@@ -113,9 +123,8 @@ export const websocketMiddleware: Middleware = (storeApi) => {
             };
             useUIStore.getState().setApprovalVisible(true);
           } catch {
-            // Approval store not available — silently ignore
+            // Zustand store not available — silently ignore
           }
-          void params; // consumed by approval store
         }),
       );
 
