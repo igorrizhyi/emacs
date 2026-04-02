@@ -67,6 +67,10 @@
   "Ensure the WebSocket module is loaded."
   (require 'agent-shell-team-ws))
 
+(defun agent-shell-team-dispatch--log (method)
+  "Log a dispatch to the Python backend for METHOD."
+  (message "agent-shell-team-dispatch: [python] %s" method))
+
 ;;;; --- Dispatch functions ---
 
 (defun agent-shell-team-dispatch-tasks-put (raw-input &optional callback)
@@ -74,8 +78,10 @@
 RAW-INPUT is the MCP params alist.  Optional CALLBACK receives the result."
   (if (agent-shell-team-dispatch--python-p)
       (progn
+        (agent-shell-team-dispatch--log "tasksPut")
         (agent-shell-team-dispatch--ws-require)
         (agent-shell-team-ws-call "tasksPut" raw-input callback))
+    (agent-shell-team-dispatch--log "tasksPut [elisp]")
     (let ((result (agent-shell-team--handle-tasks-put raw-input)))
       (when callback (funcall callback result))
       result)))
@@ -85,8 +91,10 @@ RAW-INPUT is the MCP params alist.  Optional CALLBACK receives the result."
 RAW-INPUT is the MCP params alist.  Optional CALLBACK receives the result."
   (if (agent-shell-team-dispatch--python-p)
       (progn
+        (agent-shell-team-dispatch--log "taskUpdate")
         (agent-shell-team-dispatch--ws-require)
         (agent-shell-team-ws-call "taskUpdate" raw-input callback))
+    (agent-shell-team-dispatch--log "taskUpdate [elisp]")
     (let ((result (agent-shell-team--handle-task-update raw-input)))
       (when callback (funcall callback result))
       result)))
@@ -96,8 +104,10 @@ RAW-INPUT is the MCP params alist.  Optional CALLBACK receives the result."
 RAW-INPUT is the MCP params alist.  Optional CALLBACK receives the result."
   (if (agent-shell-team-dispatch--python-p)
       (progn
+        (agent-shell-team-dispatch--log "dismissAgent")
         (agent-shell-team-dispatch--ws-require)
         (agent-shell-team-ws-call "dismissAgent" raw-input callback))
+    (agent-shell-team-dispatch--log "dismissAgent [elisp]")
     (let ((result (agent-shell-team--handle-dismiss-agent raw-input)))
       (when callback (funcall callback result))
       result)))
@@ -109,6 +119,7 @@ SESSION-ID, BUFFER, ROLE, MODE, WORKTREE, WORKTREE-NAME match the
 elisp handler signature.  Optional CALLBACK receives the result."
   (if (agent-shell-team-dispatch--python-p)
       (progn
+        (agent-shell-team-dispatch--log "agent/create")
         (agent-shell-team-dispatch--ws-require)
         (let ((params `((session_id . ,session-id)
                         (buffer . ,(if (bufferp buffer) (buffer-name buffer) buffer))
@@ -117,6 +128,7 @@ elisp handler signature.  Optional CALLBACK receives the result."
                         ,@(when worktree `((worktree . ,worktree)))
                         ,@(when worktree-name `((worktree_name . ,worktree-name))))))
           (agent-shell-team-ws-call "agent/create" params callback)))
+    (agent-shell-team-dispatch--log "agent/create [elisp]")
     (let ((result (agent-shell-team--register-agent
                    session-id buffer role mode worktree worktree-name)))
       (when callback (funcall callback result))
@@ -128,11 +140,13 @@ BUFFER is the agent shell buffer.  Optional CALLBACK receives the result.
 In Python mode this is handled by dismissAgent, so we send that instead."
   (if (agent-shell-team-dispatch--python-p)
       (progn
+        (agent-shell-team-dispatch--log "dismissAgent")
         (agent-shell-team-dispatch--ws-require)
         (let ((params `((target . ,(if (bufferp buffer)
                                        (buffer-name buffer)
                                      buffer)))))
           (agent-shell-team-ws-call "dismissAgent" params callback)))
+    (agent-shell-team-dispatch--log "dismissAgent [elisp]")
     (let ((result (agent-shell-team--unregister-agent buffer)))
       (when callback (funcall callback result))
       result)))
@@ -142,8 +156,10 @@ In Python mode this is handled by dismissAgent, so we send that instead."
 Optional CALLBACK receives the result."
   (if (agent-shell-team-dispatch--python-p)
       (progn
+        (agent-shell-team-dispatch--log "orchestrator/assignTasks")
         (agent-shell-team-dispatch--ws-require)
         (agent-shell-team-ws-call "orchestrator/assignTasks" nil callback))
+    (agent-shell-team-dispatch--log "orchestrator/assignTasks [elisp]")
     (let ((result (agent-shell-team--try-assign-tasks)))
       (when callback (funcall callback result))
       result)))
@@ -153,8 +169,10 @@ Optional CALLBACK receives the result."
 RAW-INPUT is the MCP params alist.  Optional CALLBACK receives the result."
   (if (agent-shell-team-dispatch--python-p)
       (progn
+        (agent-shell-team-dispatch--log "sendNotification")
         (agent-shell-team-dispatch--ws-require)
         (agent-shell-team-ws-call "sendNotification" raw-input callback))
+    (agent-shell-team-dispatch--log "sendNotification [elisp]")
     (let ((result (agent-shell-team--handle-send-notification raw-input)))
       (when callback (funcall callback result))
       result)))
@@ -164,8 +182,10 @@ RAW-INPUT is the MCP params alist.  Optional CALLBACK receives the result."
 RAW-INPUT is the MCP params alist.  Optional CALLBACK receives the result."
   (if (agent-shell-team-dispatch--python-p)
       (progn
+        (agent-shell-team-dispatch--log "presentOptions")
         (agent-shell-team-dispatch--ws-require)
         (agent-shell-team-ws-call "presentOptions" raw-input callback))
+    (agent-shell-team-dispatch--log "presentOptions [elisp]")
     (let ((result (agent-shell-team--handle-present-options raw-input)))
       (when callback (funcall callback result))
       result)))
@@ -175,8 +195,10 @@ RAW-INPUT is the MCP params alist.  Optional CALLBACK receives the result."
 RAW-INPUT is the MCP params alist.  Optional CALLBACK receives the result."
   (if (agent-shell-team-dispatch--python-p)
       (progn
+        (agent-shell-team-dispatch--log "listPendingReviews")
         (agent-shell-team-dispatch--ws-require)
         (agent-shell-team-ws-call "listPendingReviews" raw-input callback))
+    (agent-shell-team-dispatch--log "listPendingReviews [elisp]")
     (let ((result (agent-shell-team--handle-list-pending-reviews raw-input)))
       (when callback (funcall callback result))
       result)))
@@ -187,10 +209,12 @@ TARGET-PID is the integer PID of the target Emacs instance.
 MESSAGE is the string content to send."
   (if (agent-shell-team-dispatch--python-p)
       (progn
+        (agent-shell-team-dispatch--log "messageNamespacePeer")
         (agent-shell-team-dispatch--ws-require)
         (let ((params `((target_pid . ,target-pid)
                         (message . ,message))))
           (agent-shell-team-ws-call "messageNamespacePeer" params callback)))
+    (agent-shell-team-dispatch--log "messageNamespacePeer [elisp]")
     (let ((result (agent-shell-bus-send target-pid 'lead-message
                                         (list :message message))))
       (when callback (funcall callback result))
@@ -201,8 +225,10 @@ MESSAGE is the string content to send."
 Returns a list of peer plists.  Optional CALLBACK receives the result."
   (if (agent-shell-team-dispatch--python-p)
       (progn
+        (agent-shell-team-dispatch--log "listNamespacePeers")
         (agent-shell-team-dispatch--ws-require)
         (agent-shell-team-ws-call "listNamespacePeers" nil callback))
+    (agent-shell-team-dispatch--log "listNamespacePeers [elisp]")
     (let ((peers nil))
       (maphash (lambda (_pid info) (push info peers))
                agent-shell-bus--peers)
