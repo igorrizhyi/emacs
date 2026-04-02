@@ -1349,6 +1349,8 @@ Fedora atomic's /home -> /var/home symlink."
   (require 'my-agent-shell-debug-logging)
   ;; Animated sprite icon — disabled (user doesn't use it)
   ;; (require 'my-agent-shell-sprite)
+  ;; Gemini transient error retry with exponential backoff
+  (require 'my-agent-shell-gemini-retry)
   ;; Interactive commands (toggle-researcher-backend, request-research)
   (require 'my-agent-shell-commands)
   ;; Approval queue UI for lead agent options
