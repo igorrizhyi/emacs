@@ -1,6 +1,6 @@
 import { createAsyncThunk, createSlice, PayloadAction } from '@reduxjs/toolkit';
 import type { Session } from '../types';
-import { fetchSessions as apiFetchSessions } from '@/services/api';
+import { getSessions as apiFetchSessions } from '@/services/api';
 
 // ── State ──────────────────────────────────────────────────────────────
 
@@ -22,7 +22,10 @@ const initialState: SessionsState = {
 
 export const fetchSessions = createAsyncThunk(
   'sessions/fetchAll',
-  async () => apiFetchSessions(),
+  async () => {
+    const res = await apiFetchSessions();
+    return res.sessions;
+  },
 );
 
 // ── Slice ──────────────────────────────────────────────────────────────

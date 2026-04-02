@@ -90,3 +90,107 @@ export interface ApprovalRequest {
   refine?: string;
   timestamp: number;
 }
+
+// ── Request / Response types (API boundary) ───────────────────────────
+
+export interface SessionCreateRequest {
+  projectRoot: string;
+}
+
+export interface TaskCreate {
+  role: AgentRole;
+  message: string;
+  priority?: TaskPriority;
+  groupId?: string;
+  target?: string;
+  model?: string;
+}
+
+export interface TaskUpdate {
+  requestId: string;
+  status: TaskStatus;
+  content: string;
+  commit?: string;
+  reportPath?: string;
+}
+
+export interface ApprovalSubmitRequest {
+  selectedItems: string[];
+  refine?: boolean;
+  notes?: string;
+}
+
+// ── Namespace / Peers ─────────────────────────────────────────────────
+
+export interface Peer {
+  pid: number;
+  hostname: string;
+  projectRoot: string;
+  namespace: string;
+  connectedAt: string;
+}
+
+export interface PeerMessageRequest {
+  message: string;
+}
+
+// ── Reports ───────────────────────────────────────────────────────────
+
+export interface Report {
+  requestId: string;
+  content: string;
+}
+
+// ── Generic ───────────────────────────────────────────────────────────
+
+export interface SuccessResponse {
+  success: boolean;
+  message: string;
+}
+
+// ── List wrappers ─────────────────────────────────────────────────────
+
+export interface SessionListResponse {
+  sessions: Session[];
+}
+
+export interface AgentListResponse {
+  agents: Agent[];
+}
+
+export interface TaskListResponse {
+  tasks: Task[];
+}
+
+export interface ApprovalListResponse {
+  approvals: ApprovalRequest[];
+}
+
+export interface PeerListResponse {
+  peers: Peer[];
+}
+
+// ── WebSocket RPC param types ─────────────────────────────────────────
+
+export interface DismissAgentParams {
+  target: string;
+  force?: boolean;
+}
+
+export interface SendNotificationParams {
+  title: string;
+  message: string;
+}
+
+export interface PresentOptionsParams {
+  requestId: string;
+  title: string;
+  type: ApprovalType;
+  items: ApprovalItem[];
+  description?: string;
+}
+
+export interface MessagePeerParams {
+  targetPid: number;
+  message: string;
+}

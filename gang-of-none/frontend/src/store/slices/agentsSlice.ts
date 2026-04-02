@@ -1,6 +1,6 @@
 import { createAsyncThunk, createSlice, PayloadAction } from '@reduxjs/toolkit';
 import type { Agent } from '../types';
-import { fetchAgents as apiFetchAgents } from '@/services/api';
+import { getAgents as apiFetchAgents } from '@/services/api';
 
 // ── State ──────────────────────────────────────────────────────────────
 
@@ -12,7 +12,10 @@ const initialState: AgentsState = {};
 
 export const fetchAgents = createAsyncThunk(
   'agents/fetchAll',
-  async (sessionId: string) => apiFetchAgents(sessionId),
+  async (sessionId: string) => {
+    const res = await apiFetchAgents(sessionId);
+    return res.agents;
+  },
 );
 
 // ── Slice ──────────────────────────────────────────────────────────────

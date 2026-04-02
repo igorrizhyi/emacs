@@ -84,11 +84,7 @@ export default function ChatScreen() {
     async (message: string, role: AgentRole, priority: TaskPriority) => {
       if (!activeSessionId) return;
       try {
-        await createTask(activeSessionId, {
-          role: role as unknown as import('@/services/types').AgentRole,
-          message,
-          priority: priority as unknown as import('@/services/types').TaskPriority,
-        });
+        await createTask(activeSessionId, { role, message, priority });
       } catch {
         // TODO: surface error to user via toast/notification
       }
