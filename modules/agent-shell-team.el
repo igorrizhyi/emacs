@@ -259,6 +259,20 @@ Used to start the HTTP transport for container agents."
                  (const :tag "Flash-lite researcher via tasksPut" flash-lite))
   :group 'agent-shell-team)
 
+(defcustom agent-shell-team-model-fallback-chains
+  '(("gemini-2.5-flash" . ("gemini-2.5-flash-lite" "gemini-2.5-pro"))
+    ("gemini-2.5-pro" . ("gemini-2.5-flash"))
+    ("claude-sonnet-4-6" . ("claude-haiku-4-5-20251001"))
+    ("claude-opus-4-6" . ("claude-sonnet-4-6" "claude-haiku-4-5-20251001"))
+    ("sonnet" . ("haiku"))
+    ("opus" . ("sonnet" "haiku")))
+  "Alist mapping model IDs to ordered fallback alternatives.
+When an agent spawn fails with a capacity/overload error for a model,
+the system tries the next model in the fallback chain before giving up.
+Each entry is (MODEL . (FALLBACK1 FALLBACK2 ...))."
+  :type '(alist :key-type string :value-type (repeat string))
+  :group 'agent-shell-team)
+
 ;;; Faces for doom-modeline role badges
 
 (defface agent-shell-team-role-lead-face
@@ -331,10 +345,18 @@ Set by `agent-shell-team--cleanup-agent' before calling `kill-buffer'.")
   "The model ID this agent was spawned with.
 Used to match tasks with model overrides to agents running the same model.")
 
+(defvar-local agent-shell-team--fallback-index 0
+  "Index into the fallback chain for the current model.
+Tracks how many fallback models have been tried for this agent.")
+
 (defvar agent-shell-team--spawn-model-override nil
   "Dynamic variable: when let-bound, overrides the model for agent spawning.
 Set by `agent-shell-team--auto-spawn-agent' when the triggering task has a
 `:model' field, so `make-gemini-config'/`make-claude-config' can pick it up.")
+
+(defvar agent-shell-team--spawn-fallback-index nil
+  "Dynamic variable: when let-bound, sets the fallback chain index for the new agent.
+Used to track how many fallback models have been tried.")
 
 (defvar-local agent-shell-team--max-turns nil
   "Buffer-local max turns for this agent's ACP session.
@@ -3373,7 +3395,9 @@ reached its max agent count, auto-spawn a new agent."
                                                       "")))
                                       (message "[try-assign] >>> SPAWNING new %s agent" role)
                                       (let ((agent-shell-team--spawn-model-override
-                                             (plist-get task :model)))
+                                             (plist-get task :model))
+                                            (agent-shell-team--spawn-fallback-index
+                                             (plist-get task :fallback-index)))
                                         (agent-shell-team--auto-spawn-agent session-id role))
                                       ;; Push task back — new agent is still initializing,
                                       ;; it will be assigned on the next drain timer tick
@@ -3923,6 +3947,10 @@ WORKTREE-PATH and WORKTREE-NAME are for isolated mode."
       (when agent-shell-team--spawn-model-override
         (with-current-buffer buffer
           (setq agent-shell-team--model-id agent-shell-team--spawn-model-override)))
+      ;; Store fallback chain index (for model capacity fallback tracking)
+      (when agent-shell-team--spawn-fallback-index
+        (with-current-buffer buffer
+          (setq agent-shell-team--fallback-index agent-shell-team--spawn-fallback-index)))
       ;; Store max-turns for this agent
       (when max-turns
         (with-current-buffer buffer
@@ -4300,6 +4328,105 @@ When called from an existing team buffer:
         (switch-to-buffer-other-window
          (agent-shell-team--log-buffer-name session))))
      (t (user-error "No active team sessions")))))
+
+;;; Model capacity fallback
+;;
+;; When an agent hits a capacity/overload error, try respawning with the
+;; next model in `agent-shell-team-model-fallback-chains' instead of dying.
+;; This complements `my-agent-shell-gemini-retry' which retries the SAME
+;; model for transient errors; this module tries DIFFERENT models.
+
+(defvar agent-shell-team--capacity-error-patterns
+  '("no capacity" "overloaded" "capacity" "RESOURCE_EXHAUSTED"
+    "model_not_available" "model is overloaded" "temporarily unavailable"
+    "rate limit" "rate_limit" "quota" "too many requests")
+  "Error message patterns indicating model capacity exhaustion.
+These trigger fallback to an alternative model rather than retrying
+the same model.")
+
+(defun agent-shell-team--capacity-error-p (message)
+  "Return non-nil if MESSAGE matches a known capacity error pattern."
+  (when (stringp message)
+    (let ((msg-lower (downcase message)))
+      (cl-some (lambda (pattern)
+                 (string-match-p (regexp-quote (downcase pattern)) msg-lower))
+               agent-shell-team--capacity-error-patterns))))
+
+(defun agent-shell-team--get-fallback-model (current-model fallback-index)
+  "Return the next fallback model for CURRENT-MODEL at FALLBACK-INDEX.
+Returns nil if no more fallbacks are available."
+  (when-let ((chain (cdr (assoc current-model
+                                 agent-shell-team-model-fallback-chains))))
+    (nth fallback-index chain)))
+
+(defun agent-shell-team--respawn-with-fallback (shell-buffer fallback-model)
+  "Clean up SHELL-BUFFER and re-queue its task with FALLBACK-MODEL.
+Returns non-nil if the task was successfully re-queued."
+  (when (buffer-live-p shell-buffer)
+    (let* ((session-id agent-shell-team--session-id)
+           (role (buffer-local-value 'agent-shell-team--role shell-buffer))
+           (worktree-path (buffer-local-value 'agent-shell-team--worktree-path shell-buffer))
+           (fallback-idx (buffer-local-value 'agent-shell-team--fallback-index shell-buffer))
+           ;; Find the active task for this buffer
+           (task-plist nil))
+      ;; Look up the task assigned to this buffer
+      (maphash (lambda (request-id buf)
+                 (when (eq buf shell-buffer)
+                   (setq task-plist (gethash request-id agent-shell-team--active-tasks))))
+               agent-shell-team--request-to-buffer)
+      (agent-shell-team--log session-id
+       (format "[model-fallback] Agent %s (model: %s) failed, trying fallback: %s"
+               (buffer-name shell-buffer)
+               (or (buffer-local-value 'agent-shell-team--model-id shell-buffer) "default")
+               fallback-model))
+      ;; Clean up the failed agent
+      (agent-shell-team--cleanup-agent shell-buffer session-id worktree-path)
+      ;; Re-queue the task with the fallback model
+      (when task-plist
+        (let ((new-task (copy-sequence task-plist)))
+          (plist-put new-task :model fallback-model)
+          ;; Clear target so it gets assigned to a fresh agent
+          (plist-put new-task :target nil)
+          ;; Store fallback index so the new agent can continue the chain
+          (plist-put new-task :fallback-index (1+ fallback-idx))
+          (push new-task agent-shell-team--task-queue)
+          (agent-shell-team--log session-id
+           (format "[model-fallback] Re-queued task %s with model %s"
+                   (plist-get new-task :request-id) fallback-model))
+          ;; Trigger assignment immediately
+          (run-at-time 0.5 nil #'agent-shell-team--try-assign-tasks)
+          t)))))
+
+(defun agent-shell-team--model-fallback-error-handler-a (orig-fn &rest args)
+  "Around advice on `agent-shell--make-error-handler'.
+Wraps the returned error handler to intercept capacity errors on team agents
+and respawn with a fallback model from `agent-shell-team-model-fallback-chains'."
+  (let* ((shell-buffer (plist-get args :shell-buffer))
+         (orig-handler (apply orig-fn args)))
+    (lambda (acp-error raw-message)
+      (let ((should-fallback nil)
+            (fallback-model nil))
+        (when (buffer-live-p shell-buffer)
+          (with-current-buffer shell-buffer
+            (when (and agent-shell-team--role  ;; is a team agent
+                       (agent-shell-team--capacity-error-p
+                        (or (map-elt acp-error 'message) "")))
+              (let* ((current-model (or agent-shell-team--model-id "default"))
+                     (idx agent-shell-team--fallback-index)
+                     (next-model (agent-shell-team--get-fallback-model current-model idx)))
+                (when next-model
+                  (setq should-fallback t
+                        fallback-model next-model))))))
+        (if should-fallback
+            (progn
+              (message "[model-fallback] Capacity error in %s, respawning with %s"
+                       (if (buffer-live-p shell-buffer) (buffer-name shell-buffer) "dead")
+                       fallback-model)
+              (agent-shell-team--respawn-with-fallback shell-buffer fallback-model))
+          (funcall orig-handler acp-error raw-message))))))
+
+(advice-add 'agent-shell--make-error-handler :around
+            #'agent-shell-team--model-fallback-error-handler-a)
 
 ;;; Eager session-id initialization
 ;; One session per Emacs instance — generate at load time so MCP handlers
