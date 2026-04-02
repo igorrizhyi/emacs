@@ -3,13 +3,17 @@ import { TouchableOpacity } from 'react-native';
 import styled from 'styled-components/native';
 
 interface ThinkingBlockProps {
-  content: string;
-  isComplete?: boolean;
+  text: string;
+  isStreaming?: boolean;
+  defaultExpanded?: boolean;
 }
+
+const PREVIEW_LENGTH = 80;
 
 const Container = styled.View`
   margin: ${({ theme }) => theme.spacing.xs}px 0;
-  background-color: ${({ theme }) => theme.colors.surface};
+  background-color: #1f1a00;
+  border: 1px dashed ${({ theme }) => theme.colors.hint};
   border-radius: 4px;
   overflow: hidden;
 `;
@@ -26,16 +30,24 @@ const Icon = styled.Text`
 `;
 
 const HeaderText = styled.Text`
-  color: ${({ theme }) => theme.colors.unchecked};
-  font-family: ${({ theme }) => theme.fonts.mono};
+  color: #aa8800;
+  font-family: ${({ theme }) => theme.fonts.monoItalic};
   font-size: ${({ theme }) => theme.sizes.fontSize}px;
+  flex: 1;
 `;
 
 const Chevron = styled.Text`
   color: ${({ theme }) => theme.colors.hint};
   font-family: ${({ theme }) => theme.fonts.mono};
   font-size: ${({ theme }) => theme.sizes.fontSizeSmall}px;
-  margin-left: auto;
+`;
+
+const PreviewText = styled.Text`
+  color: #aa8800;
+  font-family: ${({ theme }) => theme.fonts.mono};
+  font-size: ${({ theme }) => theme.sizes.fontSizeSmall}px;
+  opacity: 0.7;
+  padding: 0 ${({ theme }) => theme.spacing.md}px ${({ theme }) => theme.spacing.sm}px;
 `;
 
 const Body = styled.View`
@@ -43,29 +55,36 @@ const Body = styled.View`
 `;
 
 const BodyText = styled.Text`
-  color: ${({ theme }) => theme.colors.unchecked};
+  color: #aa8800;
   font-family: ${({ theme }) => theme.fonts.mono};
   font-size: ${({ theme }) => theme.sizes.fontSizeSmall}px;
+  line-height: 18px;
 `;
 
-function ThinkingBlock({ content, isComplete = false }: ThinkingBlockProps) {
-  const [expanded, setExpanded] = useState(false);
+function ThinkingBlock({ text, isStreaming = false, defaultExpanded = false }: ThinkingBlockProps) {
+  const [expanded, setExpanded] = useState(defaultExpanded);
 
   const toggle = useCallback(() => setExpanded(prev => !prev), []);
+
+  const preview = text.length > PREVIEW_LENGTH
+    ? text.slice(0, PREVIEW_LENGTH) + '...'
+    : text;
 
   return (
     <Container>
       <TouchableOpacity onPress={toggle} activeOpacity={0.7}>
         <Header>
-          <Icon>💡</Icon>
-          <HeaderText>{isComplete ? 'Thought' : 'Thinking...'}</HeaderText>
+          <Icon>⚡</Icon>
+          <HeaderText>{isStreaming ? 'Thinking...' : 'Thought'}</HeaderText>
           <Chevron>{expanded ? '▼' : '▶'}</Chevron>
         </Header>
       </TouchableOpacity>
-      {expanded && (
+      {expanded ? (
         <Body>
-          <BodyText>{content}</BodyText>
+          <BodyText>{text}</BodyText>
         </Body>
+      ) : (
+        <PreviewText numberOfLines={1}>{preview}</PreviewText>
       )}
     </Container>
   );
