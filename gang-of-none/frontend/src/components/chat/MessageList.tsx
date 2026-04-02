@@ -66,8 +66,8 @@ const BlockItem = React.memo(function BlockItem({
     case 'thinking':
       return (
         <ThinkingBlock
-          content={block.content}
-          isComplete={block.metadata?.isComplete}
+          text={block.content}
+          isStreaming={!block.metadata?.isComplete}
         />
       );
     case 'tool_call':
