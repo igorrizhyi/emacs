@@ -160,35 +160,34 @@ Uses native `json-serialize' when available, falls back to `json-encode'."
   "Handle an incoming WebSocket FRAME."
   (let* ((text (websocket-frame-text frame))
          (msg (agent-shell-team-ws--parse-json text)))
-    (unless msg
-      (message "agent-shell-team-ws: failed to parse frame: %s"
-               (truncate-string-to-width text 200))
-      (cl-return-from agent-shell-team-ws--on-message))
-    (let ((id (plist-get msg :id))
-          (method (plist-get msg :method))
-          (error-obj (plist-get msg :error))
-          (result (plist-get msg :result))
-          (params (plist-get msg :params)))
-      (cond
-       ;; Response to a pending request (has id, matches pending)
-       ((and id (gethash id agent-shell-team-ws--pending))
-        (agent-shell-team-ws--resolve-callback id result error-obj))
-       ;; Server notification (has method, no id)
-       ((and method (not id))
-        (if agent-shell-team-ws-notification-handler
-            (condition-case err
-                (funcall agent-shell-team-ws-notification-handler method params)
-              (error
-               (message "agent-shell-team-ws: notification handler error for %s: %s"
-                        method (error-message-string err))))
-          (message "agent-shell-team-ws: unhandled server notification: %s" method)))
-       ;; Error response with id but no pending callback
-       ((and id error-obj)
-        (message "agent-shell-team-ws: error response for unknown id %s: %s"
-                 id error-obj))
-       (t
-        (message "agent-shell-team-ws: unrecognized message: %s"
-                 (truncate-string-to-width text 200)))))))
+    (if (not msg)
+        (message "agent-shell-team-ws: failed to parse frame: %s"
+                 (truncate-string-to-width text 200))
+      (let ((id (plist-get msg :id))
+            (method (plist-get msg :method))
+            (error-obj (plist-get msg :error))
+            (result (plist-get msg :result))
+            (params (plist-get msg :params)))
+        (cond
+         ;; Response to a pending request (has id, matches pending)
+         ((and id (gethash id agent-shell-team-ws--pending))
+          (agent-shell-team-ws--resolve-callback id result error-obj))
+         ;; Server notification (has method, no id)
+         ((and method (not id))
+          (if agent-shell-team-ws-notification-handler
+              (condition-case err
+                  (funcall agent-shell-team-ws-notification-handler method params)
+                (error
+                 (message "agent-shell-team-ws: notification handler error for %s: %s"
+                          method (error-message-string err))))
+            (message "agent-shell-team-ws: unhandled server notification: %s" method)))
+         ;; Error response with id but no pending callback
+         ((and id error-obj)
+          (message "agent-shell-team-ws: error response for unknown id %s: %s"
+                   id error-obj))
+         (t
+          (message "agent-shell-team-ws: unrecognized message: %s"
+                   (truncate-string-to-width text 200))))))))
 
 ;;; --- Reconnect logic ---
 
@@ -297,37 +296,35 @@ Cancels auto-reconnect and all pending requests."
 CALLBACK is called as (funcall callback RESULT ERROR) when the
 response arrives or the request times out.  RESULT is a plist on
 success; ERROR is a plist with :code and :message on failure."
-  (unless (agent-shell-team-ws-connected-p)
-    (funcall callback nil (list :code -32002 :message "Not connected"))
-    (cl-return-from agent-shell-team-ws-call))
-  (let* ((id (cl-incf agent-shell-team-ws--next-id))
-         (request `(:jsonrpc "2.0"
-                    :id ,id
-                    :method ,method
-                    :params ,params)))
-    (agent-shell-team-ws--register-callback id callback)
-    (condition-case err
-        (websocket-send-text agent-shell-team-ws--connection
-                             (agent-shell-team-ws--encode-json request))
-      (error
-       (agent-shell-team-ws--resolve-callback
-        id nil (list :code -32003 :message (error-message-string err)))))))
+  (if (not (agent-shell-team-ws-connected-p))
+      (funcall callback nil (list :code -32002 :message "Not connected"))
+    (let* ((id (cl-incf agent-shell-team-ws--next-id))
+           (request `(:jsonrpc "2.0"
+                      :id ,id
+                      :method ,method
+                      :params ,params)))
+      (agent-shell-team-ws--register-callback id callback)
+      (condition-case err
+          (websocket-send-text agent-shell-team-ws--connection
+                               (agent-shell-team-ws--encode-json request))
+        (error
+         (agent-shell-team-ws--resolve-callback
+          id nil (list :code -32003 :message (error-message-string err))))))))
 
 (defun agent-shell-team-ws-notify (method params)
   "Send a JSON-RPC 2.0 notification with METHOD and PARAMS.
 Notifications have no ID and expect no response."
-  (unless (agent-shell-team-ws-connected-p)
-    (message "agent-shell-team-ws: cannot notify, not connected")
-    (cl-return-from agent-shell-team-ws-notify))
-  (let ((request `(:jsonrpc "2.0"
-                   :method ,method
-                   :params ,params)))
-    (condition-case err
-        (websocket-send-text agent-shell-team-ws--connection
-                             (agent-shell-team-ws--encode-json request))
-      (error
-       (message "agent-shell-team-ws: notify error: %s"
-                (error-message-string err))))))
+  (if (not (agent-shell-team-ws-connected-p))
+      (message "agent-shell-team-ws: cannot notify, not connected")
+    (let ((request `(:jsonrpc "2.0"
+                     :method ,method
+                     :params ,params)))
+      (condition-case err
+          (websocket-send-text agent-shell-team-ws--connection
+                               (agent-shell-team-ws--encode-json request))
+        (error
+         (message "agent-shell-team-ws: notify error: %s"
+                  (error-message-string err)))))))
 
 (provide 'agent-shell-team-ws)
 ;;; agent-shell-team-ws.el ends here
