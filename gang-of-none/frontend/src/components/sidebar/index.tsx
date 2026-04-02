@@ -2,7 +2,7 @@ export { default as TeamSidebar } from './TeamSidebar';
 export { default as ContextBar } from './ContextBar';
 export { default as AgentList } from './AgentList';
 export { default as AgentRow } from './AgentRow';
-export type { AgentData } from './AgentRow';
+export type { AgentData, AgentActions } from './AgentRow';
 export { default as ForeignAgents } from './ForeignAgents';
 export { default as PendingTasks } from './PendingTasks';
 export { default as HistorySection } from './HistorySection';
