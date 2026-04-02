@@ -212,7 +212,7 @@ without prompting for confirmation."
   :type 'integer
   :group 'agent-shell-team)
 
-(defcustom agent-shell-team-role-models '(("knowledge" . "gemini-2.5-flash")
+(defcustom agent-shell-team-role-models '(("knowledge" . "sonnet")
                                           ("researcher" . "sonnet"))
   "Alist mapping role name strings to Claude model ID strings.
 Each entry is (ROLE . MODEL-ID) where MODEL-ID is a short name
@@ -222,8 +222,7 @@ Roles not listed here fall back to `agent-shell-anthropic-default-model-id'."
   :group 'agent-shell-team)
 
 (defcustom agent-shell-team-role-backends
-  '(("researcher" . gemini)
-    ("knowledge" . gemini))
+  '(("researcher" . gemini))
   "Alist mapping roles to CLI backends.
 Supported backends: `claude' (default), `gemini'.
 Roles not listed here fall back to claude."
