@@ -13,6 +13,7 @@ from collections.abc import Callable
 from typing import Any
 
 from ..config import Settings
+from .retry import retry_with_backoff
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +123,7 @@ class ACPSession:
         model: str | None = None,
         system_prompt: str | None = None,
         on_notification: Callable[[dict[str, Any]], None] | None = None,
+        backoff_seconds: list[float] | None = None,
     ) -> None:
         self.agent_id = agent_id
         self.binary = binary
@@ -129,6 +131,7 @@ class ACPSession:
         self.model = model
         self.system_prompt = system_prompt
         self.on_notification = on_notification
+        self.backoff_seconds = backoff_seconds if backoff_seconds is not None else [2.0, 5.0, 15.0]
 
         self.process: asyncio.subprocess.Process | None = None
         self.session_id: str | None = None
@@ -155,12 +158,16 @@ class ACPSession:
         init_resp = await self._send_request("initialize", make_initialize_request)
         logger.info("ACP initialized for %s: %s", self.agent_id, init_resp)
 
-        # Create session
-        session_resp = await self._send_request(
-            "session/new",
-            lambda rid: make_session_new_request(
-                rid, self.work_dir, self.model, self.system_prompt
+        # Create session (retryable — hits remote API)
+        session_resp = await retry_with_backoff(
+            lambda: self._send_request(
+                "session/new",
+                lambda rid: make_session_new_request(
+                    rid, self.work_dir, self.model, self.system_prompt
+                ),
             ),
+            backoff_seconds=self.backoff_seconds,
+            description=f"session/new for {self.agent_id}",
         )
         self.session_id = session_resp.get("sessionId")
         if not self.session_id:
@@ -199,9 +206,13 @@ class ACPSession:
         """Send a session/prompt request and return the response."""
         if not self.session_id:
             raise RuntimeError("Session not started")
-        return await self._send_request(
-            "session/prompt",
-            lambda rid: make_session_prompt_request(rid, self.session_id, message),  # type: ignore[arg-type]
+        return await retry_with_backoff(
+            lambda: self._send_request(
+                "session/prompt",
+                lambda rid: make_session_prompt_request(rid, self.session_id, message),  # type: ignore[arg-type]
+            ),
+            backoff_seconds=self.backoff_seconds,
+            description=f"session/prompt for {self.agent_id}",
         )
 
     async def cancel(self) -> None:
@@ -420,6 +431,7 @@ class ACPSessionManager:
             model=model or self.settings.default_model or None,
             system_prompt=system_prompt,
             on_notification=on_notification,
+            backoff_seconds=self.settings.retry_backoff_seconds,
         )
         await session.start()
         self._sessions[agent_id] = session

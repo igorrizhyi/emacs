@@ -21,6 +21,7 @@ class Agent(BaseModel):
     worktree_path: str | None = None
     worktree_name: str | None = None
     buffer_name: str | None = None
+    model: str | None = None
     ephemeral: bool = False
     reserved: bool = False
     init_finished: bool = False
