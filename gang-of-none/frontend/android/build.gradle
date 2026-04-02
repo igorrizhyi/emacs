@@ -19,3 +19,12 @@ buildscript {
 }
 
 apply plugin: "com.facebook.react.rootproject"
+
+subprojects { sub ->
+    sub.plugins.withId("com.android.library") {
+        sub.android.buildToolsVersion = rootProject.ext.buildToolsVersion
+    }
+    sub.configurations.configureEach {
+        exclude group: 'com.android.support'
+    }
+}
