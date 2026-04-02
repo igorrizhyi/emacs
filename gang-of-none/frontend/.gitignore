@@ -6,4 +6,5 @@ build/
 .env
 .metro-health-check*
 android/app/build/
+android/local.properties
 ios/Pods/
