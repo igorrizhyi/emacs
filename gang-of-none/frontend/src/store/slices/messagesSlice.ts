@@ -1,9 +1,13 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
-import type { ChatBlock } from '../../components/chat/MessageList';
+import type { ChatBlock } from '../types';
+
+// ── State ──────────────────────────────────────────────────────────────
 
 type MessagesState = Record<string, ChatBlock[]>;
 
 const initialState: MessagesState = {};
+
+// ── Slice ──────────────────────────────────────────────────────────────
 
 const messagesSlice = createSlice({
   name: 'messages',

@@ -1,34 +1,84 @@
-import { createSlice, PayloadAction } from '@reduxjs/toolkit';
+import { createAsyncThunk, createSlice, PayloadAction } from '@reduxjs/toolkit';
+import type { Session } from '../types';
+import { fetchSessions as apiFetchSessions } from '@/services/api';
 
-export interface Session {
-  id: string;
-  projectRoot: string;
-  createdAt: string;
-  agentIds: string[];
+// ── State ──────────────────────────────────────────────────────────────
+
+interface SessionsState {
+  byId: Record<string, Session>;
+  activeSessionId: string | null;
+  loading: boolean;
+  error: string | null;
 }
 
-type SessionsState = Record<string, Session>;
+const initialState: SessionsState = {
+  byId: {},
+  activeSessionId: null,
+  loading: false,
+  error: null,
+};
 
-const initialState: SessionsState = {};
+// ── Async thunks ───────────────────────────────────────────────────────
+
+export const fetchSessions = createAsyncThunk(
+  'sessions/fetchAll',
+  async () => apiFetchSessions(),
+);
+
+// ── Slice ──────────────────────────────────────────────────────────────
 
 const sessionsSlice = createSlice({
   name: 'sessions',
   initialState,
   reducers: {
+    setSessions(state, action: PayloadAction<Session[]>) {
+      state.byId = {};
+      for (const s of action.payload) {
+        state.byId[s.id] = s;
+      }
+    },
     addSession(state, action: PayloadAction<Session>) {
-      state[action.payload.id] = action.payload;
+      state.byId[action.payload.id] = action.payload;
     },
     removeSession(state, action: PayloadAction<string>) {
-      delete state[action.payload];
+      delete state.byId[action.payload];
+      if (state.activeSessionId === action.payload) {
+        state.activeSessionId = null;
+      }
     },
-    updateSession(state, action: PayloadAction<{ id: string } & Partial<Omit<Session, 'id'>>>) {
-      const session = state[action.payload.id];
+    setActiveSession(state, action: PayloadAction<string | null>) {
+      state.activeSessionId = action.payload;
+    },
+    updateSession(
+      state,
+      action: PayloadAction<{ id: string } & Partial<Omit<Session, 'id'>>>,
+    ) {
+      const session = state.byId[action.payload.id];
       if (session) {
         Object.assign(session, action.payload);
       }
     },
   },
+  extraReducers: (builder) => {
+    builder
+      .addCase(fetchSessions.pending, (state) => {
+        state.loading = true;
+        state.error = null;
+      })
+      .addCase(fetchSessions.fulfilled, (state, action) => {
+        state.loading = false;
+        state.byId = {};
+        for (const s of action.payload) {
+          state.byId[s.id] = s;
+        }
+      })
+      .addCase(fetchSessions.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.error.message ?? 'Failed to fetch sessions';
+      });
+  },
 });
 
-export const { addSession, removeSession, updateSession } = sessionsSlice.actions;
+export const { setSessions, addSession, removeSession, setActiveSession, updateSession } =
+  sessionsSlice.actions;
 export default sessionsSlice.reducer;

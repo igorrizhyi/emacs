@@ -1,119 +1,118 @@
-import { createSlice, PayloadAction } from '@reduxjs/toolkit';
+import { createAsyncThunk, createSlice, PayloadAction } from '@reduxjs/toolkit';
+import type { ApprovalRequest } from '../types';
 import type { RootState } from '../index';
+import { fetchApprovals as apiFetchApprovals } from '@/services/api';
 
-// ── Types ────────────────────────────────────────────────────────────
-
-export interface ApprovalItem {
-  id: string;
-  label: string;
-  description?: string;
-  selected: boolean;
-  default_selected?: boolean;
-}
-
-export interface ApprovalRequest {
-  id: string;
-  title: string;
-  type: 'checklist' | 'choice';
-  items: ApprovalItem[];
-  description?: string;
-  notes?: string;
-  refine?: string;
-  timestamp: number;
-}
+// ── State ──────────────────────────────────────────────────────────────
 
 interface ApprovalState {
-  requests: ApprovalRequest[];
+  byId: Record<string, ApprovalRequest>;
   activeRequestId: string | null;
 }
 
-// ── Initial state ────────────────────────────────────────────────────
-
 const initialState: ApprovalState = {
-  requests: [],
+  byId: {},
   activeRequestId: null,
 };
 
-// ── Slice ────────────────────────────────────────────────────────────
+// ── Async thunks ───────────────────────────────────────────────────────
+
+export const fetchApprovals = createAsyncThunk(
+  'approval/fetchAll',
+  async () => apiFetchApprovals(),
+);
+
+// ── Slice ──────────────────────────────────────────────────────────────
 
 const approvalSlice = createSlice({
   name: 'approval',
   initialState,
   reducers: {
-    addRequest(state, action: PayloadAction<ApprovalRequest>) {
-      state.requests.unshift(action.payload);
-      // Auto-select the new request if none is active
+    setApprovals(state, action: PayloadAction<ApprovalRequest[]>) {
+      state.byId = {};
+      for (const a of action.payload) {
+        state.byId[a.requestId] = a;
+      }
+    },
+    addApproval(state, action: PayloadAction<ApprovalRequest>) {
+      state.byId[action.payload.requestId] = action.payload;
       if (!state.activeRequestId) {
-        state.activeRequestId = action.payload.id;
+        state.activeRequestId = action.payload.requestId;
       }
     },
-
-    removeRequest(state, action: PayloadAction<string>) {
-      state.requests = state.requests.filter((r) => r.id !== action.payload);
+    removeApproval(state, action: PayloadAction<string>) {
+      delete state.byId[action.payload];
       if (state.activeRequestId === action.payload) {
-        state.activeRequestId = state.requests[0]?.id ?? null;
+        const ids = Object.keys(state.byId);
+        state.activeRequestId = ids[0] ?? null;
       }
     },
-
+    updateApproval(
+      state,
+      action: PayloadAction<{ requestId: string } & Partial<Omit<ApprovalRequest, 'requestId'>>>,
+    ) {
+      const approval = state.byId[action.payload.requestId];
+      if (approval) {
+        Object.assign(approval, action.payload);
+      }
+    },
     setActiveRequest(state, action: PayloadAction<string | null>) {
       state.activeRequestId = action.payload;
     },
-
     toggleItem(
       state,
       action: PayloadAction<{ requestId: string; itemId: string }>,
     ) {
-      const request = state.requests.find(
-        (r) => r.id === action.payload.requestId,
-      );
+      const request = state.byId[action.payload.requestId];
       if (!request) return;
 
       if (request.type === 'checklist') {
-        const item = request.items.find(
-          (i) => i.id === action.payload.itemId,
-        );
+        const item = request.items.find((i) => i.id === action.payload.itemId);
         if (item) {
           item.selected = !item.selected;
         }
       } else {
-        // Choice: radio-select — deselect all, select target
         for (const item of request.items) {
           item.selected = item.id === action.payload.itemId;
         }
       }
     },
-
     updateNotes(
       state,
       action: PayloadAction<{ requestId: string; notes: string }>,
     ) {
-      const request = state.requests.find(
-        (r) => r.id === action.payload.requestId,
-      );
+      const request = state.byId[action.payload.requestId];
       if (request) {
         request.notes = action.payload.notes;
       }
     },
-
     updateRefine(
       state,
       action: PayloadAction<{ requestId: string; refine: string }>,
     ) {
-      const request = state.requests.find(
-        (r) => r.id === action.payload.requestId,
-      );
+      const request = state.byId[action.payload.requestId];
       if (request) {
         request.refine = action.payload.refine;
       }
     },
+  },
+  extraReducers: (builder) => {
+    builder.addCase(fetchApprovals.fulfilled, (state, action) => {
+      state.byId = {};
+      for (const a of action.payload) {
+        state.byId[a.requestId] = a;
+      }
+    });
   },
 });
 
 // ── Actions ──────────────────────────────────────────────────────────
 
 export const {
-  addRequest,
-  removeRequest,
+  setApprovals,
+  addApproval,
+  removeApproval,
+  updateApproval,
   setActiveRequest,
   toggleItem,
   updateNotes,
@@ -123,13 +122,13 @@ export const {
 // ── Selectors ────────────────────────────────────────────────────────
 
 export const selectActiveRequest = (state: RootState) => {
-  const { activeRequestId, requests } = state.approval;
+  const { activeRequestId, byId } = state.approval;
   if (!activeRequestId) return undefined;
-  return requests.find((r) => r.id === activeRequestId);
+  return byId[activeRequestId];
 };
 
 export const selectPendingCount = (state: RootState) =>
-  state.approval.requests.length;
+  Object.keys(state.approval.byId).length;
 
 // ── Export ────────────────────────────────────────────────────────────
 

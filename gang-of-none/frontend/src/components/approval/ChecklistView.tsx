@@ -1,7 +1,7 @@
 import React from 'react';
 import { TouchableOpacity } from 'react-native';
 import styled from 'styled-components/native';
-import type { ApprovalItem } from '../../store/slices/approvalSlice';
+import type { ApprovalItem } from '../../store/types';
 
 // ── Types ────────────────────────────────────────────────────────────
 
