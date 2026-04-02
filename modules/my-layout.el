@@ -337,6 +337,19 @@ If already in the lead buffer, toggle back to the previous buffer."
      (t
       (require 'agent-shell-team)
       (agent-shell-team--start-http-mcp-servers)
+      ;; Connect to Python backend if configured
+      (when (and (fboundp 'agent-shell-team-dispatch--python-p)
+                 (agent-shell-team-dispatch--python-p))
+        (require 'agent-shell-team-ws)
+        (require 'agent-shell-team-events)
+        (let ((backend-id (agent-shell-team--create-backend-session)))
+          (when backend-id
+            (let ((ws-url (format "%s/ws/%s" agent-shell-team-python-url backend-id)))
+              (agent-shell-team-ws-connect ws-url
+                                           (lambda ()
+                                             (message "agent-shell-team: WS connected for session %s (backend %s)"
+                                                      (agent-shell-team--short-session-id agent-shell-team--session-id)
+                                                      (agent-shell-team--short-session-id backend-id))))))))
       (let* ((context-buffer (current-buffer))
              (session-id agent-shell-team--session-id)
              (buf (agent-shell-team--start-agent session-id "lead" "neighbor" default-directory nil nil)))
