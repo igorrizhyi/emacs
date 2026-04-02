@@ -17,6 +17,7 @@ from .prompt_manager import PromptManager
 from .report_manager import ReportManager
 from .task_manager import TaskManager
 from .retry import is_retryable_error
+from .isolation import build_command_prefix
 from .worktree_manager import WorktreeManager
 
 if TYPE_CHECKING:
@@ -222,6 +223,14 @@ class Orchestrator:
         # Build role-specific system prompt
         system_prompt = self.prompt_mgr.get_prompt_for_role(role)
 
+        # Build isolation command prefix (bwrap / devcontainer)
+        command_prefix = build_command_prefix(
+            role=str(role.value),
+            worktree_path=agent.worktree_path,
+            project_root=project_root,
+            linuxbrew_path=self.settings.linuxbrew_path,
+        )
+
         # Build ordered list of models to try (primary + fallbacks).
         models_to_try = [model]
         if model and model in self.settings.model_fallback_chains:
@@ -235,6 +244,7 @@ class Orchestrator:
                     work_dir=work_dir,
                     model=candidate_model,
                     system_prompt=system_prompt,
+                    command_prefix=command_prefix,
                 )
                 actual_model = candidate_model
                 break

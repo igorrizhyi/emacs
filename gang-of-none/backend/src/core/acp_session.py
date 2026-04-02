@@ -124,6 +124,7 @@ class ACPSession:
         system_prompt: str | None = None,
         on_notification: Callable[[dict[str, Any]], None] | None = None,
         backoff_seconds: list[float] | None = None,
+        command_prefix: list[str] | None = None,
     ) -> None:
         self.agent_id = agent_id
         self.binary = binary
@@ -132,6 +133,7 @@ class ACPSession:
         self.system_prompt = system_prompt
         self.on_notification = on_notification
         self.backoff_seconds = backoff_seconds if backoff_seconds is not None else [2.0, 5.0, 15.0]
+        self.command_prefix = command_prefix or []
 
         self.process: asyncio.subprocess.Process | None = None
         self.session_id: str | None = None
@@ -143,12 +145,15 @@ class ACPSession:
 
     async def start(self) -> None:
         """Spawn the CLI process and initialize ACP session."""
+        cmd = [*self.command_prefix, self.binary]
+        # When bwrap/devcontainer handles cwd, don't pass cwd to subprocess
+        cwd = self.work_dir if not self.command_prefix else None
         self.process = await asyncio.create_subprocess_exec(
-            self.binary,
+            *cmd,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            cwd=self.work_dir,
+            cwd=cwd,
         )
         self._reader_task = asyncio.create_task(
             self._read_stdout(), name=f"acp-reader-{self.agent_id}"
@@ -420,6 +425,7 @@ class ACPSessionManager:
         model: str | None = None,
         system_prompt: str | None = None,
         on_notification: Callable[[dict[str, Any]], None] | None = None,
+        command_prefix: list[str] | None = None,
     ) -> ACPSession:
         """Create and start a new ACP session."""
         if agent_id in self._sessions:
@@ -432,6 +438,7 @@ class ACPSessionManager:
             system_prompt=system_prompt,
             on_notification=on_notification,
             backoff_seconds=self.settings.retry_backoff_seconds,
+            command_prefix=command_prefix,
         )
         await session.start()
         self._sessions[agent_id] = session
