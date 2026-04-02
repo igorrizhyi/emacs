@@ -1,5 +1,5 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
-import type { ConnectionStatus } from '../../services/websocket';
+import type { ConnectionStatus } from '../../services/ws';
 
 interface ConnectionState {
   status: ConnectionStatus;

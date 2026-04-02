@@ -134,6 +134,12 @@ class WsService {
     return this.status;
   }
 
+  // ── Generic RPC call ────────────────────────────────────────────────
+
+  sendRequest(method: string, params?: unknown): Promise<unknown> {
+    return this.call(method, params);
+  }
+
   // ── Internal ────────────────────────────────────────────────────────
 
   private call(method: string, params?: unknown): Promise<unknown> {

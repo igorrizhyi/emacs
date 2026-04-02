@@ -11,7 +11,7 @@ import { selectPendingCount } from '../store/slices/approvalSlice';
 import MessageList from '../components/chat/MessageList';
 import MessageInput from '../components/chat/MessageInput';
 import { ApprovalSheet } from '../components/approval';
-import { websocketService } from '../services/websocket';
+import { wsService } from '../services/ws';
 
 // ── Styled components ───────────────────────────────────────────────
 
@@ -112,7 +112,7 @@ export default function ChatScreen() {
   const handleSend = useCallback(
     (message: string) => {
       if (!agentId) return;
-      websocketService.sendRequest('agent/sendMessage', {
+      wsService.sendRequest('agent/sendMessage', {
         agentId,
         message,
       });

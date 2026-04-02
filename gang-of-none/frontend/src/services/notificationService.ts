@@ -3,7 +3,7 @@ import messaging, {
 } from '@react-native-firebase/messaging';
 import PushNotification from 'react-native-push-notification';
 import { AppState, Platform } from 'react-native';
-import { websocketService } from './websocket';
+import { wsService } from './ws';
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -95,8 +95,8 @@ class NotificationService {
   async registerToken(): Promise<void> {
     try {
       const token = await messaging().getToken();
-      if (websocketService.isConnected()) {
-        websocketService.sendRequest('device/registerPushToken', {
+      if (wsService.getStatus() === 'connected') {
+        wsService.sendRequest('device/registerPushToken', {
           token,
           platform: Platform.OS,
         });
@@ -104,8 +104,8 @@ class NotificationService {
 
       // Listen for token refresh
       messaging().onTokenRefresh((newToken) => {
-        if (websocketService.isConnected()) {
-          websocketService.sendRequest('device/registerPushToken', {
+        if (wsService.getStatus() === 'connected') {
+          wsService.sendRequest('device/registerPushToken', {
             token: newToken,
             platform: Platform.OS,
           });
