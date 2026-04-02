@@ -1,5 +1,8 @@
 from contextlib import asynccontextmanager
+import logging
+from logging.handlers import RotatingFileHandler
 import os
+from pathlib import Path
 
 from fastapi import FastAPI
 import structlog
@@ -19,6 +22,72 @@ from .core.report_manager import ReportManager
 from .core.session_manager import SessionManager
 from .core.task_manager import TaskManager
 from .core.worktree_manager import WorktreeManager
+
+# ── Logging setup ─────────────────────────────────────────────────────
+
+_LOG_DIR = Path(__file__).resolve().parent.parent / "logs"
+_LOG_FILE = _LOG_DIR / "server.log"
+_LOG_FORMAT = "%(asctime)s %(levelname)-8s %(name)s  %(message)s"
+
+
+def _setup_logging() -> None:
+    """Configure dual output (console + rotating file) for all loggers."""
+    _LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+    file_handler = RotatingFileHandler(
+        _LOG_FILE,
+        maxBytes=10 * 1024 * 1024,  # 10 MB
+        backupCount=5,
+        encoding="utf-8",
+    )
+    file_handler.setFormatter(logging.Formatter(_LOG_FORMAT))
+
+    # Attach file handler to root logger so uvicorn + app logs are captured
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    root.addHandler(file_handler)
+
+    # Configure structlog to render through stdlib logging (dual output)
+    structlog.configure(
+        processors=[
+            structlog.contextvars.merge_contextvars,
+            structlog.stdlib.add_log_level,
+            structlog.stdlib.add_logger_name,
+            structlog.dev.set_exc_info,
+            structlog.processors.TimeStamper(fmt="iso"),
+            structlog.processors.StackInfoRenderer(),
+            structlog.processors.format_exc_info,
+            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
+        ],
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        wrapper_class=structlog.stdlib.BoundLogger,
+        cache_logger_on_first_use=True,
+    )
+
+    # Add a structlog-aware formatter to the file handler
+    formatter = structlog.stdlib.ProcessorFormatter(
+        processor=structlog.dev.ConsoleRenderer(colors=False),
+    )
+    file_handler.setFormatter(formatter)
+
+    # Also apply the formatter to existing console handlers so structlog
+    # output is consistent across both sinks.
+    console_formatter = structlog.stdlib.ProcessorFormatter(
+        processor=structlog.dev.ConsoleRenderer(),
+    )
+    for handler in root.handlers:
+        if isinstance(handler, logging.StreamHandler) and not isinstance(
+            handler, RotatingFileHandler
+        ):
+            handler.setFormatter(console_formatter)
+
+    # Ensure uvicorn loggers propagate to root so the file handler catches them
+    for name in ("uvicorn", "uvicorn.access", "uvicorn.error"):
+        uv_logger = logging.getLogger(name)
+        uv_logger.propagate = True
+
+
+_setup_logging()
 
 logger = structlog.get_logger()
 

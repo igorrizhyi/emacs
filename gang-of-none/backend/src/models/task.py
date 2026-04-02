@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from pydantic import BaseModel, Field
 
@@ -27,7 +27,7 @@ class Task(BaseModel):
     session_id: str
     report_path: str | None = None
     status: TaskStatus = TaskStatus.PENDING
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     assigned_at: datetime | None = None
     completed_at: datetime | None = None
 

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from pydantic import BaseModel, Field
 
@@ -26,7 +26,7 @@ class Agent(BaseModel):
     reserved: bool = False
     init_finished: bool = False
     current_task_id: str | None = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     pid: int | None = None
 
 
