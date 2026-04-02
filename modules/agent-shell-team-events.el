@@ -32,10 +32,15 @@
                   (title message))
 (declare-function agent-shell-team--get-session-agents "agent-shell-team"
                   (session-id))
+(declare-function agent-shell-team--buffer-name "agent-shell-team"
+                  (session-id role &optional worktree-name))
 (declare-function my/team-sidebar--render "my-agent-shell-sidebar")
 
 ;; Variables from agent-shell-team we reference
 (defvar agent-shell-team--session-id)
+(defvar agent-shell-team--agent-id)
+(defvar agent-shell-team--init-finished-p)
+(defvar agent-shell-team--model-id)
 (defvar agent-shell-team--request-to-session)
 (defvar agent-shell-team--task-groups)
 
@@ -75,20 +80,43 @@ PARAMS contains group_id and completed (list of request IDs)."
           (agent-shell-team--notify-group-complete session-id group-id group))))))
 
 (defun agent-shell-team-events--on-agent-spawned (params)
-  "Handle agent/spawned — delegate to `agent-shell-team--register-agent'.
-PARAMS contains agent_id, session_id, role, worktree_path, model.
-Creates a placeholder registration; the actual buffer is set up separately."
+  "Handle agent/spawned — create a display-only buffer and register it.
+PARAMS contains agent_id, session_id, role, worktree_path, worktree_name, model.
+In server mode the backend manages the ACP subprocess; this buffer is only
+for rendering WS notifications (tool calls, messages, status updates)."
   (let ((session-id (agent-shell-team-events--get-param params "session_id"))
         (role (agent-shell-team-events--get-param params "role"))
         (worktree-path (agent-shell-team-events--get-param params "worktree_path"))
+        (worktree-name (agent-shell-team-events--get-param params "worktree_name"))
         (model (agent-shell-team-events--get-param params "model"))
         (agent-id (agent-shell-team-events--get-param params "agent_id")))
     (when (and session-id role)
-      ;; The register-agent function expects a buffer, but the WS event
-      ;; arrives before the buffer exists.  Log for now; the actual
-      ;; registration happens when the agent shell buffer is created.
-      (message "agent-shell-team-events: agent/spawned id=%s role=%s model=%s worktree=%s"
-               agent-id role (or model "default") (or worktree-path "none")))))
+      (let* ((wt-name (or worktree-name agent-id))
+             (buf-name (agent-shell-team--buffer-name session-id role wt-name))
+             (buffer (get-buffer-create buf-name)))
+        (message "agent-shell-team-events: agent/spawned id=%s role=%s model=%s buffer=%s"
+                 agent-id role (or model "default") buf-name)
+        ;; Register in team session roster (mode "server" = backend-managed)
+        (agent-shell-team--register-agent session-id buffer role "server"
+                                          worktree-path wt-name)
+        ;; Set additional buffer-local variables for server-mode agents
+        (with-current-buffer buffer
+          (setq agent-shell-team--session-id session-id
+                agent-shell-team--agent-id agent-id
+                agent-shell-team--init-finished-p t)
+          (when model
+            (setq agent-shell-team--model-id model))
+          (read-only-mode 1))
+        ;; Store agent-id in the roster alist entry for lookup by dismissed handler
+        (let* ((agents (agent-shell-team--get-session-agents session-id))
+               (entry (cl-find buffer agents
+                               :key (lambda (a) (alist-get 'buffer a)))))
+          (when entry
+            (push (cons 'agent-id agent-id) (cdr entry))))
+        ;; Refresh sidebar if visible
+        (when-let ((sidebar-buf (get-buffer " *team-sidebar*")))
+          (when (get-buffer-window sidebar-buf)
+            (my/team-sidebar--render)))))))
 
 (defun agent-shell-team-events--on-agent-dismissed (params)
   "Handle agent/dismissed — delegate to `agent-shell-team--unregister-agent'.

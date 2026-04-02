@@ -302,6 +302,9 @@ Generated eagerly at load time so MCP handlers always have a valid session.")
 Maps to the Emacs-side `agent-shell-team--session-id'.  Used for
 WebSocket connections and API calls to the Python backend.")
 
+(defvar-local agent-shell-team--agent-id nil
+  "Backend agent ID.  Set for agents managed by the gang-of-none backend.")
+
 (defvar-local agent-shell-team--role nil
   "Role: dev, lead, tester, researcher, or knowledge.")
 
