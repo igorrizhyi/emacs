@@ -15,9 +15,12 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
+import threading
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 try:
     import aiohttp
@@ -29,6 +32,53 @@ except ImportError:
 DEFAULT_HOST = "http://localhost:8000"
 DEFAULT_PROJECT_ROOT = "/var/home/igorrizhyi/.config/doom"
 DEFAULT_TIMEOUT = 120
+
+
+# ---------------------------------------------------------------------------
+# In-process server helpers
+# ---------------------------------------------------------------------------
+
+
+def _start_server_in_background(
+    project_root: str, host: str = "127.0.0.1", port: int = 8000
+) -> "uvicorn.Server":
+    """Start the FastAPI app in a background thread.
+
+    CWD is set to *project_root* so that relative paths (e.g. the SQLite DB
+    at ``.agent-shell/gang-of-none.db``) resolve correctly.
+
+    Returns the ``uvicorn.Server`` instance for later shutdown.
+    """
+    import uvicorn
+
+    # Ensure CWD is set before the app module is imported (it reads
+    # relative paths at import / startup time).
+    os.chdir(project_root)
+
+    from src.main import app  # noqa: E402  (import after chdir)
+
+    config = uvicorn.Config(app, host=host, port=port, log_level="info")
+    server = uvicorn.Server(config)
+
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+
+    return server
+
+
+def _wait_for_server(host: str, timeout: float = 10.0) -> bool:
+    """Poll until the server responds (or *timeout* seconds elapse)."""
+    import urllib.request
+    import urllib.error
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            urllib.request.urlopen(f"{host}/docs", timeout=2)
+            return True
+        except (urllib.error.URLError, OSError):
+            time.sleep(0.3)
+    return False
 
 
 def ts() -> str:
@@ -458,8 +508,11 @@ def main() -> None:
     )
     parser.add_argument(
         "--host",
-        default=DEFAULT_HOST,
-        help=f"Backend base URL (default: {DEFAULT_HOST})",
+        default=None,
+        help=(
+            "Backend base URL.  When omitted the server is started in-process; "
+            f"when provided the script connects to the external server (e.g. {DEFAULT_HOST})"
+        ),
     )
     parser.add_argument(
         "--project-root",
@@ -479,10 +532,15 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    # Determine whether to start an in-process server.
+    use_inprocess = args.host is None
+    host = args.host if args.host is not None else DEFAULT_HOST
+
     print("=== gang-of-none spawn test ===")
-    print(f"Host: {args.host}")
+    print(f"Host: {host}")
     print(f"Project root: {args.project_root}")
     print(f"Timeout: {args.timeout}s")
+    print(f"Server: {'in-process' if use_inprocess else 'external'}")
     print(f"Transport: {'aiohttp (async+WS)' if HAS_AIOHTTP else 'requests (sync, no WS)'}")
     if args.skip_task_test:
         print("Mode: WS agent test only (--skip-task-test)")
@@ -493,10 +551,28 @@ def main() -> None:
         print("  pip install aiohttp")
         sys.exit(1)
 
-    if HAS_AIOHTTP:
-        asyncio.run(run_aiohttp(args.host, args.project_root, args.timeout, args.skip_task_test))
-    else:
-        run_sync(args.host, args.project_root, args.timeout)
+    # --- In-process server startup ---
+    server = None
+    if use_inprocess:
+        log("SERVER", "Starting in-process uvicorn server …")
+        server = _start_server_in_background(args.project_root)
+        if not _wait_for_server(host):
+            log("SERVER", "FAILED: server did not become ready within 10s")
+            sys.exit(1)
+        log("SERVER", "Server is ready")
+
+    try:
+        if HAS_AIOHTTP:
+            asyncio.run(run_aiohttp(host, args.project_root, args.timeout, args.skip_task_test))
+        else:
+            run_sync(host, args.project_root, args.timeout)
+    finally:
+        if server is not None:
+            log("SERVER", "Shutting down in-process server …")
+            server.should_exit = True
+            # Give the server thread a moment to exit cleanly.
+            time.sleep(0.5)
+            log("SERVER", "Done")
 
 
 if __name__ == "__main__":
