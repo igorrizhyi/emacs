@@ -236,5 +236,30 @@ Returns a list of peer plists.  Optional CALLBACK receives the result."
         (when callback (funcall callback result))
         result))))
 
+(declare-function agent-shell-team--auto-spawn-agent "agent-shell-team"
+                  (session-id role))
+
+(defun agent-shell-team-dispatch-spawn-agent (role &optional model callback)
+  "Dispatch agent spawning for ROLE.
+When the Python backend is active, sends a spawnAgent RPC call
+so the backend creates the ACP session and worktree.  In elisp
+mode, falls back to `agent-shell-team--auto-spawn-agent'.
+Optional MODEL overrides the default model.
+Optional CALLBACK receives the result (python mode only)."
+  (if (agent-shell-team-dispatch--python-p)
+      (progn
+        (agent-shell-team-dispatch--log "spawnAgent")
+        (agent-shell-team-dispatch--ws-require)
+        (let ((params `((role . ,role)
+                        ,@(when model `((model . ,model))))))
+          (agent-shell-team-ws-call "spawnAgent" params callback)))
+    (agent-shell-team-dispatch--log "spawnAgent [elisp]")
+    (let ((session-id (and (boundp 'agent-shell-team--session-id)
+                           agent-shell-team--session-id)))
+      (when session-id
+        (let ((agent-shell-team--spawn-model-override model))
+          (agent-shell-team--auto-spawn-agent session-id role)))
+      (when callback (funcall callback '((success . t)) nil)))))
+
 (provide 'agent-shell-team-dispatch)
 ;;; agent-shell-team-dispatch.el ends here

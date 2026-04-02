@@ -174,6 +174,18 @@
     (setenv "HYPRLAND_INSTANCE_SIGNATURE" sig)
     (message "Hyprland signature: %s" sig)))
 
+;; Ensure Linuxbrew and ~/.local/bin are in PATH and exec-path
+;; ~/.local/bin must come BEFORE linuxbrew (linuxbrew has a broken
+;; claude-agent-acp symlink pointing to a Node.js script)
+(let ((extra-paths '("/home/linuxbrew/.linuxbrew/sbin"
+                     "/home/linuxbrew/.linuxbrew/bin"
+                     "/home/linuxbrew/.linuxbrew/opt/openjdk@17/bin"
+                     "/home/igorrizhyi/.local/bin")))
+  (dolist (p extra-paths)
+    (setq exec-path (delete p exec-path))
+    (push p exec-path))
+  (setenv "PATH" (string-join exec-path path-separator)))
+
 ;; Set DOCKER_HOST so devcontainer CLI (and other tools) use podman
 (setenv "DOCKER_HOST" "unix:///run/user/1000/podman/podman.sock")
 

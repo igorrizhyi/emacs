@@ -300,6 +300,9 @@ Generated eagerly at load time so MCP handlers always have a valid session.")
 Maps to the Emacs-side `agent-shell-team--session-id'.  Used for
 WebSocket connections and API calls to the Python backend.")
 
+(defvar agent-shell-team--backend-project-id nil
+  "Backend project ID for the current project on the gang-of-none server.")
+
 (defvar-local agent-shell-team--agent-id nil
   "Backend agent ID.  Set for agents managed by the gang-of-none backend.")
 
@@ -810,6 +813,51 @@ Replaces ws:// with http:// and wss:// with https://."
     (replace-regexp-in-string "\\`ws://" "http://"
                               agent-shell-team-python-url)))
 
+(defun agent-shell-team--ensure-backend-project ()
+  "Ensure a project exists on the Python backend for the current directory.
+POST /api/projects is an upsert — if a project with the same root_path
+already exists, the backend returns the existing project.
+Returns the project ID string, or nil on failure.
+Idempotent — safe to call multiple times."
+  (when agent-shell-team--backend-project-id
+    (cl-return-from agent-shell-team--ensure-backend-project
+                    agent-shell-team--backend-project-id))
+  (let* ((project-root (directory-file-name
+                         (or (and (boundp 'doom-user-dir) doom-user-dir)
+                             default-directory)))
+         (project-name (file-name-nondirectory project-root))
+         (base-url (agent-shell-team--python-http-url))
+         (url-request-method "POST")
+         (url-request-extra-headers '(("Content-Type" . "application/json")))
+         (url-request-data (encode-coding-string
+                            (json-encode `((name . ,project-name)
+                                           (root_path . ,project-root)))
+                            'utf-8))
+         (buf (condition-case err
+                  (url-retrieve-synchronously
+                   (format "%s/api/projects" base-url) t nil 10)
+                (error
+                 (message "agent-shell-team: project upsert POST failed: %s"
+                          (error-message-string err))
+                 nil))))
+    (when buf
+      (unwind-protect
+          (with-current-buffer buf
+            (goto-char (point-min))
+            (when (re-search-forward "^$" nil t)
+              (forward-char 1)
+              (condition-case nil
+                  (let* ((resp (json-read))
+                         (pid (alist-get 'id resp)))
+                    (when pid
+                      (setq agent-shell-team--backend-project-id
+                            (if (stringp pid) pid (format "%s" pid)))
+                      (message "agent-shell-team: backend project: %s"
+                               agent-shell-team--backend-project-id)
+                      agent-shell-team--backend-project-id))
+                (error nil))))
+        (kill-buffer buf)))))
+
 (defun agent-shell-team--create-backend-session ()
   "POST to the Python backend to create a session.
 Returns the backend session ID string, or nil on failure.
@@ -821,7 +869,12 @@ On failure, logs a warning and resets `agent-shell-team-backend' to \\='elisp."
          (url-request-data (encode-coding-string
                             (json-encode `((project_root . ,project-root)))
                             'utf-8))
-         (api-url (format "%s/api/sessions" (agent-shell-team--python-http-url)))
+         (api-url (if agent-shell-team--backend-project-id
+                     (format "%s/api/projects/%s/sessions"
+                             (agent-shell-team--python-http-url)
+                             agent-shell-team--backend-project-id)
+                   ;; Fallback to deprecated endpoint
+                   (format "%s/api/sessions" (agent-shell-team--python-http-url))))
          (buffer (condition-case err
                      (url-retrieve-synchronously api-url t nil 10)
                    (error
@@ -3217,61 +3270,80 @@ Route the status update directly to the lead agent's queue."
 
 (defun agent-shell-team--auto-spawn-agent (session-id role)
   "Auto-spawn a new agent for ROLE in SESSION-ID.
-Devs get isolated mode (worktree).  Testers get neighbor mode when a
-devcontainer config exists (container provides isolation), otherwise isolated.
-Researchers get neighbor mode.
-Returns the new agent buffer."
-  ;; Pin default-directory to the main repo root so git commands in
-  ;; create-worktree always run from the correct context, not from
-  ;; an agent's worktree CWD.
+When the Python backend is active, delegates to the backend's spawnAgent
+RPC — the backend handles worktree creation, ACP session, and isolation.
+The Elisp side receives an `agent/spawned' WS event which creates the
+display buffer.
+
+In elisp mode, devs get isolated mode (worktree), testers get neighbor
+mode when a devcontainer config exists, researchers get neighbor mode.
+Returns the new agent buffer (elisp mode) or nil (python mode, async)."
   (message "[auto-spawn] Starting for role=%s session=%s" role session-id)
-  ;; Ensure HTTP MCP servers are running (idempotent)
-  (agent-shell-team--start-http-mcp-servers)
-  (let* ((default-directory (or (when-let ((lead-buf (agent-shell-team--get-lead session-id)))
-                                 (buffer-local-value 'default-directory lead-buf))
-                                (agent-shell-worktree--git-repo-root)
-                                default-directory))
-         (mode (cond
-                ;; Dev always gets a worktree for filesystem isolation
-                ((equal role "dev") "isolated")
-                ;; Tester gets neighbor mode when a devcontainer exists
-                ;; (the container provides isolation; worktree is redundant)
-                ((and (equal role "tester")
-                      (file-exists-p (expand-file-name
-                                      ".devcontainer/tester/devcontainer.json"
-                                      default-directory)))
-                 "neighbor")
-                ;; Tester without devcontainer still needs worktree isolation
-                ((equal role "tester") "isolated")
-                ;; Everything else (researcher, knowledge) → neighbor
-                (t "neighbor")))
-         worktree-path worktree-name directory)
-    (message "[auto-spawn] Mode for role=%s: %s (default-directory=%s)" role mode default-directory)
-    (pcase mode
-      ("isolated"
-       (message "[auto-spawn] Creating worktree for role=%s..." role)
-       (let ((wt (agent-shell-team--create-worktree session-id role)))
-         (message "[auto-spawn] Worktree created: path=%s name=%s" (car wt) (cdr wt))
-         (setq worktree-path (car wt)
-               worktree-name (cdr wt)
-               directory worktree-path)))
-      ("neighbor"
-       (message "[auto-spawn] Neighbor mode, using directory=%s" default-directory)
-       (setq directory default-directory)))
-    (message "[auto-spawn] Calling start-agent for role=%s mode=%s dir=%s" role mode directory)
-    (let ((buffer (agent-shell-team--start-agent
-                   session-id role mode directory worktree-path worktree-name
-                   :no-focus t)))
-      (with-current-buffer buffer
-        (unless (equal role "knowledge")
-          (setq agent-shell-team--ephemeral t)))
-      (agent-shell-team--start-drain-timer)
-      (agent-shell-team--log session-id
-       (format "Auto-spawned %s agent (%s mode%s) buffer=%s"
-               role mode
-               (if worktree-name (format ", worktree: %s" worktree-name) "")
-               (buffer-name buffer)))
-      buffer)))
+  (if (agent-shell-team-dispatch--python-p)
+      ;; Python backend — delegate spawning entirely
+      (progn
+        (message "[auto-spawn] Delegating to backend spawnAgent for role=%s" role)
+        (agent-shell-team-dispatch-spawn-agent
+         role
+         agent-shell-team--spawn-model-override
+         (lambda (result error)
+           (if error
+               (message "[auto-spawn] Backend spawnAgent error: %s" error)
+             (message "[auto-spawn] Backend spawnAgent result: %s" result)
+             (agent-shell-team--log session-id
+              (format "Backend spawned %s agent (result: %s)" role result)))))
+        ;; Return nil — the buffer is created asynchronously via agent/spawned event
+        nil)
+    ;; Elisp mode — spawn locally
+    ;; Pin default-directory to the main repo root so git commands in
+    ;; create-worktree always run from the correct context, not from
+    ;; an agent's worktree CWD.
+    (agent-shell-team--start-http-mcp-servers)
+    (let* ((default-directory (or (when-let ((lead-buf (agent-shell-team--get-lead session-id)))
+                                   (buffer-local-value 'default-directory lead-buf))
+                                  (agent-shell-worktree--git-repo-root)
+                                  default-directory))
+           (mode (cond
+                  ;; Dev always gets a worktree for filesystem isolation
+                  ((equal role "dev") "isolated")
+                  ;; Tester gets neighbor mode when a devcontainer exists
+                  ;; (the container provides isolation; worktree is redundant)
+                  ((and (equal role "tester")
+                        (file-exists-p (expand-file-name
+                                        ".devcontainer/tester/devcontainer.json"
+                                        default-directory)))
+                   "neighbor")
+                  ;; Tester without devcontainer still needs worktree isolation
+                  ((equal role "tester") "isolated")
+                  ;; Everything else (researcher, knowledge) → neighbor
+                  (t "neighbor")))
+           worktree-path worktree-name directory)
+      (message "[auto-spawn] Mode for role=%s: %s (default-directory=%s)" role mode default-directory)
+      (pcase mode
+        ("isolated"
+         (message "[auto-spawn] Creating worktree for role=%s..." role)
+         (let ((wt (agent-shell-team--create-worktree session-id role)))
+           (message "[auto-spawn] Worktree created: path=%s name=%s" (car wt) (cdr wt))
+           (setq worktree-path (car wt)
+                 worktree-name (cdr wt)
+                 directory worktree-path)))
+        ("neighbor"
+         (message "[auto-spawn] Neighbor mode, using directory=%s" default-directory)
+         (setq directory default-directory)))
+      (message "[auto-spawn] Calling start-agent for role=%s mode=%s dir=%s" role mode directory)
+      (let ((buffer (agent-shell-team--start-agent
+                     session-id role mode directory worktree-path worktree-name
+                     :no-focus t)))
+        (with-current-buffer buffer
+          (unless (equal role "knowledge")
+            (setq agent-shell-team--ephemeral t)))
+        (agent-shell-team--start-drain-timer)
+        (agent-shell-team--log session-id
+         (format "Auto-spawned %s agent (%s mode%s) buffer=%s"
+                 role mode
+                 (if worktree-name (format ", worktree: %s" worktree-name) "")
+                 (buffer-name buffer)))
+        buffer))))
 
 (defun agent-shell-team--try-assign-tasks ()
   "Try to assign queued tasks to idle agents.
@@ -4205,43 +4277,68 @@ When called from an existing team buffer:
     (when (agent-shell-team-dispatch--python-p)
       (require 'agent-shell-team-ws)
       (require 'agent-shell-team-events)
-      ;; Create a backend session first, then connect WS using the backend ID
+      ;; Ensure project exists, then create session and connect WS
+      (agent-shell-team--ensure-backend-project)
       (let ((backend-id (agent-shell-team--create-backend-session)))
         (when backend-id
-          (let ((ws-url (format "%s/ws/%s" agent-shell-team-python-url backend-id)))
+          (let ((ws-url (if agent-shell-team--backend-project-id
+                           (format "%s/ws/%s/%s" agent-shell-team-python-url
+                                   agent-shell-team--backend-project-id backend-id)
+                         (format "%s/ws/%s" agent-shell-team-python-url backend-id))))
             (agent-shell-team-ws-connect ws-url
                                          (lambda ()
                                            (message "agent-shell-team: WS connected for session %s (backend %s)"
                                                     (agent-shell-team--short-session-id session-id)
                                                     (agent-shell-team--short-session-id backend-id))))))))
 
-    ;; Determine working directory
-    (pcase mode
-      ("isolated"
-       (message "agent-shell-team: creating worktree for %s..." role)
-       (let ((wt (agent-shell-team--create-worktree session-id role)))
-         (setq worktree-path (car wt)
-               worktree-name (cdr wt)
-               directory worktree-path)
-         (message "agent-shell-team: worktree created: %s" worktree-name)))
-      ("neighbor"
-       (setq directory parent-dir)))
+    ;; Start the agent — backend or local
+    (if (agent-shell-team-dispatch--python-p)
+        ;; Python backend — delegate spawning entirely.
+        ;; The backend creates worktree + ACP session; we receive
+        ;; an agent/spawned WS event which creates the display buffer.
+        (progn
+          (message "agent-shell-team: delegating spawn to backend for role=%s" role)
+          (agent-shell-team-dispatch-spawn-agent
+           role nil
+           (lambda (result error)
+             (if error
+                 (message "agent-shell-team: backend spawnAgent error: %s" error)
+               (message "agent-shell-team: backend spawnAgent result: %s" result)
+               (agent-shell-team--log session-id
+                (format "Backend spawned %s agent (result: %s)" role result)))))
+          ;; Auto-show team sidebar for lead agent
+          (when (equal role "lead")
+            (when (fboundp 'my/team-sidebar--show)
+              (my/team-sidebar--show)))
+          (message "Team %s: %s agent spawn requested (backend)"
+                   (agent-shell-team--short-session-id session-id) role))
 
-    ;; Start the agent
-    (message "agent-shell-team: spawning %s agent..." role)
-    (let ((buffer (agent-shell-team--start-agent
-                   session-id role mode directory worktree-path worktree-name)))
-      ;; Start drain timer if we have team agents
-      (agent-shell-team--start-drain-timer)
-      ;; Switch to the new buffer
-      (switch-to-buffer buffer)
-      ;; Auto-show team sidebar for lead agent
-      (when (equal role "lead")
-        (when (fboundp 'my/team-sidebar--show)
-          (my/team-sidebar--show)))
-      (message "Team %s: %s agent started (%s mode)"
-               (agent-shell-team--short-session-id session-id)
-               role mode))))
+      ;; Elisp mode — spawn locally
+      ;; Determine working directory
+      (pcase mode
+        ("isolated"
+         (message "agent-shell-team: creating worktree for %s..." role)
+         (let ((wt (agent-shell-team--create-worktree session-id role)))
+           (setq worktree-path (car wt)
+                 worktree-name (cdr wt)
+                 directory worktree-path)
+           (message "agent-shell-team: worktree created: %s" worktree-name)))
+        ("neighbor"
+         (setq directory parent-dir)))
+      (message "agent-shell-team: spawning %s agent..." role)
+      (let ((buffer (agent-shell-team--start-agent
+                     session-id role mode directory worktree-path worktree-name)))
+        ;; Start drain timer if we have team agents
+        (agent-shell-team--start-drain-timer)
+        ;; Switch to the new buffer
+        (switch-to-buffer buffer)
+        ;; Auto-show team sidebar for lead agent
+        (when (equal role "lead")
+          (when (fboundp 'my/team-sidebar--show)
+            (my/team-sidebar--show)))
+        (message "Team %s: %s agent started (%s mode)"
+                 (agent-shell-team--short-session-id session-id)
+                 role mode)))))
 
 ;;; Team dashboard (transient menu)
 

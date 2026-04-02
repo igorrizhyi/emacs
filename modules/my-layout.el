@@ -342,25 +342,45 @@ If already in the lead buffer, toggle back to the previous buffer."
                  (agent-shell-team-dispatch--python-p))
         (require 'agent-shell-team-ws)
         (require 'agent-shell-team-events)
+        ;; Ensure project exists on backend before creating session
+        (agent-shell-team--ensure-backend-project)
         (let ((backend-id (agent-shell-team--create-backend-session)))
           (when backend-id
-            (let ((ws-url (format "%s/ws/%s" agent-shell-team-python-url backend-id)))
+            (let ((ws-url (if agent-shell-team--backend-project-id
+                             (format "%s/ws/%s/%s" agent-shell-team-python-url
+                                     agent-shell-team--backend-project-id backend-id)
+                           (format "%s/ws/%s" agent-shell-team-python-url backend-id))))
               (agent-shell-team-ws-connect ws-url
                                            (lambda ()
                                              (message "agent-shell-team: WS connected for session %s (backend %s)"
                                                       (agent-shell-team--short-session-id agent-shell-team--session-id)
                                                       (agent-shell-team--short-session-id backend-id))))))))
       (let* ((context-buffer (current-buffer))
-             (session-id agent-shell-team--session-id)
-             (buf (agent-shell-team--start-agent session-id "lead" "neighbor" default-directory nil nil)))
-        (message "agent-shell-team: start called, session=%s role=lead mode=neighbor"
-                 (agent-shell-team--short-session-id session-id))
-        (switch-to-buffer buf)
-        (agent-shell-team--start-drain-timer)
-        (unless (with-current-buffer context-buffer (derived-mode-p 'agent-shell-mode))
-          (when-let ((text (with-current-buffer context-buffer
-                            (agent-shell--context :shell-buffer buf))))
-            (agent-shell--insert-to-shell-buffer :text text :shell-buffer buf))))))))
+             (session-id agent-shell-team--session-id))
+        (if (and (fboundp 'agent-shell-team-dispatch--python-p)
+                 (agent-shell-team-dispatch--python-p))
+            ;; Python backend — delegate lead spawn to backend
+            (progn
+              (message "agent-shell-team: delegating lead spawn to backend, session=%s"
+                       (agent-shell-team--short-session-id session-id))
+              (agent-shell-team-dispatch-spawn-agent
+               "lead" nil
+               (lambda (result error)
+                 (if error
+                     (message "agent-shell-team: backend lead spawnAgent error: %s" error)
+                   (message "agent-shell-team: backend lead spawnAgent result: %s" result))))
+              (when (fboundp 'my/team-sidebar--show)
+                (my/team-sidebar--show)))
+          ;; Elisp mode — spawn locally
+          (let ((buf (agent-shell-team--start-agent session-id "lead" "neighbor" default-directory nil nil)))
+            (message "agent-shell-team: start called, session=%s role=lead mode=neighbor"
+                     (agent-shell-team--short-session-id session-id))
+            (switch-to-buffer buf)
+            (agent-shell-team--start-drain-timer)
+            (unless (with-current-buffer context-buffer (derived-mode-p 'agent-shell-mode))
+              (when-let ((text (with-current-buffer context-buffer
+                                (agent-shell--context :shell-buffer buf))))
+                (agent-shell--insert-to-shell-buffer :text text :shell-buffer buf))))))))))
 
 (defun my-layout-show-file-main-center (file-path &optional line-num)
   "Show FILE-PATH in main center window, optionally go to LINE-NUM."
