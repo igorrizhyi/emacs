@@ -38,6 +38,7 @@ def create_mcp_server(
     mcp = FastMCP(
         "gang-of-none",
         stateless_http=True,
+        streamable_http_path="/",
     )
 
     def _session_id() -> str:
