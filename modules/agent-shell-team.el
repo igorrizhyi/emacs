@@ -3306,12 +3306,6 @@ reached its max agent count, auto-spawn a new agent."
                          (format "[assign] Targeted agent %S gone for role %s, clearing target for reassignment" target role))
                         (plist-put task :target nil)
                         (push task remaining))
-                       ;; Untargeted dev tasks: leave in queue for explicit targeting
-                       ((equal role "dev")
-                        (agent-shell-team--log session-id
-                         (format "[assign] Untargeted dev task %s — leaving in queue for explicit targeting"
-                                 (plist-get task :request-id)))
-                        (push task remaining))
                        ;; Normal assignment: find any idle agent for this role
                        (t
                         (let* ((all-agents (agent-shell-team--get-session-agents session-id))
