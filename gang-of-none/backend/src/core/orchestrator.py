@@ -260,8 +260,8 @@ class Orchestrator:
                 continue
             except Exception:
                 raise  # non-retryable errors fail immediately
-
-        if actual_model is None:
+        else:
+            # for/else: all candidates exhausted without a successful break
             logger.error(
                 "agent.spawn_failed_all_models",
                 agent_id=agent.id,
