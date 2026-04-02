@@ -277,6 +277,114 @@ class Orchestrator:
         logger.info("agent.spawned", agent_id=agent.id, role=str(role), model=actual_model)
         return agent
 
+    async def spawn_agent(
+        self,
+        session_id: str,
+        role: AgentRole,
+        model: str | None = None,
+        system_prompt: str | None = None,
+        is_ephemeral: bool = True,
+        worktree_name: str | None = None,
+    ) -> Any | None:
+        """Public API: explicitly spawn an agent for a session.
+
+        Unlike auto-spawn in try_assign_tasks, this always creates a new agent
+        regardless of idle agent availability.
+        """
+        # Resolve project_root from session
+        project_root: str | None = None
+        if self.session_mgr is not None:
+            session = self.session_mgr.get_session(session_id)
+            if session is not None:
+                project_root = session.project_root
+
+        create = AgentCreate(role=role, session_id=session_id)
+        agent = self.agent_mgr.create_agent(create)
+        agent.ephemeral = is_ephemeral
+        if worktree_name is not None:
+            agent.worktree_name = worktree_name
+
+        # Create worktree for agent isolation
+        wt_info = None
+        if project_root is not None:
+            try:
+                wt_info = await self.worktree_mgr.create_worktree(
+                    agent.worktree_name or agent.id, project_root,
+                )
+                agent.worktree_path = wt_info.path
+                agent.worktree_name = wt_info.name
+            except Exception:
+                logger.exception("worktree.create_failed", agent_id=agent.id)
+                self.agent_mgr.dismiss_agent(agent.id)
+                return None
+
+        work_dir = wt_info.path if wt_info else (
+            f"{self.settings.worktree_subdir}/{agent.worktree_name}"
+        )
+
+        # Use provided system prompt or fall back to role default
+        if system_prompt is None:
+            system_prompt = self.prompt_mgr.get_prompt_for_role(role)
+
+        # Build isolation command prefix (bwrap / devcontainer)
+        command_prefix = build_command_prefix(
+            role=str(role.value),
+            worktree_path=agent.worktree_path,
+            project_root=project_root,
+            linuxbrew_path=self.settings.linuxbrew_path,
+        )
+
+        # Build ordered list of models to try (primary + fallbacks).
+        models_to_try = [model]
+        if model and model in self.settings.model_fallback_chains:
+            models_to_try.extend(self.settings.model_fallback_chains[model])
+
+        actual_model: str | None = None
+        for candidate_model in models_to_try:
+            try:
+                await self.acp_mgr.create_session(
+                    agent_id=agent.id,
+                    work_dir=work_dir,
+                    model=candidate_model,
+                    system_prompt=system_prompt,
+                    command_prefix=command_prefix,
+                )
+                actual_model = candidate_model
+                break
+            except RuntimeError as e:
+                if not is_retryable_error(str(e)):
+                    raise
+                logger.warning(
+                    "model.fallback",
+                    agent_id=agent.id,
+                    failed_model=candidate_model,
+                    error=str(e),
+                )
+                continue
+            except Exception:
+                raise
+        else:
+            logger.error(
+                "agent.spawn_failed_all_models",
+                agent_id=agent.id,
+                models_tried=models_to_try,
+            )
+            if wt_info is not None:
+                await self.worktree_mgr.remove_worktree(wt_info.path)
+            self.agent_mgr.dismiss_agent(agent.id)
+            return None
+
+        agent.model = actual_model
+        self.agent_mgr.mark_init_finished(agent.id)
+        logger.info(
+            "agent.spawned",
+            agent_id=agent.id,
+            role=str(role),
+            model=actual_model,
+            explicit=True,
+        )
+        return agent
+
     async def dismiss_agent(self, agent_id: str, force: bool = False) -> bool:
         """Dismiss an agent: stop ACP session, remove worktree, unregister."""
         agent = self.agent_mgr.get_agent(agent_id)
