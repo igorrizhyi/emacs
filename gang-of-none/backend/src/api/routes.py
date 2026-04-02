@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import structlog
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from .schemas import (
@@ -30,6 +31,8 @@ from ..models.task import TaskCreate
 
 if TYPE_CHECKING:
     from ..core.agent_manager import AgentManager
+
+logger = structlog.get_logger()
 
 router = APIRouter(prefix="/api")
 
@@ -88,6 +91,11 @@ async def create_session(body: SessionCreateRequest, request: Request):
     if session_factory is None:
         raise HTTPException(503, "Session creation not available")
     session = await session_factory(body.project_root)
+    logger.info(
+        "session.created_rest",
+        session_id=session.id,
+        project_root=session.project_root,
+    )
     return SessionResponse(
         id=session.id,
         project_root=session.project_root,
