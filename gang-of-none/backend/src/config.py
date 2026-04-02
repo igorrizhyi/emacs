@@ -1,15 +1,19 @@
+from pathlib import Path
+
 from pydantic import BaseModel, Field
+
+_BACKEND_DIR = Path(__file__).resolve().parent.parent
 
 
 class Settings(BaseModel):
     max_agents_per_role: int = 3
-    reports_dir: str = ".agent-shell/reports"
-    reviews_dir: str = ".agent-shell/reviews"
+    reports_dir: str = str(_BACKEND_DIR / "reports")
+    reviews_dir: str = str(_BACKEND_DIR / "reviews")
     acp_binary: str = "claude-agent-acp"
     default_model: str = ""
     drain_interval_seconds: float = 2.0
-    tasks_dir: str = ".agent-shell/tasks"
-    db_path: str = ".agent-shell/gang-of-none.db"
+    tasks_dir: str = str(_BACKEND_DIR / "tasks")
+    db_path: str = str(_BACKEND_DIR / "gang-of-none.db")
     worktree_subdir: str = ".claude/worktrees"
     bwrap_binary: str = "bwrap"
     devcontainer_binary: str = "devcontainer"
