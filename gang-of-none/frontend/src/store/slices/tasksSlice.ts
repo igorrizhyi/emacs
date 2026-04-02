@@ -1,48 +1,63 @@
-import { createSlice, PayloadAction } from '@reduxjs/toolkit';
+import { createAsyncThunk, createSlice, PayloadAction } from '@reduxjs/toolkit';
+import type { Task, TaskGroup } from '../types';
+import { fetchTasks as apiFetchTasks } from '@/services/api';
 
-export interface Task {
-  id: string;
-  role: string;
-  message: string;
-  status: 'pending' | 'in_progress' | 'finished' | 'blocked';
-  groupId?: string;
-  assignedAgentId?: string;
-}
-
-export interface TaskGroup {
-  groupId: string;
-  pending: string[];
-  completed: string[];
-}
+// ── State ──────────────────────────────────────────────────────────────
 
 interface TasksState {
-  queue: Task[];
+  byId: Record<string, Task>;
   groups: Record<string, TaskGroup>;
+  loading: boolean;
 }
 
 const initialState: TasksState = {
-  queue: [],
+  byId: {},
   groups: {},
+  loading: false,
 };
+
+// ── Async thunks ───────────────────────────────────────────────────────
+
+export const fetchTasks = createAsyncThunk(
+  'tasks/fetchAll',
+  async (sessionId: string) => apiFetchTasks(sessionId),
+);
+
+// ── Slice ──────────────────────────────────────────────────────────────
 
 const tasksSlice = createSlice({
   name: 'tasks',
   initialState,
   reducers: {
+    setTasks(state, action: PayloadAction<Task[]>) {
+      state.byId = {};
+      for (const t of action.payload) {
+        state.byId[t.id] = t;
+      }
+    },
     addTask(state, action: PayloadAction<Task>) {
-      state.queue.push(action.payload);
+      state.byId[action.payload.id] = action.payload;
+    },
+    updateTask(
+      state,
+      action: PayloadAction<{ id: string } & Partial<Omit<Task, 'id'>>>,
+    ) {
+      const task = state.byId[action.payload.id];
+      if (task) {
+        Object.assign(task, action.payload);
+      }
     },
     updateTaskStatus(
       state,
       action: PayloadAction<{ id: string; status: Task['status'] }>,
     ) {
-      const task = state.queue.find((t) => t.id === action.payload.id);
+      const task = state.byId[action.payload.id];
       if (task) {
         task.status = action.payload.status;
       }
     },
     removeTask(state, action: PayloadAction<string>) {
-      state.queue = state.queue.filter((t) => t.id !== action.payload);
+      delete state.byId[action.payload];
     },
     addGroup(state, action: PayloadAction<TaskGroup>) {
       state.groups[action.payload.groupId] = action.payload;
@@ -75,8 +90,31 @@ const tasksSlice = createSlice({
       }
     },
   },
+  extraReducers: (builder) => {
+    builder
+      .addCase(fetchTasks.pending, (state) => {
+        state.loading = true;
+      })
+      .addCase(fetchTasks.fulfilled, (state, action) => {
+        state.loading = false;
+        state.byId = {};
+        for (const t of action.payload) {
+          state.byId[t.id] = t;
+        }
+      })
+      .addCase(fetchTasks.rejected, (state) => {
+        state.loading = false;
+      });
+  },
 });
 
-export const { addTask, updateTaskStatus, removeTask, addGroup, updateGroupProgress } =
-  tasksSlice.actions;
+export const {
+  setTasks,
+  addTask,
+  updateTask,
+  updateTaskStatus,
+  removeTask,
+  addGroup,
+  updateGroupProgress,
+} = tasksSlice.actions;
 export default tasksSlice.reducer;

@@ -5,7 +5,7 @@ import { useSelector } from 'react-redux';
 import { useNavigation } from '@react-navigation/native';
 import type { DrawerNavigationProp } from '@react-navigation/drawer';
 import type { RootState } from '../store';
-import type { Session } from '../store/slices/sessionsSlice';
+import type { Session } from '../store/types';
 import type { RootDrawerParamList } from '../navigation/types';
 import { useUIStore } from '../store/uiStore';
 
@@ -134,7 +134,7 @@ function formatTime(iso: string): string {
 type NavProp = DrawerNavigationProp<RootDrawerParamList>;
 
 export default function ProjectSelectorScreen() {
-  const sessions = useSelector((state: RootState) => state.sessions);
+  const sessions = useSelector((state: RootState) => state.sessions.byId);
   const sessionList = Object.values(sessions);
   const navigation = useNavigation<NavProp>();
   const setActiveSession = useUIStore((s) => s.setActiveSession);

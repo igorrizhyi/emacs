@@ -1,26 +1,41 @@
-import { createSlice, PayloadAction } from '@reduxjs/toolkit';
+import { createAsyncThunk, createSlice, PayloadAction } from '@reduxjs/toolkit';
+import type { Agent } from '../types';
+import { fetchAgents as apiFetchAgents } from '@/services/api';
 
-export interface Agent {
-  id: string;
-  role: string;
-  status: 'idle' | 'busy' | 'offline' | 'error';
-  worktreeName: string;
-  sessionId: string;
-  currentTaskId: string | null;
-  reserved: boolean;
-  ephemeral: boolean;
-}
+// ── State ──────────────────────────────────────────────────────────────
 
 type AgentsState = Record<string, Agent>;
 
 const initialState: AgentsState = {};
 
+// ── Async thunks ───────────────────────────────────────────────────────
+
+export const fetchAgents = createAsyncThunk(
+  'agents/fetchAll',
+  async (sessionId: string) => apiFetchAgents(sessionId),
+);
+
+// ── Slice ──────────────────────────────────────────────────────────────
+
 const agentsSlice = createSlice({
   name: 'agents',
   initialState,
   reducers: {
-    addAgent(state, action: PayloadAction<Agent>) {
-      state[action.payload.id] = action.payload;
+    setAgents(state, action: PayloadAction<Agent[]>) {
+      const keys = Object.keys(state);
+      for (const k of keys) delete state[k];
+      for (const a of action.payload) {
+        state[a.id] = a;
+      }
+    },
+    updateAgent(
+      state,
+      action: PayloadAction<{ id: string } & Partial<Omit<Agent, 'id'>>>,
+    ) {
+      const agent = state[action.payload.id];
+      if (agent) {
+        Object.assign(agent, action.payload);
+      }
     },
     removeAgent(state, action: PayloadAction<string>) {
       delete state[action.payload];
@@ -44,8 +59,17 @@ const agentsSlice = createSlice({
       }
     },
   },
+  extraReducers: (builder) => {
+    builder.addCase(fetchAgents.fulfilled, (state, action) => {
+      const keys = Object.keys(state);
+      for (const k of keys) delete state[k];
+      for (const a of action.payload) {
+        state[a.id] = a;
+      }
+    });
+  },
 });
 
-export const { addAgent, removeAgent, updateAgentStatus, setCurrentTask } =
+export const { setAgents, updateAgent, removeAgent, updateAgentStatus, setCurrentTask } =
   agentsSlice.actions;
 export default agentsSlice.reducer;

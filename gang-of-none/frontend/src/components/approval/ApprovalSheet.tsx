@@ -16,7 +16,7 @@ import {
   toggleItem,
   updateNotes,
   updateRefine,
-  removeRequest,
+  removeApproval,
 } from '../../store/slices/approvalSlice';
 import { useUIStore } from '../../store/uiStore';
 import { websocketService } from '../../services/websocket';
@@ -197,7 +197,7 @@ export default function ApprovalSheet() {
   const visible = useUIStore((s) => s.approvalVisible);
   const setVisible = useUIStore((s) => s.setApprovalVisible);
 
-  const requests = useSelector((state: RootState) => state.approval.requests);
+  const requests = useSelector((state: RootState) => Object.values(state.approval.byId));
   const activeRequest = useSelector(selectActiveRequest);
   const pendingCount = useSelector(selectPendingCount);
 
@@ -206,7 +206,7 @@ export default function ApprovalSheet() {
   // Reset highlighted index when active request changes
   useEffect(() => {
     setHighlightedIndex(0);
-  }, [activeRequest?.id]);
+  }, [activeRequest?.requestId]);
 
   // ── Animation ────────────────────────────────────────────────────
 
@@ -228,7 +228,7 @@ export default function ApprovalSheet() {
   const handleToggleItem = useCallback(
     (itemId: string) => {
       if (!activeRequest) return;
-      dispatch(toggleItem({ requestId: activeRequest.id, itemId }));
+      dispatch(toggleItem({ requestId: activeRequest.requestId, itemId }));
     },
     [dispatch, activeRequest],
   );
@@ -238,7 +238,7 @@ export default function ApprovalSheet() {
 
     const selectedItems = activeRequest.items.filter((i) => i.selected);
     const response = {
-      requestId: activeRequest.id,
+      requestId: activeRequest.requestId,
       type: activeRequest.type,
       selected: selectedItems.map((i) => ({ id: i.id, label: i.label })),
       notes: activeRequest.notes,
@@ -249,7 +249,7 @@ export default function ApprovalSheet() {
       // Error handling done at WS level
     });
 
-    dispatch(removeRequest(activeRequest.id));
+    dispatch(removeApproval(activeRequest.requestId));
 
     // Hide sheet if no more requests
     if (requests.length <= 1) {
@@ -259,7 +259,7 @@ export default function ApprovalSheet() {
 
   const handleDismiss = useCallback(() => {
     if (!activeRequest) return;
-    dispatch(removeRequest(activeRequest.id));
+    dispatch(removeApproval(activeRequest.requestId));
     if (requests.length <= 1) {
       setVisible(false);
     }
@@ -268,7 +268,7 @@ export default function ApprovalSheet() {
   const handleNotesChange = useCallback(
     (text: string) => {
       if (!activeRequest) return;
-      dispatch(updateNotes({ requestId: activeRequest.id, notes: text }));
+      dispatch(updateNotes({ requestId: activeRequest.requestId, notes: text }));
     },
     [dispatch, activeRequest],
   );
@@ -276,7 +276,7 @@ export default function ApprovalSheet() {
   const handleRefineChange = useCallback(
     (text: string) => {
       if (!activeRequest) return;
-      dispatch(updateRefine({ requestId: activeRequest.id, refine: text }));
+      dispatch(updateRefine({ requestId: activeRequest.requestId, refine: text }));
     },
     [dispatch, activeRequest],
   );
@@ -305,12 +305,12 @@ export default function ApprovalSheet() {
           <LeftPanel>
             <ScrollView>
               {requests.map((req) => {
-                const isActive = req.id === activeRequest?.id;
+                const isActive = req.requestId === activeRequest?.requestId;
                 return (
                   <RequestRow
-                    key={req.id}
+                    key={req.requestId}
                     active={isActive}
-                    onPress={() => dispatch(setActiveRequest(req.id))}
+                    onPress={() => dispatch(setActiveRequest(req.requestId))}
                   >
                     <RequestRowInner>
                       <RequestIndicator>

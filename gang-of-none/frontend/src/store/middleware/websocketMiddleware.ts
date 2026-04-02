@@ -4,8 +4,8 @@ import { setConnectionStatus, setUrl } from '../slices/connectionSlice';
 import { updateTaskStatus } from '../slices/tasksSlice';
 import { updateGroupProgress } from '../slices/tasksSlice';
 import { updateAgentStatus } from '../slices/agentsSlice';
-import { addRequest } from '../slices/approvalSlice';
-import type { ApprovalRequest } from '../slices/approvalSlice';
+import { addApproval } from '../slices/approvalSlice';
+import type { ApprovalRequest } from '../types';
 
 // ── Action types the middleware listens for ─────────────────────────
 
@@ -105,15 +105,22 @@ export const websocketMiddleware: Middleware = (storeApi) => {
       unsubscribers.push(
         websocketService.onNotification('approval/request', (params) => {
           const p = params as ApprovalRequestPayload;
+          const rawItems = (p['items'] as Array<Record<string, unknown>>) ?? [];
           const request: ApprovalRequest = {
-            id: p.id,
+            requestId: p.id,
             title: (p['title'] as string) ?? 'Approval',
             type: (p['type'] as 'checklist' | 'choice') ?? 'checklist',
-            items: (p['items'] as ApprovalRequest['items']) ?? [],
+            items: rawItems.map((item) => ({
+              id: item['id'] as string,
+              label: item['label'] as string,
+              description: item['description'] as string | undefined,
+              defaultSelected: (item['default_selected'] as boolean) ?? false,
+              selected: (item['default_selected'] as boolean) ?? false,
+            })),
             description: p['description'] as string | undefined,
             timestamp: Date.now(),
           };
-          storeApi.dispatch(addRequest(request));
+          storeApi.dispatch(addApproval(request));
 
           // Also toggle approval sheet visible via Zustand
           try {
