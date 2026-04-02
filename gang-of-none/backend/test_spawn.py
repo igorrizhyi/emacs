@@ -212,12 +212,14 @@ async def run_ws_agent_test(
 
         agent_text_parts: list[str] = []
         for notif in notifications:
-            notif_method = notif.get("method", "?")
-            log("WS-NOTIF", notif_method)
-            # Accumulate text from message_chunk notifications
-            if "message_chunk" in notif_method:
-                params = notif.get("params", {})
-                chunk = params.get("text") or params.get("content") or ""
+            params = notif.get("params", {})
+            update = params.get("update", {})
+            session_update = update.get("sessionUpdate", "")
+            log("WS-NOTIF", f"{notif.get('method', '?')} -> {session_update}")
+            # Accumulate text from agent_message_chunk notifications
+            if session_update == "agent_message_chunk":
+                content = update.get("content", {})
+                chunk = content.get("text", "")
                 if chunk:
                     agent_text_parts.append(chunk)
 

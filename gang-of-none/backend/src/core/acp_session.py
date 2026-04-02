@@ -17,7 +17,7 @@ from .retry import retry_with_backoff
 
 logger = logging.getLogger(__name__)
 
-PROTOCOL_VERSION = "0.1.0"
+PROTOCOL_VERSION = 1
 CLIENT_NAME = "gang-of-none"
 CLIENT_VERSION = "0.1.0"
 
@@ -76,7 +76,7 @@ def make_session_prompt_request(
         "method": "session/prompt",
         "params": {
             "sessionId": session_id,
-            "prompt": list(message),  # ACP expects prompt as array of chars
+            "prompt": [{"type": "text", "text": message}],
         },
     }
 

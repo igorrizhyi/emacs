@@ -354,6 +354,22 @@ class Orchestrator:
             linuxbrew_path=self.settings.linuxbrew_path,
         )
 
+        # Build notification callback to broadcast agent output to WS clients
+        on_notification = None
+        if self.conn_mgr is not None:
+            _conn_mgr = self.conn_mgr
+            _agent_id = agent.id
+            _session_id = session_id
+
+            def on_notification(notification: dict[str, Any]) -> None:
+                method = notification.get("method", "")
+                params = notification.get("params", {})
+                asyncio.ensure_future(_conn_mgr.broadcast(_session_id, {
+                    "jsonrpc": "2.0",
+                    "method": f"agent/{method}",
+                    "params": {"agent_id": _agent_id, **params},
+                }))
+
         # Build ordered list of models to try (primary + fallbacks).
         models_to_try = [model]
         if model and model in self.settings.model_fallback_chains:
@@ -367,6 +383,7 @@ class Orchestrator:
                     work_dir=work_dir,
                     model=candidate_model,
                     system_prompt=system_prompt,
+                    on_notification=on_notification,
                     command_prefix=command_prefix,
                 )
                 actual_model = candidate_model
