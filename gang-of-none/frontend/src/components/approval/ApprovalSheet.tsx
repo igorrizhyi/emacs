@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { ScrollView, TouchableOpacity, Dimensions } from 'react-native';
+import { ScrollView } from 'react-native';
 import styled from 'styled-components/native';
 import Animated, {
   useSharedValue,
@@ -7,8 +7,7 @@ import Animated, {
   withTiming,
   Easing,
 } from 'react-native-reanimated';
-import { useSelector, useDispatch } from 'react-redux';
-import type { RootState } from '../../store';
+import { useAppSelector, useAppDispatch } from '../../store';
 import {
   selectActiveRequest,
   selectPendingCount,
@@ -19,7 +18,7 @@ import {
   removeApproval,
 } from '../../store/slices/approvalSlice';
 import { useUIStore } from '../../store/uiStore';
-import { websocketService } from '../../services/websocket';
+import { submitApproval, dismissApproval } from '../../services/api';
 import ChecklistView from './ChecklistView';
 import ChoiceView from './ChoiceView';
 
@@ -28,7 +27,6 @@ import ChoiceView from './ChoiceView';
 const SHEET_HEIGHT = 400;
 const LEFT_PANEL_WIDTH = 160;
 const ANIMATION_DURATION = 250;
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 // ── Styled components ───────────────────────────────────────────────
 
@@ -193,13 +191,13 @@ const EmptyText = styled.Text`
 // ── Component ───────────────────────────────────────────────────────
 
 export default function ApprovalSheet() {
-  const dispatch = useDispatch();
+  const dispatch = useAppDispatch();
   const visible = useUIStore((s) => s.approvalVisible);
   const setVisible = useUIStore((s) => s.setApprovalVisible);
 
-  const requests = useSelector((state: RootState) => Object.values(state.approval.byId));
-  const activeRequest = useSelector(selectActiveRequest);
-  const pendingCount = useSelector(selectPendingCount);
+  const requests = useAppSelector((state) => Object.values(state.approval.byId));
+  const activeRequest = useAppSelector(selectActiveRequest);
+  const pendingCount = useAppSelector(selectPendingCount);
 
   const [highlightedIndex, setHighlightedIndex] = useState(0);
 
@@ -233,33 +231,41 @@ export default function ApprovalSheet() {
     [dispatch, activeRequest],
   );
 
-  const handleSubmit = useCallback(() => {
+  const handleSubmit = useCallback(async () => {
     if (!activeRequest) return;
 
-    const selectedItems = activeRequest.items.filter((i) => i.selected);
-    const response = {
-      requestId: activeRequest.requestId,
-      type: activeRequest.type,
-      selected: selectedItems.map((i) => ({ id: i.id, label: i.label })),
-      notes: activeRequest.notes,
-      refine: activeRequest.refine,
-    };
+    const selectedIds = activeRequest.items
+      .filter((i) => i.selected)
+      .map((i) => i.id);
 
-    websocketService.sendRequest('approval/respond', response).catch(() => {
-      // Error handling done at WS level
-    });
+    try {
+      await submitApproval(activeRequest.requestId, {
+        selected_items: selectedIds,
+        notes: activeRequest.notes,
+        refine: activeRequest.refine ? true : undefined,
+      });
+    } catch {
+      // API errors are surfaced by the REST client
+    }
 
     dispatch(removeApproval(activeRequest.requestId));
 
-    // Hide sheet if no more requests
     if (requests.length <= 1) {
       setVisible(false);
     }
   }, [activeRequest, dispatch, requests.length, setVisible]);
 
-  const handleDismiss = useCallback(() => {
+  const handleDismiss = useCallback(async () => {
     if (!activeRequest) return;
+
+    try {
+      await dismissApproval(activeRequest.requestId);
+    } catch {
+      // API errors are surfaced by the REST client
+    }
+
     dispatch(removeApproval(activeRequest.requestId));
+
     if (requests.length <= 1) {
       setVisible(false);
     }
