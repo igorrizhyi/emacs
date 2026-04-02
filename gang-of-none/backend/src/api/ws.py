@@ -166,6 +166,36 @@ def build_rpc_router(
         })
         return {"success": True, "message": f"Options presented: {title}"}
 
+    async def handle_submit_approval(params: dict[str, Any]) -> dict[str, Any]:
+        approval_mgr = _get_approval_manager(websocket)
+        request_id = params.get("request_id", "")
+        selected_items = params.get("selected_items", [])
+        refine = params.get("refine")
+        notes = params.get("notes")
+
+        approval = approval_mgr.get_approval(request_id)
+        if approval is None:
+            return {"success": False, "message": f"Approval {request_id} not found"}
+
+        approval_mgr.submit(
+            request_id,
+            selected_items=selected_items,
+            refine=refine,
+            notes=notes,
+        )
+        return {"success": True, "message": f"Approval {request_id} submitted"}
+
+    async def handle_dismiss_approval(params: dict[str, Any]) -> dict[str, Any]:
+        approval_mgr = _get_approval_manager(websocket)
+        request_id = params.get("request_id", "")
+
+        approval = approval_mgr.get_approval(request_id)
+        if approval is None:
+            return {"success": False, "message": f"Approval {request_id} not found"}
+
+        approval_mgr.dismiss(request_id)
+        return {"success": True, "message": f"Approval {request_id} dismissed"}
+
     async def handle_list_pending_reviews(params: dict[str, Any]) -> dict[str, Any]:
         approval_mgr = _get_approval_manager(websocket)
         pending = approval_mgr.list_pending(session_id=session_id)
@@ -302,6 +332,8 @@ def build_rpc_router(
     rpc.register("dismissAgent", handle_dismiss_agent)
     rpc.register("sendNotification", handle_send_notification)
     rpc.register("presentOptions", handle_present_options)
+    rpc.register("submitApproval", handle_submit_approval)
+    rpc.register("dismissApproval", handle_dismiss_approval)
     rpc.register("listPendingReviews", handle_list_pending_reviews)
     rpc.register("promptAgent", handle_prompt_agent)
     rpc.register("cancelAgent", handle_cancel_agent)

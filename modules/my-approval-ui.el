@@ -19,6 +19,9 @@
 (declare-function agent-shell-team--queue-message "agent-shell-team")
 (declare-function agent-shell-team--start-drain-timer "agent-shell-team")
 (declare-function agent-shell-team--agent-status "agent-shell-team")
+(declare-function agent-shell-team-ws-call "agent-shell-team-ws"
+                  (method params callback))
+(declare-function agent-shell-team-ws-connected-p "agent-shell-team-ws")
 (defvar agent-shell-team--session-id)
 
 ;;; ---- Constants & Buffer Name ------------------------------------------------
@@ -811,12 +814,59 @@ For choice: radio-select current item (deselect all others)."
             (format "Title: %s\n" title)
             "«/TEAM»")))
 
+(defun my/approval--selected-item-ids (req)
+  "Return a list of selected item ID strings from REQ.
+For checklist type, returns IDs of checked items.
+For choice type, returns the single selected item's ID."
+  (let ((req-type (or (plist-get req :type) "checklist"))
+        (items (plist-get req :items)))
+    (cl-loop for item in items
+             when (if (equal req-type "checklist")
+                      (plist-get item :checked)
+                    (plist-get item :selected))
+             collect (plist-get item :id))))
+
+(defun my/approval--submit-via-ws (req)
+  "Send the approval submission for REQ to the backend via WebSocket."
+  (when (and (fboundp 'agent-shell-team-ws-connected-p)
+             (agent-shell-team-ws-connected-p))
+    (let ((request-id (plist-get req :request-id))
+          (selected (my/approval--selected-item-ids req))
+          (notes (plist-get req :notes))
+          (refine (plist-get req :refine)))
+      (agent-shell-team-ws-call
+       "submitApproval"
+       (list :request_id request-id
+             :selected_items (vconcat selected)
+             :notes (or notes :null)
+             :refine (or refine :null))
+       (lambda (_result error)
+         (when error
+           (message "approval-ui: WS submitApproval failed: %s"
+                    (plist-get error :message))))))))
+
+(defun my/approval--dismiss-via-ws (req)
+  "Send the approval dismissal for REQ to the backend via WebSocket."
+  (when (and (fboundp 'agent-shell-team-ws-connected-p)
+             (agent-shell-team-ws-connected-p))
+    (let ((request-id (plist-get req :request-id)))
+      (agent-shell-team-ws-call
+       "dismissApproval"
+       (list :request_id request-id)
+       (lambda (_result error)
+         (when error
+           (message "approval-ui: WS dismissApproval failed: %s"
+                    (plist-get error :message))))))))
+
 (defun my/approval-submit ()
   "Submit the current request's approval response to the lead."
   (interactive)
   (let ((req (my/approval--current-request)))
     (unless req
       (user-error "No request selected"))
+    ;; Submit to backend via WS (fire-and-forget with error logging)
+    (my/approval--submit-via-ws req)
+    ;; Also deliver to the lead agent via shell-maker / queue
     (let* ((msg (my/approval--format-submission req))
            (lead-buf (agent-shell-team--get-lead agent-shell-team--session-id)))
       (unless (buffer-live-p lead-buf)
@@ -892,6 +942,9 @@ remaining requests or an empty state."
   (interactive)
   (let ((req (my/approval--current-request)))
     (when req
+      ;; Dismiss on backend via WS
+      (my/approval--dismiss-via-ws req)
+      ;; Also notify the lead agent via shell-maker / queue
       (let* ((msg (my/approval--format-cancellation req))
              (lead-buf (agent-shell-team--get-lead agent-shell-team--session-id)))
         (when (buffer-live-p lead-buf)
