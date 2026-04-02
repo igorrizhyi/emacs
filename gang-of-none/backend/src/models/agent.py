@@ -26,6 +26,7 @@ class Agent(BaseModel):
     init_finished: bool = False
     current_task_id: str | None = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    model: str | None = None
     pid: int | None = None
 
 

@@ -16,6 +16,7 @@ from .agent_manager import AgentManager
 from .prompt_manager import PromptManager
 from .report_manager import ReportManager
 from .task_manager import TaskManager
+from .retry import is_retryable_error
 from .worktree_manager import WorktreeManager
 
 if TYPE_CHECKING:
@@ -221,23 +222,49 @@ class Orchestrator:
         # Build role-specific system prompt
         system_prompt = self.prompt_mgr.get_prompt_for_role(role)
 
-        try:
-            await self.acp_mgr.create_session(
+        # Build ordered list of models to try (primary + fallbacks).
+        models_to_try = [model]
+        if model and model in self.settings.model_fallback_chains:
+            models_to_try.extend(self.settings.model_fallback_chains[model])
+
+        actual_model: str | None = None
+        for candidate_model in models_to_try:
+            try:
+                await self.acp_mgr.create_session(
+                    agent_id=agent.id,
+                    work_dir=work_dir,
+                    model=candidate_model,
+                    system_prompt=system_prompt,
+                )
+                actual_model = candidate_model
+                break
+            except RuntimeError as e:
+                if not is_retryable_error(str(e)):
+                    raise
+                logger.warning(
+                    "model.fallback",
+                    agent_id=agent.id,
+                    failed_model=candidate_model,
+                    error=str(e),
+                )
+                continue
+            except Exception:
+                raise  # non-retryable errors fail immediately
+
+        if actual_model is None:
+            logger.error(
+                "agent.spawn_failed_all_models",
                 agent_id=agent.id,
-                work_dir=work_dir,
-                model=model,
-                system_prompt=system_prompt,
+                models_tried=models_to_try,
             )
-        except Exception:
-            logger.exception("agent.spawn_failed", agent_id=agent.id)
-            # Clean up worktree on ACP failure
             if wt_info is not None:
                 await self.worktree_mgr.remove_worktree(wt_info.path)
             self.agent_mgr.dismiss_agent(agent.id)
             return None
 
+        agent.model = actual_model
         self.agent_mgr.mark_init_finished(agent.id)
-        logger.info("agent.spawned", agent_id=agent.id, role=str(role))
+        logger.info("agent.spawned", agent_id=agent.id, role=str(role), model=actual_model)
         return agent
 
     async def dismiss_agent(self, agent_id: str, force: bool = False) -> bool:

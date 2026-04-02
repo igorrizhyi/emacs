@@ -11,3 +11,4 @@ class Settings(BaseModel):
     tasks_dir: str = ".agent-shell/tasks"
     db_path: str = ".agent-shell/gang-of-none.db"
     worktree_subdir: str = ".claude/worktrees"
+    model_fallback_chains: dict[str, list[str]] = {}
