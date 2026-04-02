@@ -143,7 +143,7 @@ Uses native `json-serialize' when available, falls back to `json-encode'."
 (defun agent-shell-team-ws--cancel-all-pending (reason)
   "Cancel all pending requests with REASON string."
   (maphash
-   (lambda (id entry)
+   (lambda (_id entry)
      (let ((callback (plist-get entry :callback))
            (timer (plist-get entry :timer)))
        (when timer (cancel-timer timer))
