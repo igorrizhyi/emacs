@@ -43,6 +43,15 @@
 (defvar agent-shell-team--model-id)
 (defvar agent-shell-team--request-to-session)
 (defvar agent-shell-team--task-groups)
+(defvar agent-shell-team--sessions)
+
+;;; Buffer-local variables for streaming agent output
+
+(defvar-local agent-shell-team-events--tool-calls (make-hash-table :test 'equal)
+  "Hash-table mapping toolCallId -> marker for in-progress tool call sections.")
+
+(defvar-local agent-shell-team-events--usage nil
+  "Plist of latest usage data from the agent session, for modeline display.")
 
 ;;; Hook point — the WS module sets this to our dispatcher
 
@@ -56,6 +65,23 @@ Set to `agent-shell-team-events--handle-notification' on module load.")
   "Extract KEY from PARAMS, trying both symbol and string forms."
   (or (map-elt params (intern key))
       (map-elt params key)))
+
+(defun agent-shell-team-events--find-agent-buffer (agent-id)
+  "Find the Emacs buffer for AGENT-ID by matching worktree-name across all sessions.
+Returns the buffer or nil if not found."
+  (when (and agent-id (boundp 'agent-shell-team--sessions))
+    (catch 'found
+      (maphash
+       (lambda (_session-id agents)
+         (dolist (agent agents)
+           (let ((buf (alist-get 'buffer agent))
+                 (wt-name (alist-get 'worktree-name agent)))
+             (when (and (buffer-live-p buf)
+                        wt-name
+                        (string= wt-name agent-id))
+               (throw 'found buf)))))
+       agent-shell-team--sessions)
+      nil)))
 
 ;;; Event handlers
 
@@ -187,6 +213,149 @@ PARAMS contains request_id, title, type, items, description."
      (or title "Approval Required")
      (or description (format "Approval request: %s" request-id)))))
 
+;;; Session update handlers — streaming agent output
+
+(defun agent-shell-team-events--insert-at-end (buffer text)
+  "Insert TEXT at the end of BUFFER, preserving point for non-visible windows."
+  (when (and (buffer-live-p buffer) (stringp text) (> (length text) 0))
+    (with-current-buffer buffer
+      (let ((inhibit-read-only t))
+        (save-excursion
+          (goto-char (point-max))
+          (insert text))
+        ;; Scroll windows showing this buffer to bottom
+        (dolist (win (get-buffer-window-list buffer nil t))
+          (set-window-point win (point-max)))))))
+
+(defun agent-shell-team-events--on-message-chunk (buffer update)
+  "Handle agent_message_chunk — append text to agent BUFFER.
+UPDATE contains content.text."
+  (let* ((content (agent-shell-team-events--get-param update "content"))
+         (text (and content (agent-shell-team-events--get-param content "text"))))
+    (agent-shell-team-events--insert-at-end buffer text)))
+
+(defun agent-shell-team-events--on-thought-chunk (buffer update)
+  "Handle agent_thought_chunk — append thinking text to agent BUFFER.
+UPDATE contains content.text.  Rendered with a dimmed face."
+  (let* ((content (agent-shell-team-events--get-param update "content"))
+         (text (and content (agent-shell-team-events--get-param content "text"))))
+    (when (and (stringp text) (> (length text) 0))
+      (agent-shell-team-events--insert-at-end
+       buffer (propertize text 'face 'shadow)))))
+
+(defun agent-shell-team-events--on-tool-call (buffer update)
+  "Handle tool_call — insert tool call header in BUFFER.
+UPDATE contains toolCallId, title, status, kind."
+  (let ((tool-id (agent-shell-team-events--get-param update "toolCallId"))
+        (title (or (agent-shell-team-events--get-param update "title") "Tool"))
+        (status (or (agent-shell-team-events--get-param update "status") "running")))
+    (when (buffer-live-p buffer)
+      (with-current-buffer buffer
+        (let ((inhibit-read-only t))
+          (save-excursion
+            (goto-char (point-max))
+            (let ((marker (point-marker)))
+              (insert (propertize (format "\n[%s] %s\n" title status)
+                                  'face 'font-lock-function-name-face))
+              ;; Track the marker for later updates
+              (when tool-id
+                (unless (hash-table-p agent-shell-team-events--tool-calls)
+                  (setq agent-shell-team-events--tool-calls
+                        (make-hash-table :test 'equal)))
+                (puthash tool-id marker
+                         agent-shell-team-events--tool-calls)))))))))
+
+(defun agent-shell-team-events--on-tool-call-update (buffer update)
+  "Handle tool_call_update — update existing tool call section in BUFFER.
+UPDATE contains toolCallId, status, content, title."
+  (let ((tool-id (agent-shell-team-events--get-param update "toolCallId"))
+        (status (agent-shell-team-events--get-param update "status"))
+        (content (agent-shell-team-events--get-param update "content"))
+        (title (agent-shell-team-events--get-param update "title")))
+    (when (buffer-live-p buffer)
+      (with-current-buffer buffer
+        (let ((inhibit-read-only t)
+              (marker (and tool-id
+                           (hash-table-p agent-shell-team-events--tool-calls)
+                           (gethash tool-id agent-shell-team-events--tool-calls))))
+          ;; If we have a tracked marker, update the header line
+          (when (and marker (marker-position marker))
+            (save-excursion
+              (goto-char marker)
+              (when (looking-at "\\[.*\\].*$")
+                (replace-match
+                 (propertize (format "[%s] %s"
+                                     (or title "Tool")
+                                     (or status "done"))
+                             'face 'font-lock-function-name-face)))))
+          ;; Append content at buffer end
+          (when (and (stringp content) (> (length content) 0))
+            (agent-shell-team-events--insert-at-end
+             buffer (propertize content 'face 'font-lock-comment-face)))
+          ;; Clean up completed tool calls
+          (when (and tool-id (member status '("done" "error")))
+            (when (hash-table-p agent-shell-team-events--tool-calls)
+              (remhash tool-id agent-shell-team-events--tool-calls))))))))
+
+(defun agent-shell-team-events--on-plan (buffer update)
+  "Handle plan — render plan entries in BUFFER.
+UPDATE contains entries array."
+  (let ((entries (agent-shell-team-events--get-param update "entries")))
+    (when (and entries (> (length entries) 0))
+      (with-current-buffer buffer
+        (let ((inhibit-read-only t))
+          (save-excursion
+            (goto-char (point-max))
+            (insert (propertize "\n--- Plan ---\n" 'face 'font-lock-keyword-face))
+            (seq-do
+             (lambda (entry)
+               (let ((content (or (agent-shell-team-events--get-param entry "content")
+                                  (format "%s" entry))))
+                 (insert (format "  - %s\n" content))))
+             entries)))))))
+
+(defun agent-shell-team-events--on-usage-update (buffer update)
+  "Handle usage_update — store usage data as buffer-local var in BUFFER.
+UPDATE contains usage plist."
+  (let ((usage (agent-shell-team-events--get-param update "usage")))
+    (when (and (buffer-live-p buffer) usage)
+      (with-current-buffer buffer
+        (setq agent-shell-team-events--usage usage)
+        (force-mode-line-update)))))
+
+(defun agent-shell-team-events--on-session-update (params)
+  "Handle agent/session/update — route streaming output to the agent buffer.
+PARAMS contains agent_id, sessionId, and update with sessionUpdate type."
+  (let* ((agent-id (agent-shell-team-events--get-param params "agent_id"))
+         (update (agent-shell-team-events--get-param params "update"))
+         (update-type (and update
+                           (agent-shell-team-events--get-param update "sessionUpdate")))
+         (buffer (agent-shell-team-events--find-agent-buffer agent-id)))
+    (if (not buffer)
+        (message "agent-shell-team-events: agent/session/update — no buffer for agent-id=%s type=%s"
+                 agent-id update-type)
+      (pcase update-type
+        ("agent_message_chunk"
+         (agent-shell-team-events--on-message-chunk buffer update))
+        ("agent_thought_chunk"
+         (agent-shell-team-events--on-thought-chunk buffer update))
+        ("tool_call"
+         (agent-shell-team-events--on-tool-call buffer update))
+        ("tool_call_update"
+         (agent-shell-team-events--on-tool-call-update buffer update))
+        ("plan"
+         (agent-shell-team-events--on-plan buffer update))
+        ("usage_update"
+         (agent-shell-team-events--on-usage-update buffer update))
+        ;; Silent/modeline-only updates
+        ("available_commands_update" nil)
+        ("current_mode_update"
+         (when (buffer-live-p buffer)
+           (with-current-buffer buffer (force-mode-line-update))))
+        (_
+         (message "agent-shell-team-events: unknown sessionUpdate type %S for agent %s"
+                  update-type agent-id))))))
+
 ;;; Main dispatcher
 
 (defun agent-shell-team-events--handle-notification (method params)
@@ -204,6 +373,8 @@ Called by the WS module for every incoming server notification."
      (agent-shell-team-events--on-agent-dismissed params))
     ("agent/statusChanged"
      (agent-shell-team-events--on-agent-status-changed params))
+    ("agent/session/update"
+     (agent-shell-team-events--on-session-update params))
     ("notification"
      (agent-shell-team-events--on-notification params))
     ("approval/request"
