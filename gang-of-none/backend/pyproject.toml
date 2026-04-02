@@ -13,6 +13,7 @@ pydantic = "^2.10"
 aiosqlite = "^0.20"
 aiofiles = "^24.1"
 structlog = "^24.4"
+mcp = {version = "^1.9", extras = ["cli"]}
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3"
