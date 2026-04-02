@@ -72,8 +72,6 @@
 (declare-function websocket-openp "websocket" (websocket))
 (declare-function agent-shell-team-ws-connect "agent-shell-team-ws" (url callback))
 (declare-function agent-shell-team-ws-disconnect "agent-shell-team-ws" ())
-(declare-function claude-code-mcp-handle-presentOptions "claude-code-mcp-tools" (params))
-(declare-function claude-code-mcp-handle-listPendingReviews "claude-code-mcp-tools" (params))
 
 ;;; Devcontainer command prefix
 
@@ -2838,13 +2836,41 @@ Extract title and message, then delegate to `agent-shell-team--notify'."
 
 (defun agent-shell-team--handle-present-options (raw-input)
   "Handle presentOptions MCP tool call with RAW-INPUT.
-Delegate to `claude-code-mcp-handle-presentOptions'."
-  (claude-code-mcp-handle-presentOptions raw-input))
+Parse params, create approval request, and show the approval UI."
+  (let ((request-id (cdr (assoc 'request_id raw-input)))
+        (title (cdr (assoc 'title raw-input)))
+        (type-str (cdr (assoc 'type raw-input)))
+        (items (cdr (assoc 'items raw-input)))
+        (description (cdr (assoc 'description raw-input))))
+    (if (fboundp 'my/approval--receive-request)
+        (progn
+          (my/approval--receive-request
+           (list :request-id request-id
+                 :title title
+                 :description (or description "")
+                 :type type-str
+                 :items (mapcar
+                         (lambda (item)
+                           (list :id (cdr (assoc 'id item))
+                                 :label (cdr (assoc 'label item))
+                                 :description (or (cdr (assoc 'description item)) "")
+                                 (if (equal type-str "checklist") :checked :selected)
+                                 (eq (cdr (assoc 'default_selected item)) t)))
+                         (append items nil))
+                 :notes ""
+                 :timestamp (float-time)))
+          `((success . t)
+            (message . ,(format "Options presented: %s" title))))
+      `((success . nil)
+        (message . "Approval UI module not loaded")))))
 
-(defun agent-shell-team--handle-list-pending-reviews (raw-input)
-  "Handle listPendingReviews MCP tool call with RAW-INPUT.
-Delegate to `claude-code-mcp-handle-listPendingReviews'."
-  (claude-code-mcp-handle-listPendingReviews raw-input))
+(defun agent-shell-team--handle-list-pending-reviews (_raw-input)
+  "Handle listPendingReviews MCP tool call.
+Scan the reviews directory for pending review markdown files."
+  (let* ((reviews-dir (expand-file-name ".agent-shell/reviews/" default-directory))
+         (files (when (file-directory-p reviews-dir)
+                  (directory-files reviews-dir nil "\\.md$" t))))
+    `((reviews . ,(or (vconcat files) [])))))
 
 ;;; Task queue — enqueue, assign, group tracking
 
