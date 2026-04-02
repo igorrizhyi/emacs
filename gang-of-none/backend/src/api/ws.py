@@ -186,6 +186,46 @@ def build_rpc_router(
         # Fallback: try to deliver via WebSocket if peer is in this instance
         return {"success": False, "message": f"Peer with pid={target_pid} not found"}
 
+    async def handle_prompt_agent(params: dict[str, Any]) -> dict[str, Any]:
+        conn_mgr, agent_mgr, _ = _get_managers(websocket)
+        acp_mgr = websocket.app.state.acp_session_manager
+        agent_id = params.get("agent_id", "")
+        message = params.get("message", "")
+
+        if not agent_id or not message:
+            return {"success": False, "message": "agent_id and message are required"}
+
+        acp_session = acp_mgr.get_session(agent_id)
+        if acp_session is None:
+            return {"success": False, "message": f"No ACP session for agent {agent_id}"}
+
+        agent_mgr.mark_busy(agent_id, "prompt-relay")
+
+        try:
+            response = await acp_session.prompt(message)
+        except Exception as exc:
+            agent_mgr.mark_idle(agent_id)
+            return {"success": False, "message": f"Prompt failed: {exc}"}
+
+        agent_mgr.mark_idle(agent_id)
+        return {"success": True, "response": response}
+
+    async def handle_cancel_agent(params: dict[str, Any]) -> dict[str, Any]:
+        _, agent_mgr, _ = _get_managers(websocket)
+        acp_mgr = websocket.app.state.acp_session_manager
+        agent_id = params.get("agent_id", "")
+
+        if not agent_id:
+            return {"success": False, "message": "agent_id is required"}
+
+        acp_session = acp_mgr.get_session(agent_id)
+        if acp_session is None:
+            return {"success": False, "message": f"No ACP session for agent {agent_id}"}
+
+        await acp_session.cancel()
+        agent_mgr.mark_idle(agent_id)
+        return {"success": True}
+
     async def handle_list_namespace_peers(params: dict[str, Any]) -> dict[str, Any]:
         ns_mgr = _get_namespace_manager(websocket)
         if ns_mgr is not None:
@@ -263,6 +303,8 @@ def build_rpc_router(
     rpc.register("sendNotification", handle_send_notification)
     rpc.register("presentOptions", handle_present_options)
     rpc.register("listPendingReviews", handle_list_pending_reviews)
+    rpc.register("promptAgent", handle_prompt_agent)
+    rpc.register("cancelAgent", handle_cancel_agent)
     rpc.register("messageNamespacePeer", handle_message_namespace_peer)
     rpc.register("listNamespacePeers", handle_list_namespace_peers)
 
