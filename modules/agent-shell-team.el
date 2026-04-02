@@ -60,6 +60,7 @@
               (parent (file-name-directory (directory-file-name common-dir))))
     (when (string-suffix-p "/.git/" (file-name-as-directory common-dir))
       parent)))
+(require 'agent-shell-team-dispatch)
 (require 'acp)
 (require 'dbus)
 (require 'transient)
@@ -69,6 +70,8 @@
 (declare-function agent-shell-namespace--format-peers-for-prompt "agent-shell-namespace")
 (declare-function claude-code-mcp-disconnect "claude-code-mcp-connection" (conn-key))
 (declare-function websocket-openp "websocket" (websocket))
+(declare-function agent-shell-team-ws-connect "agent-shell-team-ws" (url callback))
+(declare-function agent-shell-team-ws-disconnect "agent-shell-team-ws" ())
 
 ;;; Devcontainer command prefix
 
@@ -791,6 +794,14 @@ and stored in `agent-shell-team--emacs-mcp-http-port' and
         agent-shell-team--knowledge-mcp-http-port nil))
 
 (add-hook 'kill-emacs-hook #'agent-shell-team--stop-http-mcp-servers)
+
+(defun agent-shell-team--stop-ws ()
+  "Disconnect the Python backend WebSocket if active."
+  (when (and (agent-shell-team-dispatch--python-p)
+             (fboundp 'agent-shell-team-ws-disconnect))
+    (agent-shell-team-ws-disconnect)))
+
+(add-hook 'kill-emacs-hook #'agent-shell-team--stop-ws)
 
 ;;; Session ID generation
 
@@ -3753,7 +3764,11 @@ Also removes the git worktree if the agent was in isolated mode."
 Call this to cleanly unload the module or reset team state."
   (interactive)
   (remove-hook 'kill-buffer-hook #'agent-shell-team--buffer-kill-hook)
-  (agent-shell-team--stop-drain-timer))
+  (agent-shell-team--stop-drain-timer)
+  ;; Disconnect Python backend WebSocket if active
+  (when (agent-shell-team-dispatch--python-p)
+    (when (fboundp 'agent-shell-team-ws-disconnect)
+      (agent-shell-team-ws-disconnect))))
 
 (remove-hook 'kill-buffer-hook #'agent-shell-team--buffer-kill-hook)
 (add-hook 'kill-buffer-hook #'agent-shell-team--buffer-kill-hook)
@@ -4040,6 +4055,16 @@ When called from an existing team buffer:
 
     ;; Ensure HTTP MCP servers are running for container agents
     (agent-shell-team--start-http-mcp-servers)
+
+    ;; Connect to Python backend WebSocket if configured
+    (when (agent-shell-team-dispatch--python-p)
+      (require 'agent-shell-team-ws)
+      (require 'agent-shell-team-events)
+      (let ((ws-url (format "%s/ws/%s" agent-shell-team-python-url session-id)))
+        (agent-shell-team-ws-connect ws-url
+                                     (lambda ()
+                                       (message "agent-shell-team: WS connected for session %s"
+                                                (agent-shell-team--short-session-id session-id))))))
 
     ;; Determine working directory
     (pcase mode
