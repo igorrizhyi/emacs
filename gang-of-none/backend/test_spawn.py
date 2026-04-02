@@ -101,15 +101,21 @@ async def ws_rpc(
     method: str,
     params: dict,
     timeout: float,
-) -> dict:
+    collect_notifications: bool = False,
+) -> dict | tuple[dict, list[dict]]:
     """Send a JSON-RPC request over WS and wait for the matching response by id.
 
     Non-matching messages (notifications, other responses) are logged but skipped.
+
+    When *collect_notifications* is True, returns ``(response, notifications)``
+    where *notifications* is a list of JSON-RPC notification dicts received
+    before the response arrived.
     """
     request = {"jsonrpc": "2.0", "id": rpc_id, "method": method, "params": params}
     log("WS-RPC", f"→ {method}(id={rpc_id}) {json.dumps(params)}")
     await ws.send_json(request)
 
+    notifications: list[dict] = []
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         remaining = deadline - time.monotonic()
@@ -133,17 +139,27 @@ async def ws_rpc(
                     log("WS-RPC", f"← ERROR(id={rpc_id}): {json.dumps(data['error'])}")
                 else:
                     log("WS-RPC", f"← OK(id={rpc_id}): {json.dumps(data.get('result', {}))}")
+                if collect_notifications:
+                    return data, notifications
                 return data
 
             # It's a notification or different response — log and continue
             notif_method = data.get("method", "?")
             log("WS-RPC", f"  (notification: {notif_method})")
+            if collect_notifications and "id" not in data:
+                notifications.append(data)
         elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
             log("WS-RPC", f"Connection closed/error while waiting for id={rpc_id}")
-            return {"jsonrpc": "2.0", "id": rpc_id, "error": {"code": -1, "message": "WS closed"}}
+            err = {"jsonrpc": "2.0", "id": rpc_id, "error": {"code": -1, "message": "WS closed"}}
+            if collect_notifications:
+                return err, notifications
+            return err
 
     log("WS-RPC", f"Timeout waiting for response id={rpc_id}")
-    return {"jsonrpc": "2.0", "id": rpc_id, "error": {"code": -2, "message": "Timeout"}}
+    err = {"jsonrpc": "2.0", "id": rpc_id, "error": {"code": -2, "message": "Timeout"}}
+    if collect_notifications:
+        return err, notifications
+    return err
 
 
 # ---------------------------------------------------------------------------
@@ -175,16 +191,44 @@ async def run_ws_agent_test(
         return
     log("SPAWN", f"Agent spawned: agent_id={agent_id}")
 
-    # 2. promptAgent
+    # 2. promptAgent — collect WS notifications to capture streamed text
     prompt_msg = "What is 2+2? Reply with just the number."
     log("PROMPT", f"Sending prompt to agent {agent_id}: {prompt_msg!r}")
 
     prompt_timeout = min(timeout, 60)
-    resp = await ws_rpc(
+    resp, notifications = await ws_rpc(
         ws, 3, "promptAgent",
         {"agent_id": agent_id, "message": prompt_msg},
         prompt_timeout,
+        collect_notifications=True,
     )
+
+    # Display collected notifications
+    if notifications:
+        log("WS-NOTIF", f"Received {len(notifications)} notification(s) during promptAgent")
+        # Print full params of the first notification so we can inspect the structure
+        first = notifications[0]
+        log("WS-NOTIF", f"First notification params: {json.dumps(first.get('params', {}), indent=2)}")
+
+        agent_text_parts: list[str] = []
+        for notif in notifications:
+            notif_method = notif.get("method", "?")
+            log("WS-NOTIF", notif_method)
+            # Accumulate text from message_chunk notifications
+            if "message_chunk" in notif_method:
+                params = notif.get("params", {})
+                chunk = params.get("text") or params.get("content") or ""
+                if chunk:
+                    agent_text_parts.append(chunk)
+
+        if agent_text_parts:
+            full_text = "".join(agent_text_parts)
+            log("PROMPT", f"Agent said: {full_text}")
+        else:
+            log("PROMPT", "No text chunks found in notifications")
+    else:
+        log("WS-NOTIF", "No notifications received during promptAgent")
+
     if "error" in resp:
         err = resp["error"]
         # If timeout, try cancel
@@ -200,7 +244,7 @@ async def run_ws_agent_test(
     else:
         result = resp.get("result", {})
         answer = result.get("response") or result.get("content") or json.dumps(result)
-        log("PROMPT", f"Agent answer: {answer}")
+        log("PROMPT", f"Agent answer (RPC result): {answer}")
 
     # 3. dismissAgent
     log("DISMISS", f"Dismissing agent {agent_id}")
