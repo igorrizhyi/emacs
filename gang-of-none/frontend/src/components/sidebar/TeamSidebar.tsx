@@ -110,7 +110,7 @@ export default function TeamSidebar(props: TeamSidebarProps) {
   const handleAgentPress = useCallback(
     (agent: AgentData) => {
       setActiveAgent(agent.id);
-      props.navigation.navigate('Chat', { agentId: agent.id });
+      props.navigation.navigate('AgentChat', { agentId: agent.id });
     },
     [props.navigation, setActiveAgent],
   );

@@ -4,6 +4,7 @@ import { createDrawerNavigator } from '@react-navigation/drawer';
 import { theme } from '../theme';
 import { TeamSidebar } from '../components/sidebar';
 import ChatScreen from '../screens/ChatScreen';
+import AgentChatScreen from '../screens/AgentChatScreen';
 import ProjectSelectorScreen from '../screens/ProjectSelectorScreen';
 import NotificationsScreen from '../screens/NotificationsScreen';
 import SettingsScreen from '../screens/SettingsScreen';
@@ -43,6 +44,11 @@ export default function RootNavigator() {
         }}
       >
         <Drawer.Screen name="Chat" component={ChatScreen} />
+        <Drawer.Screen
+          name="AgentChat"
+          component={AgentChatScreen}
+          options={{ drawerItemStyle: { display: 'none' } }}
+        />
         <Drawer.Screen name="ProjectSelector" component={ProjectSelectorScreen} />
         <Drawer.Screen name="Notifications" component={NotificationsScreen} />
         <Drawer.Screen name="Settings" component={SettingsScreen} />
