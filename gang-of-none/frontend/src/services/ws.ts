@@ -10,7 +10,7 @@ import type {
   SuccessResponse,
   TaskCreate,
   TaskUpdate,
-} from './types';
+} from '@/store/types';
 
 // ── Connection state ────────────────────────────────────────────────────
 

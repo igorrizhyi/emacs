@@ -1,7 +1,7 @@
 import { createAsyncThunk, createSlice, PayloadAction } from '@reduxjs/toolkit';
 import type { ApprovalRequest } from '../types';
 import type { RootState } from '../index';
-import { fetchApprovals as apiFetchApprovals } from '@/services/api';
+import { getApprovals as apiFetchApprovals } from '@/services/api';
 
 // ── State ──────────────────────────────────────────────────────────────
 
@@ -19,7 +19,10 @@ const initialState: ApprovalState = {
 
 export const fetchApprovals = createAsyncThunk(
   'approval/fetchAll',
-  async () => apiFetchApprovals(),
+  async () => {
+    const res = await apiFetchApprovals();
+    return res.approvals;
+  },
 );
 
 // ── Slice ──────────────────────────────────────────────────────────────

@@ -15,7 +15,49 @@ import type {
   TaskCreate,
   TaskGroup,
   TaskListResponse,
-} from './types';
+} from '@/store/types';
+
+// ── Key mapping utilities ─────────────────────────────────────────────
+
+function snakeToCamel(s: string): string {
+  return s.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
+}
+
+function camelToSnake(s: string): string {
+  return s.replace(/[A-Z]/g, (c) => '_' + c.toLowerCase());
+}
+
+type AnyRecord = Record<string, unknown>;
+
+/** Recursively convert object keys from snake_case to camelCase. */
+function mapKeys<T>(obj: unknown): T {
+  if (Array.isArray(obj)) {
+    return obj.map((item) => mapKeys(item)) as unknown as T;
+  }
+  if (obj !== null && typeof obj === 'object' && !(obj instanceof Date)) {
+    const mapped: AnyRecord = {};
+    for (const [key, value] of Object.entries(obj as AnyRecord)) {
+      mapped[snakeToCamel(key)] = mapKeys(value);
+    }
+    return mapped as T;
+  }
+  return obj as T;
+}
+
+/** Recursively convert object keys from camelCase to snake_case. */
+function toSnake(obj: unknown): unknown {
+  if (Array.isArray(obj)) {
+    return obj.map((item) => toSnake(item));
+  }
+  if (obj !== null && typeof obj === 'object' && !(obj instanceof Date)) {
+    const mapped: AnyRecord = {};
+    for (const [key, value] of Object.entries(obj as AnyRecord)) {
+      mapped[camelToSnake(key)] = toSnake(value);
+    }
+    return mapped;
+  }
+  return obj;
+}
 
 // ── Configuration ──────────────────────────────────────────────────────
 
@@ -42,7 +84,8 @@ class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
+/** Raw request — returns snake_case JSON as-is. */
+async function requestRaw<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${baseUrl}${path}`, {
     ...options,
     headers: {
@@ -64,6 +107,17 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+/** Request with automatic snake_case → camelCase response mapping. */
+async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const raw = await requestRaw<unknown>(path, options);
+  return mapKeys<T>(raw);
+}
+
+/** JSON.stringify with camelCase → snake_case key conversion. */
+function jsonBody(obj: unknown): string {
+  return JSON.stringify(toSnake(obj));
+}
+
 // ── Sessions ───────────────────────────────────────────────────────────
 
 export function getSessions(): Promise<SessionListResponse> {
@@ -77,7 +131,7 @@ export function getSession(sessionId: string): Promise<Session> {
 export function createSession(req: SessionCreateRequest): Promise<Session> {
   return request('/sessions', {
     method: 'POST',
-    body: JSON.stringify(req),
+    body: jsonBody(req),
   });
 }
 
@@ -119,7 +173,7 @@ export function createTask(
 ): Promise<TaskListResponse> {
   return request(`/sessions/${sessionId}/tasks`, {
     method: 'POST',
-    body: JSON.stringify(req),
+    body: jsonBody(req),
   });
 }
 
@@ -143,7 +197,7 @@ export function submitApproval(
 ): Promise<SuccessResponse> {
   return request(`/approvals/${requestId}/submit`, {
     method: 'POST',
-    body: JSON.stringify(req),
+    body: jsonBody(req),
   });
 }
 
@@ -167,7 +221,7 @@ export function messagePeer(
 ): Promise<SuccessResponse> {
   return request(`/namespace/peers/${pid}/message`, {
     method: 'POST',
-    body: JSON.stringify(req),
+    body: jsonBody(req),
   });
 }
 
