@@ -11,6 +11,9 @@ class Settings(BaseModel):
     tasks_dir: str = ".agent-shell/tasks"
     db_path: str = ".agent-shell/gang-of-none.db"
     worktree_subdir: str = ".claude/worktrees"
+    bwrap_binary: str = "bwrap"
+    devcontainer_binary: str = "devcontainer"
+    linuxbrew_path: str = "/var/home/linuxbrew/.linuxbrew"
     retry_max_attempts: int = 3
     retry_backoff_seconds: list[float] = [2.0, 5.0, 15.0]
     model_fallback_chains: dict[str, list[str]] = Field(default_factory=lambda: {
