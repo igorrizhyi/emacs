@@ -5,6 +5,14 @@ import { updateTaskStatus, updateGroupProgress } from '../slices/tasksSlice';
 import { updateAgent, removeAgent } from '../slices/agentsSlice';
 import { addApproval, removeApproval } from '../slices/approvalSlice';
 import { addNotification } from '../slices/notificationsSlice';
+import {
+  appendMessageChunk,
+  appendThoughtChunk,
+  addToolCall,
+  updateToolCall,
+  setPlan,
+  addPermissionRequest,
+} from '../slices/messagesSlice';
 import type { ApprovalRequest, ApprovalItem } from '../types';
 
 // ── Action types the middleware listens for ─────────────────────────
@@ -188,6 +196,83 @@ export const websocketMiddleware: Middleware = (storeApi) => {
 
             case 'agent/dismissed': {
               storeApi.dispatch(removeAgent(p['id'] as string));
+              break;
+            }
+
+            case 'agent/session/update': {
+              const agentId = p['agent_id'] as string;
+              const update = p['update'] as Record<string, unknown> | undefined;
+              if (!agentId || !update) break;
+
+              const sessionUpdate = update['sessionUpdate'] as string;
+              switch (sessionUpdate) {
+                case 'agent_message_chunk': {
+                  const content = update['content'] as Record<string, unknown> | undefined;
+                  const text = content?.['text'] as string ?? '';
+                  storeApi.dispatch(appendMessageChunk({ agentId, text }));
+                  break;
+                }
+                case 'agent_thought_chunk': {
+                  const content = update['content'] as Record<string, unknown> | undefined;
+                  const text = content?.['text'] as string ?? '';
+                  storeApi.dispatch(appendThoughtChunk({ agentId, text }));
+                  break;
+                }
+                case 'tool_call': {
+                  const tc = update as Record<string, unknown>;
+                  storeApi.dispatch(
+                    addToolCall({
+                      agentId,
+                      toolCall: {
+                        toolCallId: tc['toolCallId'] as string,
+                        title: tc['title'] as string,
+                        status: tc['status'] as string,
+                        kind: tc['kind'] as string,
+                        rawInput: tc['rawInput'],
+                      },
+                    }),
+                  );
+                  break;
+                }
+                case 'tool_call_update': {
+                  const tcu = update as Record<string, unknown>;
+                  storeApi.dispatch(
+                    updateToolCall({
+                      agentId,
+                      toolCallId: tcu['toolCallId'] as string,
+                      update: {
+                        ...(tcu['status'] != null && { status: tcu['status'] as string }),
+                        ...(tcu['content'] !== undefined && { content: tcu['content'] }),
+                        ...(tcu['title'] != null && { title: tcu['title'] as string }),
+                      },
+                    }),
+                  );
+                  break;
+                }
+                case 'plan': {
+                  const entries = update['entries'] as Array<{ status: string; content: string }> ?? [];
+                  storeApi.dispatch(setPlan({ agentId, entries }));
+                  break;
+                }
+                default:
+                  break;
+              }
+              break;
+            }
+
+            case 'agent/session/request_permission': {
+              const agentId = p['agent_id'] as string;
+              if (!agentId) break;
+              storeApi.dispatch(
+                addPermissionRequest({
+                  agentId,
+                  request: {
+                    toolCallId: p['toolCallId'] as string,
+                    title: p['title'] as string,
+                    description: p['description'] as string,
+                  },
+                }),
+              );
               break;
             }
 
