@@ -72,6 +72,8 @@
 (declare-function websocket-openp "websocket" (websocket))
 (declare-function agent-shell-team-ws-connect "agent-shell-team-ws" (url callback))
 (declare-function agent-shell-team-ws-disconnect "agent-shell-team-ws" ())
+(declare-function claude-code-mcp-handle-presentOptions "claude-code-mcp-tools" (params))
+(declare-function claude-code-mcp-handle-listPendingReviews "claude-code-mcp-tools" (params))
 
 ;;; Devcontainer command prefix
 
@@ -2736,6 +2738,31 @@ agent's CLI process dies."
                  worktree-path))
         (delete-directory worktree-path t)
         (shell-command-to-string "git worktree prune 2>&1")))))) ;; close outer let + defun
+
+;;; MCP handler wrappers — thin delegates for dispatch layer
+
+(defun agent-shell-team--handle-send-notification (raw-input)
+  "Handle sendNotification MCP tool call with RAW-INPUT.
+Extract title and message, then delegate to `agent-shell-team--notify'."
+  (let ((title (or (map-elt raw-input 'title)
+                   (map-elt raw-input "title")
+                   "Notification"))
+        (message (or (map-elt raw-input 'message)
+                     (map-elt raw-input "message")
+                     "")))
+    (agent-shell-team--notify title message)
+    `((success . t)
+      (message . "Notification sent"))))
+
+(defun agent-shell-team--handle-present-options (raw-input)
+  "Handle presentOptions MCP tool call with RAW-INPUT.
+Delegate to `claude-code-mcp-handle-presentOptions'."
+  (claude-code-mcp-handle-presentOptions raw-input))
+
+(defun agent-shell-team--handle-list-pending-reviews (raw-input)
+  "Handle listPendingReviews MCP tool call with RAW-INPUT.
+Delegate to `claude-code-mcp-handle-listPendingReviews'."
+  (claude-code-mcp-handle-listPendingReviews raw-input))
 
 ;;; Task queue — enqueue, assign, group tracking
 
