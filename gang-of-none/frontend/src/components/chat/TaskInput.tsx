@@ -73,7 +73,7 @@ const InputRow = styled.View`
   align-items: flex-end;
 `;
 
-const Input = styled.TextInput`
+const Input = styled(TextInput)`
   flex: 1;
   font-family: ${({ theme }) => theme.fonts.mono};
   font-size: ${({ theme }) => theme.sizes.fontSize}px;

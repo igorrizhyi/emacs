@@ -23,10 +23,12 @@ export const WS_DISCONNECT = 'ws/disconnect' as const;
 export interface WsConnectAction {
   type: typeof WS_CONNECT;
   payload: { host: string; sessionId: string };
+  [key: string]: unknown;
 }
 
 export interface WsDisconnectAction {
   type: typeof WS_DISCONNECT;
+  [key: string]: unknown;
 }
 
 // Action creators

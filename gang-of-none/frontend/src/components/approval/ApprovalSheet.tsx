@@ -240,7 +240,7 @@ export default function ApprovalSheet() {
 
     try {
       await submitApproval(activeRequest.requestId, {
-        selected_items: selectedIds,
+        selectedItems: selectedIds,
         notes: activeRequest.notes,
         refine: activeRequest.refine ? true : undefined,
       });

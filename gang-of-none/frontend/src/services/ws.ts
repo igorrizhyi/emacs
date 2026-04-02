@@ -1,5 +1,5 @@
 import ReconnectingWebSocket from 'reconnecting-websocket';
-import { JSONRPCClient } from 'json-rpc-2.0';
+import { JSONRPCClient, JSONRPCResponse } from 'json-rpc-2.0';
 
 import type {
   DismissAgentParams,
@@ -60,7 +60,7 @@ class WsService {
 
       if ('id' in data && data.id != null) {
         // Response to our request — feed it to the JSONRPCClient
-        this.rpc?.receive(data);
+        this.rpc?.receive(data as unknown as JSONRPCResponse);
       } else if ('method' in data) {
         // Server-pushed notification
         for (const cb of this.notificationListeners) {
@@ -146,7 +146,7 @@ class WsService {
     if (!this.rpc) {
       return Promise.reject(new Error('WebSocket not connected'));
     }
-    return this.rpc.request(method, params);
+    return Promise.resolve(this.rpc.request(method, params));
   }
 
   private setStatus(next: ConnectionStatus): void {

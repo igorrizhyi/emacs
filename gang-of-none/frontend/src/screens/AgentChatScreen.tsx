@@ -108,7 +108,7 @@ const InputBar = styled.View`
   background-color: ${({ theme }) => theme.colors.surface};
 `;
 
-const StyledInput = styled.TextInput`
+const StyledInput = styled(RNTextInput)`
   flex: 1;
   font-family: ${({ theme }) => theme.fonts.mono};
   font-size: ${({ theme }) => theme.sizes.fontSize}px;

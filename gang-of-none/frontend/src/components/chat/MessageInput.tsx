@@ -16,7 +16,7 @@ const Container = styled.View`
   padding: ${({ theme }) => theme.spacing.sm}px;
 `;
 
-const Input = styled.TextInput`
+const Input = styled(TextInput)`
   flex: 1;
   font-family: ${({ theme }) => theme.fonts.mono};
   font-size: ${({ theme }) => theme.sizes.fontSize}px;
