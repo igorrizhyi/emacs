@@ -67,6 +67,8 @@
 (declare-function claude-code-mcp-handle-tasksPut "claude-code-mcp-tools" (params))
 (declare-function claude-code-mcp-handle-taskUpdate "claude-code-mcp-tools" (params))
 (declare-function claude-code-mcp-handle-dismissAgent "claude-code-mcp-tools" (params))
+(declare-function claude-code-mcp-handle-presentOptions "claude-code-mcp-tools" (params))
+(declare-function claude-code-mcp-handle-listPendingReviews "claude-code-mcp-tools" (params))
 (declare-function claude-code-mcp-handle-messageNamespacePeer "claude-code-mcp-tools" (params))
 
 ;;; JSON-RPC Communication

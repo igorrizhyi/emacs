@@ -1246,37 +1246,37 @@ PARAMS should include `target' (buffer name or worktree name)."
 
 (defun claude-code-mcp-handle-presentOptions (params)
   "Handle presentOptions MCP tool call.
-Stores approval request and shows the approval UI window."
+Dispatches through the backend layer (elisp or python)."
   (let ((request-id (cdr (assoc 'request_id params)))
         (title (cdr (assoc 'title params)))
         (type-str (cdr (assoc 'type params)))
-        (items (cdr (assoc 'items params)))
-        (description (cdr (assoc 'description params))))
+        (items (cdr (assoc 'items params))))
     (unless request-id (error "request_id is required"))
     (unless title (error "title is required"))
     (unless type-str (error "type is required"))
     (unless items (error "items is required"))
-    (if (fboundp 'my/approval--receive-request)
-        (progn
-          (my/approval--receive-request
-           (list :request-id request-id
-                 :title title
-                 :description (or description "")
-                 :type type-str
-                 :items (mapcar
-                         (lambda (item)
-                           (list :id (cdr (assoc 'id item))
-                                 :label (cdr (assoc 'label item))
-                                 :description (or (cdr (assoc 'description item)) "")
-                                 (if (equal type-str "checklist") :checked :selected)
-                                 (eq (cdr (assoc 'default_selected item)) t)))
-                         (append items nil))
-                 :notes ""
-                 :timestamp (float-time)))
-          `((success . t)
-            (message . ,(format "Options presented: %s" title))))
+    (if (fboundp 'agent-shell-team-dispatch-present-options)
+        (condition-case err
+            (agent-shell-team-dispatch-present-options params)
+          (error
+           `((success . nil)
+             (message . ,(error-message-string err)))))
       `((success . nil)
-        (message . "Approval UI module not loaded")))))
+        (message . "Team dispatch module not loaded")))))
+
+;;; List pending reviews handler
+
+(defun claude-code-mcp-handle-listPendingReviews (params)
+  "Handle listPendingReviews MCP tool call.
+Dispatches through the backend layer (elisp or python)."
+  (if (fboundp 'agent-shell-team-dispatch-list-pending-reviews)
+      (condition-case err
+          (agent-shell-team-dispatch-list-pending-reviews params)
+        (error
+         `((success . nil)
+           (message . ,(error-message-string err)))))
+    `((success . nil)
+      (message . "Team dispatch module not loaded"))))
 
 (provide 'claude-code-mcp-tools)
 ;;; claude-code-mcp-tools.el ends here
