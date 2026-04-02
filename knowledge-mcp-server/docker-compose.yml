@@ -13,7 +13,7 @@ services:
       - "6380:6379"
       - "3000:3000"
     volumes:
-      - falkordb_data:/data
+      - falkordb_data:/var/lib/falkordb/data
     restart: unless-stopped
 
 volumes:
