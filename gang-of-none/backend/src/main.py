@@ -143,6 +143,7 @@ async def lifespan(app: FastAPI):
         report_manager=app.state.report_manager,
         session_manager=app.state.session_manager,
         prompt_manager=app.state.prompt_manager,
+        connection_manager=app.state.connection_manager,
     )
 
     # Restore sessions from database
