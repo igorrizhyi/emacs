@@ -14,7 +14,7 @@ from ..core.agent_manager import AgentManager
 from ..core.approval_manager import ApprovalManager
 from ..core.namespace_manager import NamespaceManager
 from ..core.task_manager import TaskManager
-from ..models.enums import ApprovalType, TaskStatus
+from ..models.enums import AgentRole, ApprovalType, TaskStatus
 from ..models.task import TaskCreate, TaskUpdate
 
 logger = structlog.get_logger()
@@ -200,6 +200,63 @@ def build_rpc_router(
             }
         return {"success": True, "peers": [], "count": 0}
 
+    async def handle_spawn_agent(params: dict[str, Any]) -> dict[str, Any]:
+        orchestrator = _get_orchestrator(websocket)
+        if orchestrator is None:
+            return {"success": False, "message": "Orchestrator not initialized"}
+
+        role_str = params.get("role")
+        if not role_str:
+            return {"success": False, "message": "Missing required param: role"}
+        try:
+            role = AgentRole(role_str)
+        except ValueError:
+            return {"success": False, "message": f"Invalid role: {role_str}"}
+
+        model = params.get("model")
+        system_prompt = params.get("system_prompt")
+        is_ephemeral = params.get("is_ephemeral", True)
+        worktree_name = params.get("worktree_name")
+
+        try:
+            agent = await orchestrator.spawn_agent(
+                session_id=session_id,
+                role=role,
+                model=model,
+                system_prompt=system_prompt,
+                is_ephemeral=is_ephemeral,
+                worktree_name=worktree_name,
+            )
+        except Exception as exc:
+            logger.exception("ws.spawn_agent_failed", session_id=session_id)
+            return {"success": False, "message": str(exc)}
+
+        if agent is None:
+            return {"success": False, "message": "Agent spawn failed (all models exhausted or worktree error)"}
+
+        conn_mgr, _, _ = _get_managers(websocket)
+        await conn_mgr.broadcast(session_id, {
+            "jsonrpc": "2.0",
+            "method": "agent/spawned",
+            "params": {
+                "agent_id": agent.id,
+                "role": str(agent.role),
+                "worktree_name": agent.worktree_name,
+                "worktree_path": agent.worktree_path,
+                "status": str(agent.status),
+            },
+        })
+
+        return {
+            "success": True,
+            "agent_id": agent.id,
+            "role": str(agent.role),
+            "worktree_name": agent.worktree_name,
+            "worktree_path": agent.worktree_path,
+            "status": str(agent.status),
+        }
+
+    rpc.register("spawnAgent", handle_spawn_agent)
     rpc.register("tasksPut", handle_tasks_put)
     rpc.register("taskUpdate", handle_task_update)
     rpc.register("dismissAgent", handle_dismiss_agent)
