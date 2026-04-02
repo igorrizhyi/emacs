@@ -1033,8 +1033,9 @@ serialization of alists and hash tables."
         (maphash
          (lambda (_sid agents)
            (dolist (a agents)
-             (let ((buf (alist-get 'buffer a)))
-               (push (cons buf
+             (let* ((buf (alist-get 'buffer a))
+                    (name (if (bufferp buf) (buffer-name buf) (or buf ""))))
+               (push (cons name
                            (when (fboundp 'agent-shell-team--agent-status)
                              (agent-shell-team--agent-status buf)))
                      pairs))))

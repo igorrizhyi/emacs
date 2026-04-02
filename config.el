@@ -1233,7 +1233,7 @@
 (autoload 'agent-shell-team-status "agent-shell-team" "Team dashboard." t)
 (setq agent-shell-team-lead-quick-research-backend 'flash-lite)
 (setq agent-shell-team-max-agents-per-role 8)
-(customize-set-variable 'agent-shell-team-backend 'python)
+;; (customize-set-variable 'agent-shell-team-backend 'python)
 
 (defvar my/agent-shell-pending-worktree-path nil
   "Dynamic variable carrying worktree-path during agent-shell--start.
