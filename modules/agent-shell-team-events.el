@@ -33,6 +33,8 @@
 (declare-function agent-shell-team--get-session-agents "agent-shell-team"
                   (session-id))
 (declare-function my/team-sidebar--render "my-agent-shell-sidebar")
+(declare-function my/approval--receive-request "my-approval-ui"
+                  (request))
 
 ;; Variables from agent-shell-team we reference
 (defvar agent-shell-team--session-id)
@@ -145,19 +147,44 @@ PARAMS contains title, message."
       (agent-shell-team--notify title message-text))))
 
 (defun agent-shell-team-events--on-approval-request (params)
-  "Handle approval/request — route to approval UI.
+  "Handle approval/request — route to `my/approval--receive-request'.
 PARAMS contains request_id, title, type, items, description."
   (let ((request-id (agent-shell-team-events--get-param params "request_id"))
         (title (agent-shell-team-events--get-param params "title"))
-        (type (agent-shell-team-events--get-param params "type"))
+        (type-str (agent-shell-team-events--get-param params "type"))
         (items (agent-shell-team-events--get-param params "items"))
         (description (agent-shell-team-events--get-param params "description")))
-    ;; Approval UI is not yet implemented; log and notify
     (message "agent-shell-team-events: approval/request id=%s title=%s type=%s items=%d"
-             request-id title type (length items))
-    (agent-shell-team--notify
-     (or title "Approval Required")
-     (or description (format "Approval request: %s" request-id)))))
+             request-id title type-str (length items))
+    (if (fboundp 'my/approval--receive-request)
+        ;; Convert backend items (alists) to the plist format expected by the UI
+        (my/approval--receive-request
+         (list :request-id request-id
+               :title title
+               :description (or description "")
+               :type type-str
+               :items (mapcar
+                       (lambda (item)
+                         (let ((id (or (map-elt item 'id)
+                                       (map-elt item "id")))
+                               (label (or (map-elt item 'label)
+                                          (map-elt item "label")))
+                               (desc (or (map-elt item 'description)
+                                         (map-elt item "description") ""))
+                               (default-sel (or (map-elt item 'default_selected)
+                                                (map-elt item "default_selected"))))
+                           (list :id id
+                                 :label label
+                                 :description (or desc "")
+                                 (if (equal type-str "checklist") :checked :selected)
+                                 (eq default-sel t))))
+                       (append items nil))
+               :notes ""
+               :timestamp (float-time)))
+      ;; Fallback: desktop notification if approval UI not loaded
+      (agent-shell-team--notify
+       (or title "Approval Required")
+       (or description (format "Approval request: %s" request-id))))))
 
 ;;; Main dispatcher
 
