@@ -20,6 +20,8 @@ class Settings(BaseModel):
     linuxbrew_path: str = "/var/home/linuxbrew/.linuxbrew"
     retry_max_attempts: int = 3
     retry_backoff_seconds: list[float] = [2.0, 5.0, 15.0]
+    mcp_server_port: int = 8000
+    knowledge_mcp_url: str | None = None
     model_fallback_chains: dict[str, list[str]] = Field(default_factory=lambda: {
         "gemini-2.5-flash": ["gemini-2.5-flash-lite", "gemini-2.5-pro"],
     })

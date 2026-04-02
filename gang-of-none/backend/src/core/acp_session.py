@@ -45,11 +45,12 @@ def make_session_new_request(
     work_dir: str,
     model: str | None = None,
     system_prompt: str | None = None,
+    mcp_servers: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build session/new request."""
     params: dict[str, Any] = {
         "cwd": work_dir,
-        "mcpServers": [],
+        "mcpServers": mcp_servers or [],
     }
     meta: dict[str, Any] = {}
     if model:
@@ -94,6 +95,7 @@ def make_session_fork_request(
     request_id: int,
     session_id: str,
     work_dir: str,
+    mcp_servers: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build session/fork request."""
     return {
@@ -103,7 +105,7 @@ def make_session_fork_request(
         "params": {
             "sessionId": session_id,
             "cwd": work_dir,
-            "mcpServers": [],
+            "mcpServers": mcp_servers or [],
         },
     }
 
@@ -125,6 +127,7 @@ class ACPSession:
         on_notification: Callable[[dict[str, Any]], None] | None = None,
         backoff_seconds: list[float] | None = None,
         command_prefix: list[str] | None = None,
+        mcp_servers: list[dict[str, Any]] | None = None,
     ) -> None:
         self.agent_id = agent_id
         self.binary = binary
@@ -134,6 +137,7 @@ class ACPSession:
         self.on_notification = on_notification
         self.backoff_seconds = backoff_seconds if backoff_seconds is not None else [2.0, 5.0, 15.0]
         self.command_prefix = command_prefix or []
+        self.mcp_servers = mcp_servers or []
 
         self.process: asyncio.subprocess.Process | None = None
         self.session_id: str | None = None
@@ -168,7 +172,8 @@ class ACPSession:
             lambda: self._send_request(
                 "session/new",
                 lambda rid: make_session_new_request(
-                    rid, self.work_dir, self.model, self.system_prompt
+                    rid, self.work_dir, self.model, self.system_prompt,
+                    self.mcp_servers,
                 ),
             ),
             backoff_seconds=self.backoff_seconds,
@@ -232,7 +237,9 @@ class ACPSession:
             raise RuntimeError("Session not started")
         resp = await self._send_request(
             "session/fork",
-            lambda rid: make_session_fork_request(rid, self.session_id, self.work_dir),  # type: ignore[arg-type]
+            lambda rid: make_session_fork_request(
+                rid, self.session_id, self.work_dir, self.mcp_servers,  # type: ignore[arg-type]
+            ),
         )
         new_id = resp.get("sessionId")
         if not new_id:
@@ -426,6 +433,7 @@ class ACPSessionManager:
         system_prompt: str | None = None,
         on_notification: Callable[[dict[str, Any]], None] | None = None,
         command_prefix: list[str] | None = None,
+        mcp_servers: list[dict[str, Any]] | None = None,
     ) -> ACPSession:
         """Create and start a new ACP session."""
         if agent_id in self._sessions:
@@ -439,6 +447,7 @@ class ACPSessionManager:
             on_notification=on_notification,
             backoff_seconds=self.settings.retry_backoff_seconds,
             command_prefix=command_prefix,
+            mcp_servers=mcp_servers,
         )
         await session.start()
         self._sessions[agent_id] = session

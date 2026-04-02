@@ -55,6 +55,25 @@ class Orchestrator:
         self.conn_mgr = connection_manager
         self._drain_task: asyncio.Task[None] | None = None
 
+    def _build_mcp_servers(self) -> list[dict[str, Any]]:
+        """Build MCP server entries for spawned agents."""
+        servers: list[dict[str, Any]] = []
+        backend_url = f"http://127.0.0.1:{self.settings.mcp_server_port}/mcp"
+        servers.append({
+            "name": "backend",
+            "type": "http",
+            "url": backend_url,
+            "headers": {},
+        })
+        if self.settings.knowledge_mcp_url:
+            servers.append({
+                "name": "knowledge",
+                "type": "http",
+                "url": self.settings.knowledge_mcp_url,
+                "headers": {},
+            })
+        return servers
+
     # ── Drain loop ─────────────────────────────────────────────────
 
     async def start_drain_loop(self) -> None:
@@ -250,6 +269,9 @@ class Orchestrator:
                     "params": {"agent_id": _agent_id, **params},
                 }))
 
+        # Build MCP server entries for the spawned agent
+        mcp_servers = self._build_mcp_servers()
+
         # Build ordered list of models to try (primary + fallbacks).
         models_to_try = [model]
         if model and model in self.settings.model_fallback_chains:
@@ -265,6 +287,7 @@ class Orchestrator:
                     system_prompt=system_prompt,
                     on_notification=on_notification,
                     command_prefix=command_prefix,
+                    mcp_servers=mcp_servers,
                 )
                 actual_model = candidate_model
                 break
@@ -370,6 +393,9 @@ class Orchestrator:
                     "params": {"agent_id": _agent_id, **params},
                 }))
 
+        # Build MCP server entries for the spawned agent
+        mcp_servers = self._build_mcp_servers()
+
         # Build ordered list of models to try (primary + fallbacks).
         models_to_try = [model]
         if model and model in self.settings.model_fallback_chains:
@@ -385,6 +411,7 @@ class Orchestrator:
                     system_prompt=system_prompt,
                     on_notification=on_notification,
                     command_prefix=command_prefix,
+                    mcp_servers=mcp_servers,
                 )
                 actual_model = candidate_model
                 break

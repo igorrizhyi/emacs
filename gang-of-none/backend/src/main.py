@@ -8,6 +8,7 @@ from fastapi import FastAPI
 import structlog
 
 from .api.connection_manager import ConnectionManager
+from .api.mcp_server import create_mcp_server
 from .api.routes import router as rest_router
 from .api.ws import router as ws_router
 from .config import Settings
@@ -172,6 +173,19 @@ async def lifespan(app: FastAPI):
     except FileNotFoundError:
         logger.info("namespace.no_config", path=ns_config_path)
         app.state.namespace_config = None
+
+    # Create and mount MCP server
+    mcp_server = create_mcp_server(
+        task_manager=app.state.task_manager,
+        agent_manager=app.state.agent_manager,
+        approval_manager=app.state.approval_manager,
+        connection_manager=app.state.connection_manager,
+        orchestrator=app.state.orchestrator,
+        acp_session_manager=app.state.acp_session_manager,
+    )
+    app.state.mcp_server = mcp_server
+    mcp_http_app = mcp_server.streamable_http_app()
+    app.mount("/mcp", mcp_http_app)
 
     # Start the periodic drain loop
     await app.state.orchestrator.start_drain_loop()
