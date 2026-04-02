@@ -297,7 +297,8 @@ CALLBACK is called as (funcall callback RESULT ERROR) when the
 response arrives or the request times out.  RESULT is a plist on
 success; ERROR is a plist with :code and :message on failure."
   (if (not (agent-shell-team-ws-connected-p))
-      (funcall callback nil (list :code -32002 :message "Not connected"))
+      (when callback
+        (funcall callback nil (list :code -32002 :message "Not connected")))
     (let* ((id (cl-incf agent-shell-team-ws--next-id))
            (request `(:jsonrpc "2.0"
                       :id ,id

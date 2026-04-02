@@ -40,11 +40,18 @@
 (require 'vc)
 (require 'ediff)
 (require 'alert nil t)  ;; Optional dependency
-(require 'claude-code-terminal)
+;; claude-code-terminal uses evil-define-key at top level, which breaks
+;; batch byte-compile when evil is not pre-loaded.  Suppress load errors.
+(condition-case nil (require 'claude-code-terminal) (error nil))
 (require 'claude-code-mcp-protocol)  ;; For async request management
 (require 'cl-lib)
 
-(declare-function agent-shell-team--handle-tasks-put "agent-shell-team" (raw-input))
+(declare-function agent-shell-team-dispatch-tasks-put "agent-shell-team-dispatch"
+                  (raw-input &optional callback))
+(declare-function agent-shell-team-dispatch-task-update "agent-shell-team-dispatch"
+                  (raw-input &optional callback))
+(declare-function agent-shell-team-dispatch-dismiss-agent "agent-shell-team-dispatch"
+                  (raw-input &optional callback))
 
 ;;; Simple Enter-to-Capture MCP Command Execution
 ;; Instead of complex async output detection, user presses Enter to capture output
@@ -1192,12 +1199,12 @@ PARAMS should include a `tasks' array, each with `role' and `message'."
     (dolist (task (append tasks nil))  ;; convert vector to list
       (unless (cdr (assoc 'role task)) (error "Each task must have a role"))
       (unless (cdr (assoc 'message task)) (error "Each task must have a message")))
-    ;; Directly call the team handler to enqueue tasks
-    (if (not (fboundp 'agent-shell-team--handle-tasks-put))
+    ;; Dispatch through the backend layer (elisp or python)
+    (if (not (fboundp 'agent-shell-team-dispatch-tasks-put))
         `((success . nil)
-          (message . "Team module not loaded"))
+          (message . "Team dispatch module not loaded"))
       (condition-case err
-          (let ((enqueued (agent-shell-team--handle-tasks-put params)))
+          (let ((enqueued (agent-shell-team-dispatch-tasks-put params)))
             `((success . t)
               (message . ,(format "Queued %d task(s)" (or enqueued 0)))))
         (error
@@ -1205,8 +1212,6 @@ PARAMS should include a `tasks' array, each with `role' and `message'."
            (message . ,(error-message-string err))))))))
 
 ;;; Task update handler
-
-(declare-function agent-shell-team--handle-task-update "agent-shell-team" (raw-input))
 
 (defun claude-code-mcp-handle-taskUpdate (params)
   "Handle taskUpdate MCP tool call.  Routes task status update to lead."
@@ -1216,10 +1221,10 @@ PARAMS should include a `tasks' array, each with `role' and `message'."
     (unless request-id (error "request_id is required"))
     (unless status (error "status is required"))
     (unless content (error "content is required"))
-    ;; Directly call team handler
+    ;; Dispatch through the backend layer (elisp or python)
     (let ((delivered
-           (when (fboundp 'agent-shell-team--handle-task-update)
-             (agent-shell-team--handle-task-update params))))
+           (when (fboundp 'agent-shell-team-dispatch-task-update)
+             (agent-shell-team-dispatch-task-update params))))
       `((success . ,(if delivered t :json-false))
         (message . ,(if delivered
                         (format "Task update delivered for %s" request-id)
@@ -1227,17 +1232,15 @@ PARAMS should include a `tasks' array, each with `role' and `message'."
 
 ;;; Dismiss agent handler
 
-(declare-function agent-shell-team--handle-dismiss-agent "agent-shell-team" (raw-input))
-
 (defun claude-code-mcp-handle-dismissAgent (params)
   "Handle dismissAgent MCP tool call.  Dismiss a team agent by target name.
 PARAMS should include `target' (buffer name or worktree name)."
   (let ((target (cdr (assoc 'target params))))
     (unless target (error "target is required"))
-    (if (fboundp 'agent-shell-team--handle-dismiss-agent)
-        (agent-shell-team--handle-dismiss-agent params)
+    (if (fboundp 'agent-shell-team-dispatch-dismiss-agent)
+        (agent-shell-team-dispatch-dismiss-agent params)
       `((success . nil)
-        (message . "agent-shell-team not loaded")))))
+        (message . "Team dispatch module not loaded")))))
 
 ;;; Present options handler
 
