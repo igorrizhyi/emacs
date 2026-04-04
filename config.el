@@ -860,6 +860,14 @@
   "Context-aware Enter behavior: go to definition except in special buffers."
   (interactive)
   (cond
+   ;; In server-mode agent buffers (shell-maker), always submit
+   ((and (derived-mode-p 'comint-mode)
+         (bound-and-true-p shell-maker--config))
+    (when (evil-normal-state-p)
+      (goto-char (point-max))
+      (evil-insert-state))
+    (call-interactively #'shell-maker-submit))
+
    ;; In insert state, always do regular newline
    ((evil-insert-state-p)
     (newline))
@@ -919,6 +927,9 @@
       "<backtab>" #'evilem-motion-find-char-backward  ; Find char backward
       "S" #'diff-hl-show-hunk  ; Show diff hunk with S
       "U" #'evil-redo)  ; Redo with U (undo is u)
+
+;; Insert-mode Enter for shell-maker is set in agent-shell-team-events.el
+;; (via evil-local-set-key in the agent/spawned handler)
 
 ;; Global C-1 to open dired in current directory (override numeric arg)
 (define-key global-map (kbd "C-1") nil)  ; Unbind numeric arg

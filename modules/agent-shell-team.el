@@ -819,9 +819,8 @@ POST /api/projects is an upsert — if a project with the same root_path
 already exists, the backend returns the existing project.
 Returns the project ID string, or nil on failure.
 Idempotent — safe to call multiple times."
-  (when agent-shell-team--backend-project-id
-    (cl-return-from agent-shell-team--ensure-backend-project
-                    agent-shell-team--backend-project-id))
+  (if agent-shell-team--backend-project-id
+      agent-shell-team--backend-project-id
   (let* ((project-root (directory-file-name
                          (or (and (boundp 'doom-user-dir) doom-user-dir)
                              default-directory)))
@@ -856,7 +855,7 @@ Idempotent — safe to call multiple times."
                                agent-shell-team--backend-project-id)
                       agent-shell-team--backend-project-id))
                 (error nil))))
-        (kill-buffer buf)))))
+        (kill-buffer buf))))))
 
 (defun agent-shell-team--create-backend-session ()
   "POST to the Python backend to create a session.

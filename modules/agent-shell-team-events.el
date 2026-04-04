@@ -37,6 +37,11 @@
 (declare-function my/team-sidebar--render "my-agent-shell-sidebar")
 (declare-function my/approval--receive-request "my-approval-ui"
                   (request))
+(declare-function make-shell-maker-config "shell-maker")
+(declare-function shell-maker-start "shell-maker"
+                  (config &optional no-focus welcome-function new-session buffer-name mode-line-name))
+(declare-function agent-shell-team-dispatch-prompt-agent "agent-shell-team-dispatch"
+                  (agent-id message &optional callback))
 
 ;; Variables from agent-shell-team we reference
 (defvar agent-shell-team--session-id)
@@ -55,6 +60,9 @@
 (defvar-local agent-shell-team-events--usage nil
   "Plist of latest usage data from the agent session, for modeline display.")
 
+(defvar-local agent-shell-team-events--pending-finish nil
+  "Closure to call when the agent turn completes (shell-maker :finish-output).")
+
 ;;; Hook point — the WS module sets this to our dispatcher
 
 (defvar agent-shell-team-ws-notification-handler nil
@@ -64,8 +72,9 @@ Set to `agent-shell-team-events--handle-notification' on module load.")
 ;;; Internal helpers
 
 (defun agent-shell-team-events--get-param (params key)
-  "Extract KEY from PARAMS, trying both symbol and string forms."
-  (or (map-elt params (intern key))
+  "Extract KEY from PARAMS, trying keyword, symbol, and string forms."
+  (or (plist-get params (intern (concat ":" key)))
+      (map-elt params (intern key))
       (map-elt params key)))
 
 (defun agent-shell-team-events--find-agent-buffer (agent-id)
@@ -107,11 +116,14 @@ PARAMS contains group_id and completed (list of request IDs)."
         (when session-id
           (agent-shell-team--notify-group-complete session-id group-id group))))))
 
+(defvar-local agent-shell-team--server-mode-p nil
+  "Non-nil when this buffer is backed by the Python backend.")
+
 (defun agent-shell-team-events--on-agent-spawned (params)
-  "Handle agent/spawned — create a display-only buffer and register it.
+  "Handle agent/spawned — create an interactive buffer and register it.
 PARAMS contains agent_id, session_id, role, worktree_path, worktree_name, model.
-In server mode the backend manages the ACP subprocess; this buffer is only
-for rendering WS notifications (tool calls, messages, status updates)."
+In server mode the backend manages the ACP subprocess.  The buffer uses
+`shell-maker' for interactive input, routing to `promptAgent' WS RPC."
   (let ((session-id (agent-shell-team-events--get-param params "session_id"))
         (role (agent-shell-team-events--get-param params "role"))
         (worktree-path (agent-shell-team-events--get-param params "worktree_path"))
@@ -121,20 +133,52 @@ for rendering WS notifications (tool calls, messages, status updates)."
     (when (and session-id role)
       (let* ((wt-name (or worktree-name agent-id))
              (buf-name (agent-shell-team--buffer-name session-id role wt-name))
-             (buffer (get-buffer-create buf-name)))
+             ;; Capture agent-id for the closure
+             (agent-id-copy agent-id)
+             ;; Create shell-maker config with promptAgent as the execute-command
+             (config (make-shell-maker-config
+                      :name "agent-server"
+                      :prompt "agent> "
+                      :execute-command
+                      (lambda (command shell)
+                        ;; Store :finish-output to call when agent turn completes.
+                        ;; Primary trigger: promptAgent RPC callback.
+                        ;; Backup trigger: agent/statusChanged → idle.
+                        (let ((shell-buf (map-elt shell :buffer)))
+                          (setq-local agent-shell-team-events--pending-finish
+                                      (map-elt shell :finish-output))
+                          (agent-shell-team-dispatch-prompt-agent
+                           agent-id-copy
+                           command
+                           (lambda (result error)
+                             (when error
+                               (message "promptAgent error for %s: %s"
+                                        agent-id-copy error))
+                             ;; Finish output when RPC response arrives
+                             (when (and shell-buf (buffer-live-p shell-buf))
+                               (with-current-buffer shell-buf
+                                 (when agent-shell-team-events--pending-finish
+                                   (funcall agent-shell-team-events--pending-finish
+                                            (not error))
+                                   (setq agent-shell-team-events--pending-finish
+                                         nil))))))))))
+             (buffer (shell-maker-start config t nil nil buf-name)))
         (message "agent-shell-team-events: agent/spawned id=%s role=%s model=%s buffer=%s"
                  agent-id role (or model "default") buf-name)
         ;; Register in team session roster (mode "server" = backend-managed)
         (agent-shell-team--register-agent session-id buffer role "server"
                                           worktree-path wt-name)
-        ;; Set additional buffer-local variables for server-mode agents
+        ;; Set buffer-local variables for server-mode agents
         (with-current-buffer buffer
           (setq agent-shell-team--session-id session-id
                 agent-shell-team--agent-id agent-id
-                agent-shell-team--init-finished-p t)
+                agent-shell-team--init-finished-p t
+                agent-shell-team--server-mode-p t)
           (when model
             (setq agent-shell-team--model-id model))
-          (read-only-mode 1))
+          ;; Bind Enter in evil insert mode to shell-maker-submit
+          (evil-local-set-key 'insert (kbd "RET") #'shell-maker-submit)
+          (evil-local-set-key 'insert (kbd "<return>") #'shell-maker-submit))
         ;; Store agent-id in the roster alist entry for lookup by dismissed handler
         (let* ((agents (agent-shell-team--get-session-agents session-id))
                (entry (cl-find buffer agents
@@ -180,6 +224,15 @@ PARAMS contains agent_id, status, session_id, current_task_id."
     (when agent-id
       (message "agent-shell-team-events: agent/statusChanged id=%s status=%s"
                agent-id status)
+      ;; When agent becomes idle, finish the shell-maker output cycle
+      ;; so a new prompt appears.
+      (when (equal status "idle")
+        (let ((buffer (agent-shell-team-events--find-agent-buffer agent-id)))
+          (when (and buffer (buffer-live-p buffer))
+            (with-current-buffer buffer
+              (when agent-shell-team-events--pending-finish
+                (funcall agent-shell-team-events--pending-finish t)
+                (setq agent-shell-team-events--pending-finish nil))))))
       ;; Refresh sidebar if visible
       (when-let ((sidebar-buf (get-buffer " *team-sidebar*")))
         (when (get-buffer-window sidebar-buf)
@@ -374,6 +427,10 @@ PARAMS contains agent_id, sessionId, and update with sessionUpdate type."
          (agent-shell-team-events--on-plan buffer update))
         ("usage_update"
          (agent-shell-team-events--on-usage-update buffer update))
+        ("new_message_start"
+         (when (buffer-live-p buffer)
+           (with-current-buffer buffer
+             (setq-local agent-shell-team--new-message-pending t))))
         ;; Silent/modeline-only updates
         ("available_commands_update" nil)
         ("current_mode_update"
@@ -382,6 +439,68 @@ PARAMS contains agent_id, sessionId, and update with sessionUpdate type."
         (_
          (message "agent-shell-team-events: unknown sessionUpdate type %S for agent %s"
                   update-type agent-id))))))
+
+;;; Additional event handlers (gang-of-none spec)
+
+(defvar-local agent-shell-team--new-message-pending nil
+  "Non-nil when the next message chunk should start a new message bubble.")
+
+(defvar-local agent-shell-team--pending-permission nil
+  "Plist of the current pending permission request, or nil.")
+
+(defun agent-shell-team-events--on-task-created (params)
+  "Handle task/created — log new task creation.
+PARAMS is the full task object."
+  (let ((request-id (agent-shell-team-events--get-param params "request_id"))
+        (role (agent-shell-team-events--get-param params "role")))
+    (message "agent-shell-team-events: task/created request_id=%s role=%s"
+             request-id role)))
+
+(defun agent-shell-team-events--on-agent-respawned (params)
+  "Handle agent/respawned — update or create agent buffer.
+PARAMS contains agent_id, role, status, worktree_name, worktree_path."
+  (let ((agent-id (agent-shell-team-events--get-param params "agent_id"))
+        (role (agent-shell-team-events--get-param params "role"))
+        (status (agent-shell-team-events--get-param params "status"))
+        (worktree-name (agent-shell-team-events--get-param params "worktree_name"))
+        (worktree-path (agent-shell-team-events--get-param params "worktree_path")))
+    (message "agent-shell-team-events: agent/respawned id=%s status=%s" agent-id status)
+    (let ((buffer (agent-shell-team-events--find-agent-buffer agent-id)))
+      (if buffer
+          ;; Agent buffer exists — just update status
+          (when (buffer-live-p buffer)
+            (with-current-buffer buffer
+              (force-mode-line-update)))
+        ;; No buffer — create one (reuse spawned handler logic)
+        (agent-shell-team-events--on-agent-spawned params)))))
+
+(defun agent-shell-team-events--on-permission-request (params)
+  "Handle agent/session/request_permission — show permission prompt.
+PARAMS contains agent_id and request (with toolCallId, title, description)."
+  (let* ((agent-id (agent-shell-team-events--get-param params "agent_id"))
+         (request (agent-shell-team-events--get-param params "request"))
+         (title (and request (agent-shell-team-events--get-param request "title")))
+         (description (and request (agent-shell-team-events--get-param request "description")))
+         (buffer (agent-shell-team-events--find-agent-buffer agent-id)))
+    (message "agent-shell-team-events: permission request for agent %s: %s" agent-id title)
+    (when (and buffer (buffer-live-p buffer))
+      (with-current-buffer buffer
+        (setq-local agent-shell-team--pending-permission
+                    (list :agent-id agent-id
+                          :request request
+                          :title title
+                          :description description))
+        (agent-shell-team-events--insert-at-end
+         buffer
+         (format "\n⚠ Permission requested: %s\n  %s\n"
+                 (or title "unknown")
+                 (or description "")))))))
+
+(defun agent-shell-team-events--on-approval-cancelled (params)
+  "Handle approval/cancelled — log cancellation.
+PARAMS contains request_id."
+  (let ((request-id (agent-shell-team-events--get-param params "request_id")))
+    (message "agent-shell-team-events: approval/cancelled request_id=%s" request-id)))
 
 ;;; Main dispatcher
 
@@ -406,6 +525,14 @@ Called by the WS module for every incoming server notification."
      (agent-shell-team-events--on-notification params))
     ("approval/request"
      (agent-shell-team-events--on-approval-request params))
+    ("approval/cancelled"
+     (agent-shell-team-events--on-approval-cancelled params))
+    ("task/created"
+     (agent-shell-team-events--on-task-created params))
+    ("agent/respawned"
+     (agent-shell-team-events--on-agent-respawned params))
+    ("agent/session/request_permission"
+     (agent-shell-team-events--on-permission-request params))
     (_
      (message "agent-shell-team-events: unknown method %S" method))))
 

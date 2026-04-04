@@ -261,5 +261,86 @@ Optional CALLBACK receives the result (python mode only)."
           (agent-shell-team--auto-spawn-agent session-id role)))
       (when callback (funcall callback '((success . t)) nil)))))
 
+(defun agent-shell-team-dispatch-prompt-agent (agent-id message &optional callback)
+  "Dispatch promptAgent — send MESSAGE to backend-managed AGENT-ID.
+Optional CALLBACK receives (result error)."
+  (if (agent-shell-team-dispatch--python-p)
+      (progn
+        (agent-shell-team-dispatch--log "promptAgent")
+        (agent-shell-team-dispatch--ws-require)
+        (agent-shell-team-ws-call "promptAgent"
+                                   `((agent_id . ,agent-id)
+                                     (message . ,message))
+                                   callback))
+    (let ((err '((success . :json-false)
+                 (message . "promptAgent requires python backend"))))
+      (when callback (funcall callback err nil))
+      err)))
+
+(defun agent-shell-team-dispatch-cancel-agent (agent-id &optional callback)
+  "Dispatch cancelAgent — cancel running AGENT-ID.
+Optional CALLBACK receives (result error)."
+  (if (agent-shell-team-dispatch--python-p)
+      (progn
+        (agent-shell-team-dispatch--log "cancelAgent")
+        (agent-shell-team-dispatch--ws-require)
+        (agent-shell-team-ws-call "cancelAgent"
+                                   `((agent_id . ,agent-id))
+                                   callback))
+    (let ((err '((success . :json-false)
+                 (message . "cancelAgent requires python backend"))))
+      (when callback (funcall callback err nil))
+      err)))
+
+(defun agent-shell-team-dispatch-respawn-agent (agent-id &optional callback)
+  "Dispatch respawnAgent — respawn dead AGENT-ID.
+Optional CALLBACK receives (result error)."
+  (if (agent-shell-team-dispatch--python-p)
+      (progn
+        (agent-shell-team-dispatch--log "respawnAgent")
+        (agent-shell-team-dispatch--ws-require)
+        (agent-shell-team-ws-call "respawnAgent"
+                                   `((agent_id . ,agent-id))
+                                   callback))
+    (let ((err '((success . :json-false)
+                 (message . "respawnAgent requires python backend"))))
+      (when callback (funcall callback err nil))
+      err)))
+
+(defun agent-shell-team-dispatch-submit-approval
+    (request-id selected-items &optional refine notes callback)
+  "Dispatch submitApproval — submit user response for REQUEST-ID.
+SELECTED-ITEMS is a list of selected item IDs.
+Optional REFINE and NOTES are strings.
+Optional CALLBACK receives (result error)."
+  (if (agent-shell-team-dispatch--python-p)
+      (progn
+        (agent-shell-team-dispatch--log "submitApproval")
+        (agent-shell-team-dispatch--ws-require)
+        (let ((params `((request_id . ,request-id)
+                        (selected_items . ,selected-items)
+                        ,@(when refine `((refine . ,refine)))
+                        ,@(when notes `((notes . ,notes))))))
+          (agent-shell-team-ws-call "submitApproval" params callback)))
+    (let ((err '((success . :json-false)
+                 (message . "submitApproval requires python backend"))))
+      (when callback (funcall callback err nil))
+      err)))
+
+(defun agent-shell-team-dispatch-dismiss-approval (request-id &optional callback)
+  "Dispatch dismissApproval — cancel approval REQUEST-ID.
+Optional CALLBACK receives (result error)."
+  (if (agent-shell-team-dispatch--python-p)
+      (progn
+        (agent-shell-team-dispatch--log "dismissApproval")
+        (agent-shell-team-dispatch--ws-require)
+        (agent-shell-team-ws-call "dismissApproval"
+                                   `((request_id . ,request-id))
+                                   callback))
+    (let ((err '((success . :json-false)
+                 (message . "dismissApproval requires python backend"))))
+      (when callback (funcall callback err nil))
+      err)))
+
 (provide 'agent-shell-team-dispatch)
 ;;; agent-shell-team-dispatch.el ends here
