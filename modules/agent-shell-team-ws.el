@@ -168,6 +168,9 @@ Uses native `json-serialize' when available, falls back to `json-encode'."
             (error-obj (plist-get msg :error))
             (result (plist-get msg :result))
             (params (plist-get msg :params)))
+        ;; DEBUG: trace every incoming frame
+        (message "agent-shell-team-ws: FRAME id=%s method=%s handler=%s"
+                 id method (if agent-shell-team-ws-notification-handler "set" "nil"))
         (cond
          ;; Response to a pending request (has id, matches pending)
          ((and id (gethash id agent-shell-team-ws--pending))
@@ -177,9 +180,10 @@ Uses native `json-serialize' when available, falls back to `json-encode'."
           (if agent-shell-team-ws-notification-handler
               (condition-case err
                   (funcall agent-shell-team-ws-notification-handler method params)
-                (error
+                ((error quit)
                  (message "agent-shell-team-ws: notification handler error for %s: %s"
-                          method (error-message-string err))))
+                          method (if (eq (car err) 'quit) "quit signal"
+                                   (error-message-string err)))))
             (message "agent-shell-team-ws: unhandled server notification: %s" method)))
          ;; Error response with id but no pending callback
          ((and id error-obj)
@@ -259,7 +263,7 @@ Uses native `json-serialize' when available, falls back to `json-encode'."
 (defun agent-shell-team-ws-connect (url callback)
   "Open a WebSocket connection to URL.
 CALLBACK is called with no arguments once the connection is open.
-URL should be like `ws://localhost:8000/ws/{session-id}'."
+URL should be like `ws://localhost:8000/ws/{project-id}'."
   (when agent-shell-team-ws--connection
     (agent-shell-team-ws-disconnect))
   (agent-shell-team-ws--cancel-reconnect)

@@ -121,7 +121,7 @@ elisp handler signature.  Optional CALLBACK receives the result."
       (progn
         (agent-shell-team-dispatch--log "agent/create")
         (agent-shell-team-dispatch--ws-require)
-        (let ((params `((session_id . ,session-id)
+        (let ((params `((project_id . ,session-id)
                         (buffer . ,(if (bufferp buffer) (buffer-name buffer) buffer))
                         (role . ,role)
                         (mode . ,mode)

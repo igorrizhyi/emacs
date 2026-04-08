@@ -42,6 +42,14 @@
                   (config &optional no-focus welcome-function new-session buffer-name mode-line-name))
 (declare-function agent-shell-team-dispatch-prompt-agent "agent-shell-team-dispatch"
                   (agent-id message &optional callback))
+;; agent-shell-ui — collapsible section system (works in any buffer)
+(declare-function agent-shell-ui-mode "agent-shell-ui" (&optional arg))
+(declare-function agent-shell-ui-make-fragment-model "agent-shell-ui"
+                  (&rest args))
+(declare-function agent-shell-ui-update-fragment "agent-shell-ui"
+                  (model &rest args))
+(declare-function agent-shell--make-status-kind-label "agent-shell-styles"
+                  (&rest args))
 
 ;; Variables from agent-shell-team we reference
 (defvar agent-shell-team--session-id)
@@ -121,15 +129,27 @@ PARAMS contains group_id and completed (list of request IDs)."
 
 (defun agent-shell-team-events--on-agent-spawned (params)
   "Handle agent/spawned — create an interactive buffer and register it.
-PARAMS contains agent_id, session_id, role, worktree_path, worktree_name, model.
+PARAMS contains agent_id, project_id (or legacy session_id), role,
+worktree_path, worktree_name, model.
 In server mode the backend manages the ACP subprocess.  The buffer uses
 `shell-maker' for interactive input, routing to `promptAgent' WS RPC."
-  (let ((session-id (agent-shell-team-events--get-param params "session_id"))
+  (let ((session-id (or (agent-shell-team-events--get-param params "session_id")
+                        (agent-shell-team-events--get-param params "project_id")
+                        (bound-and-true-p agent-shell-team--session-id)))
         (role (agent-shell-team-events--get-param params "role"))
         (worktree-path (agent-shell-team-events--get-param params "worktree_path"))
         (worktree-name (agent-shell-team-events--get-param params "worktree_name"))
         (model (agent-shell-team-events--get-param params "model"))
         (agent-id (agent-shell-team-events--get-param params "agent_id")))
+    (message "agent-shell-team-events: on-agent-spawned ENTER id=%s role=%s session=%s"
+             agent-id role session-id)
+    ;; Normalize master_lead → lead for buffer naming and UI
+    (when (equal role "master_lead")
+      (setq role "lead"))
+    ;; Guard: skip if buffer already exists for this agent-id (prevents duplicates
+    ;; when both RPC callback and broadcast notification fire)
+    (if (and agent-id (agent-shell-team-events--find-agent-buffer agent-id))
+        (message "agent-shell-team-events: on-agent-spawned SKIP duplicate id=%s" agent-id)
     (when (and session-id role)
       (let* ((wt-name (or worktree-name agent-id))
              (buf-name (agent-shell-team--buffer-name session-id role wt-name))
@@ -157,6 +177,9 @@ In server mode the backend manages the ACP subprocess.  The buffer uses
                              ;; Finish output when RPC response arrives
                              (when (and shell-buf (buffer-live-p shell-buf))
                                (with-current-buffer shell-buf
+                                 ;; Freeze overlays before shell-maker inserts prompt
+                                 (when (fboundp 'my/agent-shell-server--finalize-overlays)
+                                   (my/agent-shell-server--finalize-overlays))
                                  (when agent-shell-team-events--pending-finish
                                    (funcall agent-shell-team-events--pending-finish
                                             (not error))
@@ -178,7 +201,10 @@ In server mode the backend manages the ACP subprocess.  The buffer uses
             (setq agent-shell-team--model-id model))
           ;; Bind Enter in evil insert mode to shell-maker-submit
           (evil-local-set-key 'insert (kbd "RET") #'shell-maker-submit)
-          (evil-local-set-key 'insert (kbd "<return>") #'shell-maker-submit))
+          (evil-local-set-key 'insert (kbd "<return>") #'shell-maker-submit)
+          ;; Enable collapsible section system
+          (when (fboundp 'agent-shell-ui-mode)
+            (agent-shell-ui-mode +1)))
         ;; Store agent-id in the roster alist entry for lookup by dismissed handler
         (let* ((agents (agent-shell-team--get-session-agents session-id))
                (entry (cl-find buffer agents
@@ -188,16 +214,18 @@ In server mode the backend manages the ACP subprocess.  The buffer uses
         ;; Refresh sidebar if visible
         (when-let ((sidebar-buf (get-buffer " *team-sidebar*")))
           (when (get-buffer-window sidebar-buf)
-            (my/team-sidebar--render)))))))
+            (my/team-sidebar--render))))))))
 
 (defun agent-shell-team-events--on-agent-dismissed (params)
   "Handle agent/dismissed — delegate to `agent-shell-team--unregister-agent'.
-PARAMS contains agent_id, session_id.
+PARAMS contains agent_id, project_id (or legacy session_id).
 The current codebase identifies agents by buffer, not agent_id.
 We match by looking for a buffer whose worktree-name or buffer-name
 contains the agent_id."
   (let ((agent-id (agent-shell-team-events--get-param params "agent_id"))
-        (session-id (agent-shell-team-events--get-param params "session_id")))
+        (session-id (or (agent-shell-team-events--get-param params "session_id")
+                        (agent-shell-team-events--get-param params "project_id")
+                        (bound-and-true-p agent-shell-team--session-id))))
     (when (and agent-id session-id)
       ;; Find the buffer associated with this agent-id.
       ;; Since agent-id is a new backend concept, try matching by
@@ -217,10 +245,12 @@ contains the agent_id."
 
 (defun agent-shell-team-events--on-agent-status-changed (params)
   "Handle agent/statusChanged — update sidebar and modeline.
-PARAMS contains agent_id, status, session_id, current_task_id."
+PARAMS contains agent_id, status, project_id (or legacy session_id), current_task_id."
   (let ((agent-id (agent-shell-team-events--get-param params "agent_id"))
         (status (agent-shell-team-events--get-param params "status"))
-        (session-id (agent-shell-team-events--get-param params "session_id")))
+        (session-id (or (agent-shell-team-events--get-param params "session_id")
+                        (agent-shell-team-events--get-param params "project_id")
+                        (bound-and-true-p agent-shell-team--session-id))))
     (when agent-id
       (message "agent-shell-team-events: agent/statusChanged id=%s status=%s"
                agent-id status)
@@ -230,6 +260,9 @@ PARAMS contains agent_id, status, session_id, current_task_id."
         (let ((buffer (agent-shell-team-events--find-agent-buffer agent-id)))
           (when (and buffer (buffer-live-p buffer))
             (with-current-buffer buffer
+              ;; Freeze overlays before shell-maker inserts prompt
+              (when (fboundp 'my/agent-shell-server--finalize-overlays)
+                (my/agent-shell-server--finalize-overlays))
               (when agent-shell-team-events--pending-finish
                 (funcall agent-shell-team-events--pending-finish t)
                 (setq agent-shell-team-events--pending-finish nil))))))
@@ -296,54 +329,92 @@ PARAMS contains request_id, title, type, items, description."
 ;;; Session update handlers — streaming agent output
 
 (defun agent-shell-team-events--insert-at-end (buffer text)
-  "Insert TEXT at the end of BUFFER, preserving point for non-visible windows."
+  "Insert TEXT at the end of BUFFER, preserving point for non-visible windows.
+Returns (START . END) of the inserted region, or nil."
   (when (and (buffer-live-p buffer) (stringp text) (> (length text) 0))
     (with-current-buffer buffer
-      (let ((inhibit-read-only t))
+      (let ((inhibit-read-only t)
+            start end)
         (save-excursion
           (goto-char (point-max))
-          (insert text))
+          (setq start (point))
+          (insert text)
+          (setq end (point)))
         ;; Scroll windows showing this buffer to bottom
         (dolist (win (get-buffer-window-list buffer nil t))
-          (set-window-point win (point-max)))))))
+          (set-window-point win (point-max)))
+        (cons start end)))))
 
 (defun agent-shell-team-events--on-message-chunk (buffer update)
   "Handle agent_message_chunk — append text to agent BUFFER.
 UPDATE contains content.text."
   (let* ((content (agent-shell-team-events--get-param update "content"))
          (text (and content (agent-shell-team-events--get-param content "text"))))
-    (agent-shell-team-events--insert-at-end buffer text)))
+    (when-let ((range (agent-shell-team-events--insert-at-end buffer text)))
+      (with-current-buffer buffer
+        (when (fboundp 'my/agent-shell-server--extend-or-create-msg-ov)
+          (my/agent-shell-server--extend-or-create-msg-ov
+           (car range) (cdr range)))))))
 
 (defun agent-shell-team-events--on-thought-chunk (buffer update)
   "Handle agent_thought_chunk — append thinking text to agent BUFFER.
-UPDATE contains content.text.  Rendered with a dimmed face."
+UPDATE contains content.text."
   (let* ((content (agent-shell-team-events--get-param update "content"))
          (text (and content (agent-shell-team-events--get-param content "text"))))
     (when (and (stringp text) (> (length text) 0))
-      (agent-shell-team-events--insert-at-end
-       buffer (propertize text 'face 'shadow)))))
+      (when-let ((range (agent-shell-team-events--insert-at-end buffer text)))
+        (with-current-buffer buffer
+          (when (fboundp 'my/agent-shell-server--extend-or-create-thought-ov)
+            (my/agent-shell-server--extend-or-create-thought-ov
+             (car range) (cdr range))))))))
+
+(defun agent-shell-team-events--tool-status-to-ui (status)
+  "Map WS tool STATUS string to agent-shell-ui status."
+  (pcase status
+    ((or "pending" "running") "in_progress")
+    ((or "done" "completed") "completed")
+    ("error" "failed")
+    (_ (or status "in_progress"))))
+
+(defun agent-shell-team-events--tool-kind (title)
+  "Extract tool kind from TITLE string (e.g. \"Read\" -> \"read\")."
+  (when (stringp title)
+    (let ((word (car (split-string title " " t))))
+      (when word (downcase word)))))
 
 (defun agent-shell-team-events--on-tool-call (buffer update)
-  "Handle tool_call — insert tool call header in BUFFER.
+  "Handle tool_call — insert collapsible tool call section in BUFFER.
 UPDATE contains toolCallId, title, status, kind."
   (let ((tool-id (agent-shell-team-events--get-param update "toolCallId"))
         (title (or (agent-shell-team-events--get-param update "title") "Tool"))
-        (status (or (agent-shell-team-events--get-param update "status") "running")))
-    (when (buffer-live-p buffer)
+        (status (or (agent-shell-team-events--get-param update "status") "running"))
+        (kind (agent-shell-team-events--get-param update "kind")))
+    (when (and (buffer-live-p buffer) tool-id)
       (with-current-buffer buffer
         (let ((inhibit-read-only t))
-          (save-excursion
-            (goto-char (point-max))
-            (let ((marker (point-marker)))
-              (insert (propertize (format "\n[%s] %s\n" title status)
-                                  'face 'font-lock-function-name-face))
-              ;; Track the marker for later updates
-              (when tool-id
-                (unless (hash-table-p agent-shell-team-events--tool-calls)
-                  (setq agent-shell-team-events--tool-calls
-                        (make-hash-table :test 'equal)))
-                (puthash tool-id marker
-                         agent-shell-team-events--tool-calls)))))))))
+          (if (fboundp 'agent-shell-ui-update-fragment)
+              ;; Use agent-shell-ui collapsible sections
+              (let* ((ui-status (agent-shell-team-events--tool-status-to-ui status))
+                     (ui-kind (or kind (agent-shell-team-events--tool-kind title)))
+                     (label-left (when (fboundp 'agent-shell--make-status-kind-label)
+                                   (agent-shell--make-status-kind-label
+                                    :status ui-status :kind ui-kind)))
+                     (label-right (propertize title 'font-lock-face
+                                             'font-lock-doc-markup-face))
+                     (model (agent-shell-ui-make-fragment-model
+                             :namespace-id (or (bound-and-true-p agent-shell-team--agent-id)
+                                               "server")
+                             :block-id tool-id
+                             :label-left label-left
+                             :label-right label-right
+                             :body nil)))
+                (agent-shell-ui-update-fragment model
+                                                :expanded nil
+                                                :no-undo t))
+            ;; Fallback: plain text
+            (save-excursion
+              (goto-char (point-max))
+              (insert (format "\n[%s] %s\n" title status)))))))))
 
 (defun agent-shell-team-events--on-tool-call-update (buffer update)
   "Handle tool_call_update — update existing tool call section in BUFFER.
@@ -352,30 +423,37 @@ UPDATE contains toolCallId, status, content, title."
         (status (agent-shell-team-events--get-param update "status"))
         (content (agent-shell-team-events--get-param update "content"))
         (title (agent-shell-team-events--get-param update "title")))
-    (when (buffer-live-p buffer)
+    (when (and (buffer-live-p buffer) tool-id)
       (with-current-buffer buffer
-        (let ((inhibit-read-only t)
-              (marker (and tool-id
-                           (hash-table-p agent-shell-team-events--tool-calls)
-                           (gethash tool-id agent-shell-team-events--tool-calls))))
-          ;; If we have a tracked marker, update the header line
-          (when (and marker (marker-position marker))
-            (save-excursion
-              (goto-char marker)
-              (when (looking-at "\\[.*\\].*$")
-                (replace-match
-                 (propertize (format "[%s] %s"
-                                     (or title "Tool")
-                                     (or status "done"))
-                             'face 'font-lock-function-name-face)))))
-          ;; Append content at buffer end
-          (when (and (stringp content) (> (length content) 0))
-            (agent-shell-team-events--insert-at-end
-             buffer (propertize content 'face 'font-lock-comment-face)))
-          ;; Clean up completed tool calls
-          (when (and tool-id (member status '("done" "error")))
-            (when (hash-table-p agent-shell-team-events--tool-calls)
-              (remhash tool-id agent-shell-team-events--tool-calls))))))))
+        (let ((inhibit-read-only t))
+          (if (fboundp 'agent-shell-ui-update-fragment)
+              (progn
+                ;; Append body content if present
+                (when (and (stringp content) (> (length content) 0))
+                  (agent-shell-ui-update-fragment
+                   (agent-shell-ui-make-fragment-model
+                    :namespace-id (or (bound-and-true-p agent-shell-team--agent-id)
+                                      "server")
+                    :block-id tool-id
+                    :body content)
+                   :append t :no-undo t))
+                ;; Update status badge on completion/error
+                (when (member status '("done" "completed" "error"))
+                  (let* ((ui-status (agent-shell-team-events--tool-status-to-ui status))
+                         (ui-kind (agent-shell-team-events--tool-kind
+                                   (or title "Tool")))
+                         (label-left (agent-shell--make-status-kind-label
+                                     :status ui-status :kind ui-kind)))
+                    (agent-shell-ui-update-fragment
+                     (agent-shell-ui-make-fragment-model
+                      :namespace-id (or (bound-and-true-p agent-shell-team--agent-id)
+                                        "server")
+                      :block-id tool-id
+                      :label-left label-left)
+                     :no-undo t))))
+            ;; Fallback: plain text
+            (when (and (stringp content) (> (length content) 0))
+              (agent-shell-team-events--insert-at-end buffer content))))))))
 
 (defun agent-shell-team-events--on-plan (buffer update)
   "Handle plan — render plan entries in BUFFER.
@@ -383,16 +461,21 @@ UPDATE contains entries array."
   (let ((entries (agent-shell-team-events--get-param update "entries")))
     (when (and entries (> (length entries) 0))
       (with-current-buffer buffer
-        (let ((inhibit-read-only t))
+        (let ((inhibit-read-only t)
+              start)
           (save-excursion
             (goto-char (point-max))
-            (insert (propertize "\n--- Plan ---\n" 'face 'font-lock-keyword-face))
+            (setq start (point))
+            (insert "\n--- Plan ---\n")
             (seq-do
              (lambda (entry)
                (let ((content (or (agent-shell-team-events--get-param entry "content")
                                   (format "%s" entry))))
                  (insert (format "  - %s\n" content))))
-             entries)))))))
+             entries)
+            (when (boundp 'my/agent-shell-server-plan-face)
+              (my/agent-shell-server--apply-block-overlay
+               start (point) my/agent-shell-server-plan-face))))))))
 
 (defun agent-shell-team-events--on-usage-update (buffer update)
   "Handle usage_update — store usage data as buffer-local var in BUFFER.
@@ -414,6 +497,7 @@ PARAMS contains agent_id, sessionId, and update with sessionUpdate type."
     (if (not buffer)
         (message "agent-shell-team-events: agent/session/update — no buffer for agent-id=%s type=%s"
                  agent-id update-type)
+      (message "agent-shell-team-events: sessionUpdate type=%s agent=%s" update-type agent-id)
       (pcase update-type
         ("agent_message_chunk"
          (agent-shell-team-events--on-message-chunk buffer update))
@@ -430,7 +514,9 @@ PARAMS contains agent_id, sessionId, and update with sessionUpdate type."
         ("new_message_start"
          (when (buffer-live-p buffer)
            (with-current-buffer buffer
-             (setq-local agent-shell-team--new-message-pending t))))
+             (setq-local agent-shell-team--new-message-pending t)
+             (when (fboundp 'my/agent-shell-server--reset-msg-overlay)
+               (my/agent-shell-server--reset-msg-overlay)))))
         ;; Silent/modeline-only updates
         ("available_commands_update" nil)
         ("current_mode_update"
@@ -533,6 +619,8 @@ Called by the WS module for every incoming server notification."
      (agent-shell-team-events--on-agent-respawned params))
     ("agent/session/request_permission"
      (agent-shell-team-events--on-permission-request params))
+    ;; Silent — modeline/polling only
+    ("quota/update" nil)
     (_
      (message "agent-shell-team-events: unknown method %S" method))))
 

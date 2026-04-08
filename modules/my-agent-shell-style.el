@@ -348,6 +348,144 @@ Schedules an idle timer to apply TEAM/CTX faces after streaming pauses."
   (advice-add 'shell-maker--output-filter
               :after #'my/agent-shell--style-after-output))
 
+;; --- Server-mode block styling ---
+
+(defvar my/agent-shell-server-message-face
+  (list :font (font-spec :family "SF Mono" :weight 'semibold)
+        :height 0.75
+        :inherit nil
+        :background "#372413"
+        :extend t)
+  "Face for agent message output in server-mode buffers.")
+
+(defvar my/agent-shell-server-thought-face
+  (list :font (font-spec :family "SF Mono" :weight 'semibold)
+        :height 0.75
+        :inherit nil
+        :foreground "#888899"
+        :background "#1a1a2a"
+        :extend t)
+  "Face for thinking/reasoning blocks in server-mode buffers.")
+
+(defvar my/agent-shell-server-tool-face
+  (list :font (font-spec :family "SF Mono" :weight 'semibold)
+        :height 0.75
+        :inherit nil
+        :background "#1a2a1a"
+        :extend t)
+  "Face for tool call blocks in server-mode buffers.")
+
+(defvar my/agent-shell-server-plan-face
+  (list :font (font-spec :family "SF Mono" :weight 'semibold)
+        :height 0.75
+        :inherit nil
+        :background "#1a2a37"
+        :extend t)
+  "Face for plan sections in server-mode buffers.")
+
+(defvar-local my/agent-shell-server--current-msg-ov nil
+  "Current message overlay being extended by streaming chunks.")
+
+(defvar-local my/agent-shell-server--current-thought-ov nil
+  "Current thought overlay being extended by streaming chunks.")
+
+(defun my/agent-shell-server--apply-block-overlay (start end face)
+  "Apply styled overlay from START to END with FACE properties.
+Returns the created overlay."
+  (when (and start end (< start end))
+    (let* ((padding (propertize "  " 'face face))
+           (ov (make-overlay start end nil nil t)))
+      (overlay-put ov 'face face)
+      (overlay-put ov 'line-prefix padding)
+      (overlay-put ov 'wrap-prefix padding)
+      (overlay-put ov 'evaporate nil)
+      (overlay-put ov 'my-agent-shell-server t)
+      ov)))
+
+(defun my/agent-shell-server--freeze-overlay (ov)
+  "Replace rear-advance overlay OV with a fixed-boundary copy.
+Does NOT insert padding — that's the caller's responsibility
+\(finalize-overlays adds padding before the prompt, reset does not\).
+Returns nil."
+  (if (not (and ov (overlay-buffer ov)))
+      (message "freeze-overlay: SKIP ov=%s (nil or no buffer)" ov)
+    (let* ((inhibit-read-only t)
+           (start (overlay-start ov))
+           (end (overlay-end ov)))
+      (message "freeze-overlay: ov %s-%s, point-max=%s" start end (point-max))
+      (let ((fixed (make-overlay start end nil nil nil)))
+        (dolist (prop '(face line-prefix wrap-prefix evaporate my-agent-shell-server))
+          (overlay-put fixed prop (overlay-get ov prop)))
+        (delete-overlay ov)
+        (message "freeze-overlay: fixed overlay %s-%s created" start end))))
+  nil)
+
+(defun my/agent-shell-server--extend-or-create-msg-ov (start end)
+  "Extend the current message overlay to END, or create one from START to END.
+Freezes any active thought overlay first (type transition)."
+  (message "extend-or-create-msg-ov: %s-%s buf=%s" start end (buffer-name))
+  ;; Type transition: freeze thought block
+  (when my/agent-shell-server--current-thought-ov
+    (my/agent-shell-server--freeze-overlay my/agent-shell-server--current-thought-ov)
+    (setq my/agent-shell-server--current-thought-ov nil))
+  (if (and my/agent-shell-server--current-msg-ov
+           (overlay-buffer my/agent-shell-server--current-msg-ov))
+      (move-overlay my/agent-shell-server--current-msg-ov
+                    (overlay-start my/agent-shell-server--current-msg-ov)
+                    end)
+    (setq my/agent-shell-server--current-msg-ov
+          (my/agent-shell-server--apply-block-overlay
+           start end my/agent-shell-server-message-face))))
+
+(defun my/agent-shell-server--extend-or-create-thought-ov (start end)
+  "Extend the current thought overlay to END, or create one from START to END.
+Freezes any active message overlay first (type transition)."
+  ;; Type transition: freeze message block
+  (when my/agent-shell-server--current-msg-ov
+    (my/agent-shell-server--freeze-overlay my/agent-shell-server--current-msg-ov)
+    (setq my/agent-shell-server--current-msg-ov nil))
+  (if (and my/agent-shell-server--current-thought-ov
+           (overlay-buffer my/agent-shell-server--current-thought-ov))
+      (move-overlay my/agent-shell-server--current-thought-ov
+                    (overlay-start my/agent-shell-server--current-thought-ov)
+                    end)
+    (setq my/agent-shell-server--current-thought-ov
+          (my/agent-shell-server--apply-block-overlay
+           start end my/agent-shell-server-thought-face))))
+
+(defun my/agent-shell-server--reset-msg-overlay ()
+  "Freeze current overlays and reset trackers (called on new_message_start).
+A new_message_start means the previous message block is complete — freeze its
+overlays so they don't grow into subsequent content."
+  (message "reset-msg-overlay: freezing msg-ov=%s thought-ov=%s buf=%s"
+           my/agent-shell-server--current-msg-ov
+           my/agent-shell-server--current-thought-ov
+           (buffer-name))
+  (my/agent-shell-server--freeze-overlay my/agent-shell-server--current-msg-ov)
+  (my/agent-shell-server--freeze-overlay my/agent-shell-server--current-thought-ov)
+  (setq my/agent-shell-server--current-msg-ov nil
+        my/agent-shell-server--current-thought-ov nil))
+
+(defun my/agent-shell-server--finalize-overlays ()
+  "Freeze all server-mode overlays and add trailing padding.
+Called when agent turn completes (before shell-maker inserts the next prompt).
+Padding ensures the prompt doesn't visually touch the last styled block."
+  (message "finalize-overlays: msg-ov=%s thought-ov=%s buf=%s"
+           my/agent-shell-server--current-msg-ov
+           my/agent-shell-server--current-thought-ov
+           (buffer-name))
+  (my/agent-shell-server--freeze-overlay my/agent-shell-server--current-msg-ov)
+  (my/agent-shell-server--freeze-overlay my/agent-shell-server--current-thought-ov)
+  (setq my/agent-shell-server--current-msg-ov nil
+        my/agent-shell-server--current-thought-ov nil)
+  ;; DEBUG: insert visible marker to verify padding is rendered
+  (let ((inhibit-read-only t))
+    (save-excursion
+      (goto-char (point-max))
+      (unless (bolp) (insert "\n"))
+      (insert "---PAD---\n\n")))
+  (message "finalize-overlays: DONE point-max=%s" (point-max)))
+
 ;; --- Table styling (markdown-overlays) ---
 
 (defface my/agent-shell-table-row-face

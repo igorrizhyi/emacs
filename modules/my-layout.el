@@ -342,19 +342,15 @@ If already in the lead buffer, toggle back to the previous buffer."
                  (agent-shell-team-dispatch--python-p))
         (require 'agent-shell-team-ws)
         (require 'agent-shell-team-events)
-        ;; Ensure project exists on backend before creating session
+        ;; Ensure project exists on backend, then connect WS (no session needed)
         (agent-shell-team--ensure-backend-project)
-        (let ((backend-id (agent-shell-team--create-backend-session)))
-          (when backend-id
-            (let ((ws-url (if agent-shell-team--backend-project-id
-                             (format "%s/ws/%s/%s" agent-shell-team-python-url
-                                     agent-shell-team--backend-project-id backend-id)
-                           (format "%s/ws/%s" agent-shell-team-python-url backend-id))))
-              (agent-shell-team-ws-connect ws-url
-                                           (lambda ()
-                                             (message "agent-shell-team: WS connected for session %s (backend %s)"
-                                                      (agent-shell-team--short-session-id agent-shell-team--session-id)
-                                                      (agent-shell-team--short-session-id backend-id))))))))
+        (when agent-shell-team--backend-project-id
+          (let ((ws-url (format "%s/ws/%s" agent-shell-team-python-url
+                                agent-shell-team--backend-project-id)))
+            (agent-shell-team-ws-connect ws-url
+                                         (lambda ()
+                                           (message "agent-shell-team: WS connected for project %s"
+                                                    agent-shell-team--backend-project-id))))))
       (let* ((context-buffer (current-buffer))
              (session-id agent-shell-team--session-id))
         (if (and (fboundp 'agent-shell-team-dispatch--python-p)
@@ -363,12 +359,19 @@ If already in the lead buffer, toggle back to the previous buffer."
             (progn
               (message "agent-shell-team: delegating lead spawn to backend, session=%s"
                        (agent-shell-team--short-session-id session-id))
-              (agent-shell-team-dispatch-spawn-agent
-               "lead" nil
-               (lambda (result error)
-                 (if error
-                     (message "agent-shell-team: backend lead spawnAgent error: %s" error)
-                   (message "agent-shell-team: backend lead spawnAgent result: %s" result))))
+              (let ((project-id agent-shell-team--backend-project-id))
+                (agent-shell-team-dispatch-spawn-agent
+                 "lead" nil
+                 (lambda (result error)
+                   (if error
+                       (message "agent-shell-team: backend lead spawnAgent error: %s" error)
+                     (message "agent-shell-team: backend lead spawnAgent result: %s" result)
+                     ;; Create the buffer directly from RPC result — the agent/spawned
+                     ;; broadcast is unreliable (may not arrive before the RPC response).
+                     (when (plist-get result :success)
+                       (let ((params (plist-put (copy-sequence result)
+                                               :project_id project-id)))
+                         (agent-shell-team-events--on-agent-spawned params)))))))
               (when (fboundp 'my/team-sidebar--show)
                 (my/team-sidebar--show)))
           ;; Elisp mode — spawn locally

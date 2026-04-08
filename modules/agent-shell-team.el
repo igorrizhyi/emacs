@@ -295,10 +295,6 @@ Used to start the HTTP transport for container agents."
   "Global team session ID. One session per Emacs instance.
 Generated eagerly at load time so MCP handlers always have a valid session.")
 
-(defvar agent-shell-team--backend-session-id nil
-  "Backend session ID returned by the Python gang-of-none server.
-Maps to the Emacs-side `agent-shell-team--session-id'.  Used for
-WebSocket connections and API calls to the Python backend.")
 
 (defvar agent-shell-team--backend-project-id nil
   "Backend project ID for the current project on the gang-of-none server.")
@@ -857,86 +853,11 @@ Idempotent — safe to call multiple times."
                 (error nil))))
         (kill-buffer buf))))))
 
-(defun agent-shell-team--create-backend-session ()
-  "POST to the Python backend to create a session.
-Returns the backend session ID string, or nil on failure.
-On failure, logs a warning and resets `agent-shell-team-backend' to \\='elisp."
-  (let* ((url-request-method "POST")
-         (url-request-extra-headers '(("Content-Type" . "application/json")))
-         (project-root (or (and (boundp 'doom-user-dir) doom-user-dir)
-                           default-directory))
-         (url-request-data (encode-coding-string
-                            (json-encode `((project_root . ,project-root)))
-                            'utf-8))
-         (api-url (if agent-shell-team--backend-project-id
-                     (format "%s/api/projects/%s/sessions"
-                             (agent-shell-team--python-http-url)
-                             agent-shell-team--backend-project-id)
-                   ;; Fallback to deprecated endpoint
-                   (format "%s/api/sessions" (agent-shell-team--python-http-url))))
-         (buffer (condition-case err
-                     (url-retrieve-synchronously api-url t nil 10)
-                   (error
-                    (message "agent-shell-team: backend session POST failed: %s"
-                             (error-message-string err))
-                    nil))))
-    (if (not buffer)
-        (progn
-          (message "agent-shell-team: WARNING — could not create backend session, falling back to elisp")
-          (setq agent-shell-team-backend 'elisp)
-          nil)
-      (unwind-protect
-          (with-current-buffer buffer
-            (goto-char (point-min))
-            (if (not (re-search-forward "^$" nil t))
-                (progn
-                  (message "agent-shell-team: WARNING — malformed backend response, falling back to elisp")
-                  (setq agent-shell-team-backend 'elisp)
-                  nil)
-              (forward-char 1)
-              (condition-case err
-                  (let* ((resp (json-read))
-                         (backend-id (alist-get 'id resp)))
-                    (if backend-id
-                        (progn
-                          (setq agent-shell-team--backend-session-id
-                                (if (stringp backend-id)
-                                    backend-id
-                                  (format "%s" backend-id)))
-                          agent-shell-team--backend-session-id)
-                      (message "agent-shell-team: WARNING — backend response missing 'id', falling back to elisp")
-                      (setq agent-shell-team-backend 'elisp)
-                      nil))
-                (error
-                 (message "agent-shell-team: WARNING — failed to parse backend response: %s"
-                          (error-message-string err))
-                 (setq agent-shell-team-backend 'elisp)
-                 nil))))
-        (kill-buffer buffer)))))
-
-(defun agent-shell-team--delete-backend-session ()
-  "DELETE the backend session if one was created.
-Clears `agent-shell-team--backend-session-id' afterwards."
-  (when agent-shell-team--backend-session-id
-    (let* ((url-request-method "DELETE")
-           (api-url (format "%s/api/sessions/%s"
-                            (agent-shell-team--python-http-url)
-                            agent-shell-team--backend-session-id)))
-      (condition-case err
-          (let ((buffer (url-retrieve-synchronously api-url t nil 5)))
-            (when buffer (kill-buffer buffer)))
-        (error
-         (message "agent-shell-team: WARNING — failed to DELETE backend session %s: %s"
-                  agent-shell-team--backend-session-id
-                  (error-message-string err)))))
-    (setq agent-shell-team--backend-session-id nil)))
-
 (defun agent-shell-team--stop-ws ()
-  "Disconnect the Python backend WebSocket and delete backend session."
+  "Disconnect the Python backend WebSocket."
   (when (and (agent-shell-team-dispatch--python-p)
              (fboundp 'agent-shell-team-ws-disconnect))
-    (agent-shell-team-ws-disconnect))
-  (agent-shell-team--delete-backend-session))
+    (agent-shell-team-ws-disconnect)))
 
 (add-hook 'kill-emacs-hook #'agent-shell-team--stop-ws)
 
@@ -3980,11 +3901,10 @@ Call this to cleanly unload the module or reset team state."
   (interactive)
   (remove-hook 'kill-buffer-hook #'agent-shell-team--buffer-kill-hook)
   (agent-shell-team--stop-drain-timer)
-  ;; Disconnect Python backend WebSocket and delete backend session
+  ;; Disconnect Python backend WebSocket
   (when (agent-shell-team-dispatch--python-p)
     (when (fboundp 'agent-shell-team-ws-disconnect)
-      (agent-shell-team-ws-disconnect)))
-  (agent-shell-team--delete-backend-session))
+      (agent-shell-team-ws-disconnect))))
 
 (remove-hook 'kill-buffer-hook #'agent-shell-team--buffer-kill-hook)
 (add-hook 'kill-buffer-hook #'agent-shell-team--buffer-kill-hook)
@@ -4276,19 +4196,15 @@ When called from an existing team buffer:
     (when (agent-shell-team-dispatch--python-p)
       (require 'agent-shell-team-ws)
       (require 'agent-shell-team-events)
-      ;; Ensure project exists, then create session and connect WS
+      ;; Ensure project exists, then connect WS (no session needed)
       (agent-shell-team--ensure-backend-project)
-      (let ((backend-id (agent-shell-team--create-backend-session)))
-        (when backend-id
-          (let ((ws-url (if agent-shell-team--backend-project-id
-                           (format "%s/ws/%s/%s" agent-shell-team-python-url
-                                   agent-shell-team--backend-project-id backend-id)
-                         (format "%s/ws/%s" agent-shell-team-python-url backend-id))))
-            (agent-shell-team-ws-connect ws-url
-                                         (lambda ()
-                                           (message "agent-shell-team: WS connected for session %s (backend %s)"
-                                                    (agent-shell-team--short-session-id session-id)
-                                                    (agent-shell-team--short-session-id backend-id))))))))
+      (when agent-shell-team--backend-project-id
+        (let ((ws-url (format "%s/ws/%s" agent-shell-team-python-url
+                              agent-shell-team--backend-project-id)))
+          (agent-shell-team-ws-connect ws-url
+                                       (lambda ()
+                                         (message "agent-shell-team: WS connected for project %s"
+                                                  agent-shell-team--backend-project-id))))))
 
     ;; Start the agent — backend or local
     (if (agent-shell-team-dispatch--python-p)
