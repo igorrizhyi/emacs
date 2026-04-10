@@ -391,16 +391,23 @@ Schedules an idle timer to apply TEAM/CTX faces after streaming pauses."
 
 (defun my/agent-shell-server--apply-block-overlay (start end face)
   "Apply styled overlay from START to END with FACE properties.
-Returns the created overlay."
+Inserts a blank top-padding line before the content so the block
+has visual breathing room.  Returns the created overlay."
   (when (and start end (< start end))
-    (let* ((padding (propertize "  " 'face face))
-           (ov (make-overlay start end nil nil t)))
-      (overlay-put ov 'face face)
-      (overlay-put ov 'line-prefix padding)
-      (overlay-put ov 'wrap-prefix padding)
-      (overlay-put ov 'evaporate nil)
-      (overlay-put ov 'my-agent-shell-server t)
-      ov)))
+    (let ((inhibit-read-only t))
+      ;; Insert top padding line before the overlay content
+      (save-excursion
+        (goto-char start)
+        (insert "\n")
+        (setq end (1+ end)))
+      (let* ((padding (propertize "  " 'face face))
+             (ov (make-overlay start end nil nil t)))
+        (overlay-put ov 'face face)
+        (overlay-put ov 'line-prefix padding)
+        (overlay-put ov 'wrap-prefix padding)
+        (overlay-put ov 'evaporate nil)
+        (overlay-put ov 'my-agent-shell-server t)
+        ov))))
 
 (defun my/agent-shell-server--freeze-overlay (ov)
   "Replace rear-advance overlay OV with a fixed-boundary copy.
@@ -453,6 +460,20 @@ Freezes any active message overlay first (type transition)."
           (my/agent-shell-server--apply-block-overlay
            start end my/agent-shell-server-thought-face))))
 
+(defun my/agent-shell-server--pad-and-freeze (ov)
+  "Add padding newlines inside OV so :extend t fills the last line, then freeze.
+Inserts a trailing newline (if needed) plus a blank padding line inside the
+overlay range before freezing it to fixed boundaries."
+  (when (and ov (overlay-buffer ov))
+    (let ((inhibit-read-only t))
+      (save-excursion
+        (goto-char (overlay-end ov))
+        (unless (bolp) (insert "\n"))
+        (insert "\n")
+        (move-overlay ov (overlay-start ov) (point))
+        (message "pad-and-freeze: extended ov to %s-%s" (overlay-start ov) (point))))
+    (my/agent-shell-server--freeze-overlay ov)))
+
 (defun my/agent-shell-server--reset-msg-overlay ()
   "Freeze current overlays and reset trackers (called on new_message_start).
 A new_message_start means the previous message block is complete — freeze its
@@ -461,8 +482,14 @@ overlays so they don't grow into subsequent content."
            my/agent-shell-server--current-msg-ov
            my/agent-shell-server--current-thought-ov
            (buffer-name))
-  (my/agent-shell-server--freeze-overlay my/agent-shell-server--current-msg-ov)
-  (my/agent-shell-server--freeze-overlay my/agent-shell-server--current-thought-ov)
+  (let ((last-ov (or my/agent-shell-server--current-msg-ov
+                     my/agent-shell-server--current-thought-ov)))
+    (my/agent-shell-server--pad-and-freeze last-ov)
+    ;; Freeze the other overlay without padding (only the last block gets padding)
+    (let ((other-ov (if (eq last-ov my/agent-shell-server--current-msg-ov)
+                        my/agent-shell-server--current-thought-ov
+                      my/agent-shell-server--current-msg-ov)))
+      (my/agent-shell-server--freeze-overlay other-ov)))
   (setq my/agent-shell-server--current-msg-ov nil
         my/agent-shell-server--current-thought-ov nil))
 
@@ -474,33 +501,22 @@ Padding ensures the prompt doesn't visually touch the last styled block."
            my/agent-shell-server--current-msg-ov
            my/agent-shell-server--current-thought-ov
            (buffer-name))
-  ;; Determine which overlay is the last active one (for padding insertion)
+  ;; Pad and freeze the last active overlay (adds trailing \n + blank line)
   (let* ((last-ov (or my/agent-shell-server--current-msg-ov
                       my/agent-shell-server--current-thought-ov))
+         (other-ov (if (eq last-ov my/agent-shell-server--current-msg-ov)
+                       my/agent-shell-server--current-thought-ov
+                     my/agent-shell-server--current-msg-ov))
          (inhibit-read-only t))
-    ;; Insert padding BEFORE freezing so it's inside the overlay range.
-    ;; We need: (1) the last content line to end with \n so :extend t
-    ;; stretches its background to full width, and (2) an extra blank
-    ;; line within the overlay for bottom padding.
-    (when (and last-ov (overlay-buffer last-ov))
-      (save-excursion
-        (goto-char (overlay-end last-ov))
-        ;; Ensure last content line ends with newline (for :extend t)
-        (unless (bolp) (insert "\n"))
-        ;; Add a blank padding line inside the overlay
-        (insert "\n")
-        ;; Extend the overlay to cover everything we just inserted
-        (move-overlay last-ov (overlay-start last-ov) (point))
-        (message "finalize-overlays: extended ov to %s-%s" (overlay-start last-ov) (point))))
-    ;; Now freeze both overlays (converts rear-advance → fixed boundary)
-    (my/agent-shell-server--freeze-overlay my/agent-shell-server--current-msg-ov)
-    (my/agent-shell-server--freeze-overlay my/agent-shell-server--current-thought-ov)
+    (my/agent-shell-server--pad-and-freeze last-ov)
+    (my/agent-shell-server--freeze-overlay other-ov)
     (setq my/agent-shell-server--current-msg-ov nil
           my/agent-shell-server--current-thought-ov nil)
     ;; Spacing after the block (gap between block and next prompt)
     (save-excursion
       (goto-char (point-max))
-      (unless (bolp) (insert "\n"))))
+      (unless (bolp) (insert "\n"))
+      (insert "\n")))
   (message "finalize-overlays: DONE point-max=%s" (point-max)))
 
 ;; --- Table styling (markdown-overlays) ---
