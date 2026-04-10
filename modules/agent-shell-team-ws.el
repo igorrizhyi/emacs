@@ -164,10 +164,10 @@ Uses native `json-serialize' when available, falls back to `json-encode'."
         (message "agent-shell-team-ws: failed to parse frame: %s"
                  (truncate-string-to-width text 200))
       (let ((id (plist-get msg :id))
-            (method (plist-get msg :method))
+            (method (or (plist-get msg :method) (plist-get msg :type)))
             (error-obj (plist-get msg :error))
             (result (plist-get msg :result))
-            (params (plist-get msg :params)))
+            (params (or (plist-get msg :params) msg)))
         ;; DEBUG: trace every incoming frame
         (message "agent-shell-team-ws: FRAME id=%s method=%s handler=%s"
                  id method (if agent-shell-team-ws-notification-handler "set" "nil"))

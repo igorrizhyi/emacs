@@ -1033,13 +1033,17 @@ serialization of alists and hash tables."
         (maphash
          (lambda (_sid agents)
            (dolist (a agents)
-             (let ((buf (alist-get 'buffer a)))
-               (push (cons buf
+             (let* ((buf (alist-get 'buffer a))
+                    (name (cond ((and (bufferp buf) (buffer-live-p buf))
+                                 (buffer-name buf))
+                                ((stringp buf) buf)
+                                (t ""))))
+               (push (cons name
                            (when (fboundp 'agent-shell-team--agent-status)
                              (agent-shell-team--agent-status buf)))
                      pairs))))
          agent-shell-team--sessions)
-        (sort pairs (lambda (a b) (string< (or (car a) "") (or (car b) ""))))))
+        (sort pairs (lambda (a b) (string< (car a) (car b))))))
     ;; 2. Session count
     (when (and (boundp 'agent-shell-team--sessions)
                (hash-table-p agent-shell-team--sessions))

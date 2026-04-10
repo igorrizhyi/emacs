@@ -87,18 +87,24 @@ Set to `agent-shell-team-events--handle-notification' on module load.")
 
 (defun agent-shell-team-events--find-agent-buffer (agent-id)
   "Find the Emacs buffer for AGENT-ID by matching worktree-name across all sessions.
-Returns the buffer or nil if not found."
+Returns the buffer or nil if not found.  Also checks buffer-local agent-id."
   (when (and agent-id (boundp 'agent-shell-team--sessions))
     (catch 'found
       (maphash
        (lambda (_session-id agents)
          (dolist (agent agents)
-           (let ((buf (alist-get 'buffer agent))
-                 (wt-name (alist-get 'worktree-name agent)))
-             (when (and (buffer-live-p buf)
-                        wt-name
-                        (string= wt-name agent-id))
-               (throw 'found buf)))))
+           (let* ((buf (alist-get 'buffer agent))
+                  (buf (if (and (stringp buf) (get-buffer buf))
+                           (get-buffer buf)
+                         buf))
+                  (wt-name (alist-get 'worktree-name agent)))
+             (when (and buf (buffer-live-p buf))
+               (when (or (and wt-name (string= wt-name agent-id))
+                         (and (boundp 'agent-shell-team--agent-id)
+                              (buffer-local-value 'agent-shell-team--agent-id buf)
+                              (equal (buffer-local-value 'agent-shell-team--agent-id buf)
+                                     agent-id)))
+                 (throw 'found buf))))))
        agent-shell-team--sessions)
       nil)))
 
@@ -214,32 +220,26 @@ In server mode the backend manages the ACP subprocess.  The buffer uses
         ;; Refresh sidebar if visible
         (when-let ((sidebar-buf (get-buffer " *team-sidebar*")))
           (when (get-buffer-window sidebar-buf)
-            (my/team-sidebar--render))))))))
+            (my/team-sidebar--render)))
+        ;; Auto-switch to lead buffer on initial team start (not slave_leads)
+        (when (equal role "lead")
+          (switch-to-buffer buffer)))))))
+
 
 (defun agent-shell-team-events--on-agent-dismissed (params)
-  "Handle agent/dismissed — delegate to `agent-shell-team--unregister-agent'.
+  "Handle agent/dismissed — unregister the agent from the session roster.
 PARAMS contains agent_id, project_id (or legacy session_id).
-The current codebase identifies agents by buffer, not agent_id.
-We match by looking for a buffer whose worktree-name or buffer-name
-contains the agent_id."
-  (let ((agent-id (agent-shell-team-events--get-param params "agent_id"))
-        (session-id (or (agent-shell-team-events--get-param params "session_id")
-                        (agent-shell-team-events--get-param params "project_id")
-                        (bound-and-true-p agent-shell-team--session-id))))
-    (when (and agent-id session-id)
-      ;; Find the buffer associated with this agent-id.
-      ;; Since agent-id is a new backend concept, try matching by
-      ;; worktree-name (the backend uses worktree names as agent IDs).
-      (let ((agent-buf
-             (cl-loop for agent in (agent-shell-team--get-session-agents session-id)
-                      for buf = (alist-get 'buffer agent)
-                      for wt-name = (alist-get 'worktree-name agent)
-                      when (and (buffer-live-p buf)
-                                wt-name
-                                (string= wt-name agent-id))
-                      return buf)))
+Matches by worktree-name or buffer-local agent-id, searching all sessions."
+  (let ((agent-id (agent-shell-team-events--get-param params "agent_id")))
+    (message "agent-shell-team-events: agent/dismissed id=%s" agent-id)
+    (when agent-id
+      ;; Search all sessions for a matching agent
+      (let ((agent-buf (agent-shell-team-events--find-agent-buffer agent-id)))
         (if agent-buf
-            (agent-shell-team--unregister-agent agent-buf)
+            (progn
+              (message "agent-shell-team-events: agent/dismissed — unregistering buffer %s"
+                       (if (bufferp agent-buf) (buffer-name agent-buf) agent-buf))
+              (agent-shell-team--unregister-agent agent-buf))
           (message "agent-shell-team-events: agent/dismissed — no buffer found for agent-id=%s"
                    agent-id))))))
 
@@ -305,13 +305,17 @@ PARAMS contains request_id, title, type, items, description."
                :type type-str
                :items (mapcar
                        (lambda (item)
-                         (let ((id (or (map-elt item 'id)
+                         (let ((id (or (plist-get item :id)
+                                       (map-elt item 'id)
                                        (map-elt item "id")))
-                               (label (or (map-elt item 'label)
+                               (label (or (plist-get item :label)
+                                          (map-elt item 'label)
                                           (map-elt item "label")))
-                               (desc (or (map-elt item 'description)
+                               (desc (or (plist-get item :description)
+                                         (map-elt item 'description)
                                          (map-elt item "description") ""))
-                               (default-sel (or (map-elt item 'default_selected)
+                               (default-sel (or (plist-get item :default_selected)
+                                                (map-elt item 'default_selected)
                                                 (map-elt item "default_selected"))))
                            (list :id id
                                  :label label
@@ -621,6 +625,7 @@ Called by the WS module for every incoming server notification."
      (agent-shell-team-events--on-permission-request params))
     ;; Silent — modeline/polling only
     ("quota/update" nil)
+    ("agent/usage" nil)
     (_
      (message "agent-shell-team-events: unknown method %S" method))))
 

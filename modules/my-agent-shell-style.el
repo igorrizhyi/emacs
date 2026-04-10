@@ -474,16 +474,33 @@ Padding ensures the prompt doesn't visually touch the last styled block."
            my/agent-shell-server--current-msg-ov
            my/agent-shell-server--current-thought-ov
            (buffer-name))
-  (my/agent-shell-server--freeze-overlay my/agent-shell-server--current-msg-ov)
-  (my/agent-shell-server--freeze-overlay my/agent-shell-server--current-thought-ov)
-  (setq my/agent-shell-server--current-msg-ov nil
-        my/agent-shell-server--current-thought-ov nil)
-  ;; DEBUG: insert visible marker to verify padding is rendered
-  (let ((inhibit-read-only t))
+  ;; Determine which overlay is the last active one (for padding insertion)
+  (let* ((last-ov (or my/agent-shell-server--current-msg-ov
+                      my/agent-shell-server--current-thought-ov))
+         (inhibit-read-only t))
+    ;; Insert padding BEFORE freezing so it's inside the overlay range.
+    ;; We need: (1) the last content line to end with \n so :extend t
+    ;; stretches its background to full width, and (2) an extra blank
+    ;; line within the overlay for bottom padding.
+    (when (and last-ov (overlay-buffer last-ov))
+      (save-excursion
+        (goto-char (overlay-end last-ov))
+        ;; Ensure last content line ends with newline (for :extend t)
+        (unless (bolp) (insert "\n"))
+        ;; Add a blank padding line inside the overlay
+        (insert "\n")
+        ;; Extend the overlay to cover everything we just inserted
+        (move-overlay last-ov (overlay-start last-ov) (point))
+        (message "finalize-overlays: extended ov to %s-%s" (overlay-start last-ov) (point))))
+    ;; Now freeze both overlays (converts rear-advance → fixed boundary)
+    (my/agent-shell-server--freeze-overlay my/agent-shell-server--current-msg-ov)
+    (my/agent-shell-server--freeze-overlay my/agent-shell-server--current-thought-ov)
+    (setq my/agent-shell-server--current-msg-ov nil
+          my/agent-shell-server--current-thought-ov nil)
+    ;; Spacing after the block (gap between block and next prompt)
     (save-excursion
       (goto-char (point-max))
-      (unless (bolp) (insert "\n"))
-      (insert "---PAD---\n\n")))
+      (unless (bolp) (insert "\n"))))
   (message "finalize-overlays: DONE point-max=%s" (point-max)))
 
 ;; --- Table styling (markdown-overlays) ---

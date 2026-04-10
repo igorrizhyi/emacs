@@ -296,6 +296,11 @@ Used to start the HTTP transport for container agents."
 Generated eagerly at load time so MCP handlers always have a valid session.")
 
 
+(defvar agent-shell-team--project-root nil
+  "Project root for the current team session.
+Resolved from the MCP connection context — this is the actual user project
+root (e.g., /home/user/Projects/foo), NOT the Doom config directory.")
+
 (defvar agent-shell-team--backend-project-id nil
   "Backend project ID for the current project on the gang-of-none server.")
 
@@ -742,9 +747,7 @@ and stored in `agent-shell-team--emacs-mcp-http-port' and
                               "KNOWLEDGE_LLM_BACKEND=agent"
                               "KNOWLEDGE_SKIP_SYNTHESIS=1"
                               (format "PROJECT_ROOT=%s"
-                                      (directory-file-name
-                                       (or (agent-shell-worktree--git-repo-root)
-                                           default-directory)))
+                                      (agent-shell-team--resolve-project-root))
                               (format "EMACS_SERVER_NAME=%s" server-name))
                         (when ns
                           (list (format "NAMESPACE=%s" ns)))
@@ -809,6 +812,20 @@ Replaces ws:// with http:// and wss:// with https://."
     (replace-regexp-in-string "\\`ws://" "http://"
                               agent-shell-team-python-url)))
 
+(defun agent-shell-team--resolve-project-root ()
+  "Resolve the actual user project root from MCP connections.
+Returns the project root from the first active MCP connection in this
+Emacs instance, or falls back to `default-directory'.
+Caches the result in `agent-shell-team--project-root'."
+  (or agent-shell-team--project-root
+      (setq agent-shell-team--project-root
+            (or (when (and (boundp 'claude-code-mcp-project-connections)
+                          (fboundp 'claude-code-mcp-get-current-instance-projects))
+                  (let ((projects (claude-code-mcp-get-current-instance-projects)))
+                    (when projects
+                      (directory-file-name (car (car projects))))))
+                (directory-file-name default-directory)))))
+
 (defun agent-shell-team--ensure-backend-project ()
   "Ensure a project exists on the Python backend for the current directory.
 POST /api/projects is an upsert — if a project with the same root_path
@@ -817,9 +834,7 @@ Returns the project ID string, or nil on failure.
 Idempotent — safe to call multiple times."
   (if agent-shell-team--backend-project-id
       agent-shell-team--backend-project-id
-  (let* ((project-root (directory-file-name
-                         (or (and (boundp 'doom-user-dir) doom-user-dir)
-                             default-directory)))
+  (let* ((project-root (agent-shell-team--resolve-project-root))
          (project-name (file-name-nondirectory project-root))
          (base-url (agent-shell-team--python-http-url))
          (url-request-method "POST")
@@ -4104,7 +4119,7 @@ SESSION-ID, ROLE, and BUFFER-NAME customize the config."
         (agent-shell-google-gemini-environment
          (append (list (format "EMACS_INSTANCE_ID=%d" (emacs-pid))
                        (format "EMACS_SERVER_NAME=%s" server-name)
-                       (format "PROJECT_ROOT=%s" (directory-file-name default-directory)))
+                       (format "PROJECT_ROOT=%s" (agent-shell-team--resolve-project-root)))
                  (when-let* ((ns (and (boundp 'agent-shell-namespace--config)
                                       agent-shell-namespace--config
                                       (plist-get agent-shell-namespace--config :namespace))))
