@@ -310,6 +310,7 @@ In server mode the backend manages the ACP subprocess.  The buffer uses
                              ;; Finish output when RPC response arrives
                              (when (and shell-buf (buffer-live-p shell-buf))
                                (with-current-buffer shell-buf
+                                 (message "CALLER: promptAgent-callback -> finalize-overlays")
                                  (when (fboundp 'my/agent-shell-server--finalize-overlays)
                                    (my/agent-shell-server--finalize-overlays))
                                  (when agent-shell-team-events--pending-finish
@@ -400,6 +401,7 @@ PARAMS contains agent_id, status, project_id (or legacy session_id), current_tas
           (let ((buffer (agent-shell-team-events--find-agent-buffer agent-id)))
             (when (and buffer (buffer-live-p buffer))
               (with-current-buffer buffer
+                (message "CALLER: statusChanged-idle -> finalize-overlays")
                 (when (fboundp 'my/agent-shell-server--finalize-overlays)
                   (my/agent-shell-server--finalize-overlays))
                 (when agent-shell-team-events--pending-finish

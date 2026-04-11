@@ -478,10 +478,10 @@ overlay range before freezing it to fixed boundaries."
   "Freeze current overlays and reset trackers (called on new_message_start).
 A new_message_start means the previous message block is complete — freeze its
 overlays so they don't grow into subsequent content."
-  (message "reset-msg-overlay: freezing msg-ov=%s thought-ov=%s buf=%s"
+  (message "reset-msg-overlay: freezing msg-ov=%s thought-ov=%s buf=%s point-max=%s"
            my/agent-shell-server--current-msg-ov
            my/agent-shell-server--current-thought-ov
-           (buffer-name))
+           (buffer-name) (point-max))
   (let ((last-ov (or my/agent-shell-server--current-msg-ov
                      my/agent-shell-server--current-thought-ov)))
     (my/agent-shell-server--pad-and-freeze last-ov)
@@ -491,7 +491,11 @@ overlays so they don't grow into subsequent content."
                       my/agent-shell-server--current-msg-ov)))
       (my/agent-shell-server--freeze-overlay other-ov)))
   (setq my/agent-shell-server--current-msg-ov nil
-        my/agent-shell-server--current-thought-ov nil))
+        my/agent-shell-server--current-thought-ov nil)
+  (message "reset-msg-overlay: DONE point-max=%s tail=%S"
+           (point-max)
+           (buffer-substring-no-properties
+            (max (- (point-max) 15) (point-min)) (point-max))))
 
 (defun my/agent-shell-server--finalize-overlays ()
   "Freeze all server-mode overlays and add trailing padding.
@@ -519,9 +523,12 @@ Padding ensures the prompt doesn't visually touch the last styled block."
       (save-excursion
         (goto-char (point-max))
         (unless (bolp) (insert "\n"))
-        (insert "\n")))
-    (message "finalize-overlays: DONE point-max=%s had-overlay=%s"
-             (point-max) (if last-ov "yes" "no"))))
+        (insert "\n")
+        (message "finalize-overlays: added outer spacing at point-max=%s" (point-max))))
+    (message "finalize-overlays: DONE point-max=%s had-overlay=%s tail=%S"
+             (point-max) (if last-ov "yes" "no")
+             (buffer-substring-no-properties
+              (max (- (point-max) 15) (point-min)) (point-max)))))
 
 ;; --- Table styling (markdown-overlays) ---
 
