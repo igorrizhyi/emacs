@@ -313,6 +313,15 @@ In server mode the backend manages the ACP subprocess.  The buffer uses
                                  (message "CALLER: promptAgent-callback -> finalize-overlays")
                                  (when (fboundp 'my/agent-shell-server--finalize-overlays)
                                    (my/agent-shell-server--finalize-overlays))
+                                 ;; Add outer spacing OUTSIDE the overlay so there's
+                                 ;; a visible gap between the block and the prompt.
+                                 ;; Only when pending-finish exists (about to write prompt).
+                                 (when agent-shell-team-events--pending-finish
+                                   (let ((inhibit-read-only t))
+                                     (save-excursion
+                                       (goto-char (point-max))
+                                       (unless (bolp) (insert "\n"))
+                                       (insert "\n"))))
                                  (when agent-shell-team-events--pending-finish
                                    (funcall agent-shell-team-events--pending-finish
                                             (not error))
@@ -404,6 +413,13 @@ PARAMS contains agent_id, status, project_id (or legacy session_id), current_tas
                 (message "CALLER: statusChanged-idle -> finalize-overlays")
                 (when (fboundp 'my/agent-shell-server--finalize-overlays)
                   (my/agent-shell-server--finalize-overlays))
+                ;; Outer spacing — only when pending-finish exists
+                (when agent-shell-team-events--pending-finish
+                  (let ((inhibit-read-only t))
+                    (save-excursion
+                      (goto-char (point-max))
+                      (unless (bolp) (insert "\n"))
+                      (insert "\n"))))
                 (when agent-shell-team-events--pending-finish
                   (funcall agent-shell-team-events--pending-finish t)
                   (setq agent-shell-team-events--pending-finish nil)))))))
