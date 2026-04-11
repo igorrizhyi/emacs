@@ -18,6 +18,7 @@
 ;;; Code:
 
 (require 'map)
+(require 'agent-shell-chat-buffer)
 
 ;; Cross-module forward declarations
 (declare-function agent-shell-team--handle-task-update "agent-shell-team"
@@ -37,9 +38,6 @@
 (declare-function my/team-sidebar--render "my-agent-shell-sidebar")
 (declare-function my/approval--receive-request "my-approval-ui"
                   (request))
-(declare-function make-shell-maker-config "shell-maker")
-(declare-function shell-maker-start "shell-maker"
-                  (config &optional no-focus welcome-function new-session buffer-name mode-line-name))
 (declare-function agent-shell-team-dispatch-prompt-agent "agent-shell-team-dispatch"
                   (agent-id message &optional callback))
 ;; agent-shell-ui — collapsible section system (works in any buffer)
@@ -61,10 +59,6 @@
 (defvar agent-shell-team--sessions)
 (defvar agent-shell-team--server-mode-p)
 
-;; Variables from shell-maker we reference
-(defvar shell-maker--busy)
-(defvar shell-maker--config)
-
 ;; Variables from my-agent-shell-style we reference
 (defvar my/agent-shell-server--current-msg-ov)
 (defvar my/agent-shell-server--current-thought-ov)
@@ -77,12 +71,8 @@
 (defvar-local agent-shell-team-events--usage nil
   "Plist of latest usage data from the agent session, for modeline display.")
 
-(defvar-local agent-shell-team-events--pending-finish nil
-  "Closure to call when the agent turn completes (shell-maker :finish-output).")
-
-(defvar-local agent-shell-team-events--prompt-hidden-ov nil
-  "Overlay that hides the comint prompt in normal mode.
-Non-nil means the prompt is currently hidden.")
+(defvar-local agent-shell-team-events--turn-in-progress nil
+  "Non-nil when an agent turn is in progress (waiting for response).")
 
 ;;; Hook point — the WS module sets this to our dispatcher
 
@@ -100,48 +90,34 @@ replayed after `agent/spawned' completes registration.")
 ;;; Internal helpers
 
 (defun agent-shell-team-events--finish-turn ()
-  "Finish the current agent turn without inserting a duplicate prompt.
-In server-mode buffers the prompt is always visible at the bottom, so
-`shell-maker-finish-output' (which appends reply + prompt) must NOT be
-called.  Instead we just clear the busy flag and the pending-finish
-closure.  Must be called from within the agent buffer."
-  (setq shell-maker--busy nil)
-  (setq agent-shell-team-events--pending-finish nil))
+  "Finish the current agent turn.
+Finalizes overlays, adds outer spacing, writes a fresh prompt, and
+hides the input area.  Must be called from within the agent buffer."
+  (message "CALLER: finish-turn -> finalize-overlays")
+  (when (fboundp 'my/agent-shell-server--finalize-overlays)
+    (my/agent-shell-server--finalize-overlays))
+  ;; Add outer spacing between last block and prompt
+  (when agent-shell-team-events--turn-in-progress
+    (let ((inhibit-read-only t))
+      (save-excursion
+        (goto-char (marker-position agent-shell-chat-buffer--history-end))
+        (unless (bolp) (insert "\n"))
+        (insert "\n"))))
+  ;; Write a fresh prompt and hide it
+  (when agent-shell-team-events--turn-in-progress
+    (agent-shell-chat-buffer-finish-turn (current-buffer))
+    (agent-shell-chat-buffer-hide-input (current-buffer))
+    (setq agent-shell-team-events--turn-in-progress nil)))
 
 (defun agent-shell-team-events--hide-prompt ()
-  "Hide the comint prompt with an invisible overlay.
-Only acts in server-mode agent buffers that have a prompt."
-  (when (and (bound-and-true-p agent-shell-team--server-mode-p)
-             comint-last-prompt
-             (markerp (car comint-last-prompt))
-             (marker-position (car comint-last-prompt))
-             (not agent-shell-team-events--prompt-hidden-ov))
-    (let ((ov (make-overlay (car comint-last-prompt)
-                            (cdr comint-last-prompt)
-                            nil t nil)))  ; FRONT-ADVANCE=t: inserts before overlay stay visible
-      (overlay-put ov 'invisible t)
-      (overlay-put ov 'evaporate nil)
-      (overlay-put ov 'agent-shell-prompt-hide t)
-      (setq agent-shell-team-events--prompt-hidden-ov ov))))
+  "Hide the input area in server-mode agent buffers."
+  (when (bound-and-true-p agent-shell-team--server-mode-p)
+    (agent-shell-chat-buffer-hide-input (current-buffer))))
 
 (defun agent-shell-team-events--show-prompt ()
-  "Show the comint prompt by removing the invisible overlay.
-No relocation needed — with FRONT-ADVANCE=t, content inserted before
-the hidden overlay stays visible, so the prompt is always at the end.
-Only acts in server-mode agent buffers."
-  (when (and (bound-and-true-p agent-shell-team--server-mode-p)
-             agent-shell-team-events--prompt-hidden-ov)
-    (agent-shell-team-events--dump-overlays "BEFORE-SHOW-PROMPT")
-    (delete-overlay agent-shell-team-events--prompt-hidden-ov)
-    (setq agent-shell-team-events--prompt-hidden-ov nil)
-    (agent-shell-team-events--dump-overlays "AFTER-SHOW-PROMPT")
-    (message "show-prompt: comint-last-prompt=%s point-max=%s"
-             comint-last-prompt (point-max))
-    ;; Jump to end of prompt so user can type immediately
-    (when (and comint-last-prompt
-               (markerp (cdr comint-last-prompt))
-               (marker-position (cdr comint-last-prompt)))
-      (goto-char (cdr comint-last-prompt)))))
+  "Show the input area in server-mode agent buffers."
+  (when (bound-and-true-p agent-shell-team--server-mode-p)
+    (agent-shell-chat-buffer-show-input (current-buffer))))
 
 (defun agent-shell-team-events--dump-overlays (label)
   "Log all styled overlays in the current buffer with LABEL prefix."
@@ -161,25 +137,8 @@ Only acts in server-mode agent buffers."
                (overlay-get ov 'agent-shell-prompt-hide)
                (overlay-get ov 'evaporate)))))
 
-(defun agent-shell-team-events--submit-and-trim ()
-  "Submit input via shell-maker, then trim excess blank lines.
-Ensures only one newline between the user input and subsequent content."
-  (interactive)
-  (agent-shell-team-events--dump-overlays "BEFORE-SUBMIT")
-  (shell-maker-submit)
-  (agent-shell-team-events--dump-overlays "AFTER-SUBMIT")
-  ;; After submit, trim excess newlines between user input and point-max/prompt
-  (let ((inhibit-read-only t))
-    (save-excursion
-      (goto-char (point-max))
-      (when (re-search-backward "[^\n]" nil t)
-        (forward-char 1)
-        (let ((gap (- (point-max) (point))))
-          (message "submit-and-trim: point-max=%s last-content=%s gap=%s comint-last-prompt=%s"
-                   (point-max) (point) gap comint-last-prompt)
-          (when (> gap 1)
-            (message "submit-and-trim: TRIMMING %s chars" (- gap 1))
-            (delete-region (+ (point) 1) (point-max))))))))
+;; submit-and-trim is no longer needed — agent-shell-chat-buffer--submit
+;; handles input extraction and history commitment directly.
 
 (defun agent-shell-team-events--set-agent-status (agent-id status)
   "Update the status field of AGENT-ID in the session registry."
@@ -197,7 +156,9 @@ Ensures only one newline between the user input and subsequent content."
                             (buffer-local-value 'agent-shell-team--agent-id buf)
                             (equal (buffer-local-value 'agent-shell-team--agent-id buf)
                                    agent-id)))
-               (setcdr (assq 'status agent) status)
+               (if (assq 'status agent)
+                   (setcdr (assq 'status agent) status)
+                 (push (cons 'status status) (cdr agent)))
                (throw 'done t)))))
        agent-shell-team--sessions))))
 
@@ -281,11 +242,12 @@ PARAMS contains group_id and completed (list of request IDs)."
   "Non-nil when this buffer is backed by the Python backend.")
 
 (defun agent-shell-team-events--on-agent-spawned (params)
-  "Handle agent/spawned — create an interactive buffer and register it.
+  "Handle agent/spawned — create a plain chat buffer and register it.
 PARAMS contains agent_id, project_id (or legacy session_id), role,
 worktree_path, worktree_name, model.
 In server mode the backend manages the ACP subprocess.  The buffer uses
-`shell-maker' for interactive input, routing to `promptAgent' WS RPC."
+`agent-shell-chat-buffer' for interactive input, routing to `promptAgent'
+WS RPC."
   (let ((session-id (or (agent-shell-team-events--get-param params "session_id")
                         (agent-shell-team-events--get-param params "project_id")
                         (bound-and-true-p agent-shell-team--session-id)))
@@ -303,95 +265,66 @@ In server mode the backend manages the ACP subprocess.  The buffer uses
     ;; when both RPC callback and broadcast notification fire)
     (if (and agent-id (agent-shell-team-events--find-agent-buffer agent-id))
         (message "agent-shell-team-events: on-agent-spawned SKIP duplicate id=%s" agent-id)
-    (when (and session-id role)
-      (let* ((wt-name (or worktree-name agent-id))
-             (buf-name (agent-shell-team--buffer-name session-id role wt-name))
-             ;; Capture agent-id for the closure
-             (agent-id-copy agent-id)
-             ;; Create shell-maker config with promptAgent as the execute-command
-             (config (make-shell-maker-config
-                      :name "agent-server"
-                      :prompt "agent> "
-                      :execute-command
-                      (lambda (command shell)
-                        ;; Store :finish-output to call when agent turn completes.
-                        ;; Primary trigger: promptAgent RPC callback.
-                        ;; Backup trigger: agent/statusChanged → idle.
-                        (let ((shell-buf (map-elt shell :buffer)))
-                          (setq-local agent-shell-team-events--pending-finish
-                                      (map-elt shell :finish-output))
-                          (agent-shell-team-dispatch-prompt-agent
-                           agent-id-copy
-                           command
-                           (lambda (result error)
-                             (when error
-                               (message "promptAgent error for %s: %s"
-                                        agent-id-copy error))
-                             ;; Finish output when RPC response arrives
-                             (when (and shell-buf (buffer-live-p shell-buf))
-                               (with-current-buffer shell-buf
-                                 (message "CALLER: promptAgent-callback -> finalize-overlays")
-                                 (when (fboundp 'my/agent-shell-server--finalize-overlays)
-                                   (my/agent-shell-server--finalize-overlays))
-                                 ;; Add outer spacing OUTSIDE the overlay so there's
-                                 ;; a visible gap between the block and the prompt.
-                                 ;; Only when pending-finish exists (about to write prompt).
-                                 (when agent-shell-team-events--pending-finish
-                                   (let ((inhibit-read-only t))
-                                     (save-excursion
-                                       (goto-char (point-max))
-                                       (unless (bolp) (insert "\n"))
-                                       (insert "\n"))))
-                                 (when agent-shell-team-events--pending-finish
-                                   (funcall agent-shell-team-events--pending-finish
-                                            (not error))
-                                   (setq agent-shell-team-events--pending-finish
-                                         nil)
-                                   ;; Hide prompt until user enters insert mode
-                                   (agent-shell-team-events--hide-prompt))))))))))
-             (buffer (shell-maker-start config t nil nil buf-name)))
-        (message "agent-shell-team-events: agent/spawned id=%s role=%s model=%s buffer=%s"
-                 agent-id role (or model "default") buf-name)
-        ;; Register in team session roster (mode "server" = backend-managed)
-        (agent-shell-team--register-agent session-id buffer role "server"
-                                          worktree-path wt-name)
-        ;; Set buffer-local variables for server-mode agents
-        (with-current-buffer buffer
-          (setq agent-shell-team--session-id session-id
-                agent-shell-team--agent-id agent-id
-                agent-shell-team--init-finished-p t
-                agent-shell-team--server-mode-p t)
-          (when model
-            (setq agent-shell-team--model-id model))
-          ;; Bind Enter in evil insert mode to shell-maker-submit
-          (evil-local-set-key 'insert (kbd "RET") #'agent-shell-team-events--submit-and-trim)
-          (evil-local-set-key 'insert (kbd "<return>") #'agent-shell-team-events--submit-and-trim)
-          ;; Show/hide prompt based on evil state
-          (add-hook 'evil-insert-state-entry-hook
-                    #'agent-shell-team-events--show-prompt nil t)
-          (add-hook 'evil-normal-state-entry-hook
-                    #'agent-shell-team-events--hide-prompt nil t)
-          ;; Start with prompt hidden (normal mode is default)
-          (agent-shell-team-events--hide-prompt)
-          ;; Enable collapsible section system
-          (when (fboundp 'agent-shell-ui-mode)
-            (agent-shell-ui-mode +1)))
-        ;; Store agent-id in the roster alist entry for lookup by dismissed handler
-        (let* ((agents (agent-shell-team--get-session-agents session-id))
-               (entry (cl-find buffer agents
-                               :key (lambda (a) (alist-get 'buffer a)))))
-          (when entry
-            (push (cons 'agent-id agent-id) (cdr entry))))
-        ;; Replay any events that arrived before this agent was registered
-        (when agent-id
-          (agent-shell-team-events--replay-pending agent-id))
-        ;; Refresh sidebar if visible
-        (when-let ((sidebar-buf (get-buffer " *team-sidebar*")))
-          (when (get-buffer-window sidebar-buf)
-            (my/team-sidebar--render)))
-        ;; Auto-switch to lead buffer on initial team start (not slave_leads)
-        (when (equal role "lead")
-          (switch-to-buffer buffer)))))))
+      (when (and session-id role)
+        (let* ((wt-name (or worktree-name agent-id))
+               (buf-name (agent-shell-team--buffer-name session-id role wt-name))
+               (agent-id-copy agent-id)
+               ;; Create plain chat buffer with promptAgent as submit handler
+               (buffer (agent-shell-chat-buffer-create
+                        buf-name
+                        "agent> "
+                        (lambda (command)
+                          (let ((buf (current-buffer)))
+                            (setq agent-shell-team-events--turn-in-progress t)
+                            (agent-shell-team-dispatch-prompt-agent
+                             agent-id-copy
+                             command
+                             (lambda (_result error)
+                               (when error
+                                 (message "promptAgent error for %s: %s"
+                                          agent-id-copy error))
+                               ;; Finish turn when RPC response arrives
+                               (when (and buf (buffer-live-p buf))
+                                 (with-current-buffer buf
+                                   (agent-shell-team-events--finish-turn))))))))))
+          (message "agent-shell-team-events: agent/spawned id=%s role=%s model=%s buffer=%s"
+                   agent-id role (or model "default") buf-name)
+          ;; Register in team session roster (mode "server" = backend-managed)
+          (agent-shell-team--register-agent session-id buffer role "server"
+                                            worktree-path wt-name)
+          ;; Set buffer-local variables for server-mode agents
+          (with-current-buffer buffer
+            (setq agent-shell-team--session-id session-id
+                  agent-shell-team--agent-id agent-id
+                  agent-shell-team--init-finished-p t
+                  agent-shell-team--server-mode-p t)
+            (when model
+              (setq agent-shell-team--model-id model))
+            ;; Evil mode show/hide is already wired by agent-shell-chat-buffer-create
+            ;; but we also want our wrappers for server-mode checks
+            (add-hook 'evil-insert-state-entry-hook
+                      #'agent-shell-team-events--show-prompt nil t)
+            (add-hook 'evil-normal-state-entry-hook
+                      #'agent-shell-team-events--hide-prompt nil t)
+            ;; Enable collapsible section system
+            (when (fboundp 'agent-shell-ui-mode)
+              (agent-shell-ui-mode +1)))
+          ;; Store agent-id in the roster alist entry for lookup by dismissed handler
+          (let* ((agents (agent-shell-team--get-session-agents session-id))
+                 (entry (cl-find buffer agents
+                                 :key (lambda (a) (alist-get 'buffer a)))))
+            (when entry
+              (push (cons 'agent-id agent-id) (cdr entry))))
+          ;; Replay any events that arrived before this agent was registered
+          (when agent-id
+            (agent-shell-team-events--replay-pending agent-id))
+          ;; Refresh sidebar if visible
+          (when-let ((sidebar-buf (get-buffer " *team-sidebar*")))
+            (when (get-buffer-window sidebar-buf)
+              (my/team-sidebar--render)))
+          ;; Auto-switch to lead buffer on initial team start (not slave_leads)
+          (when (equal role "lead")
+            (switch-to-buffer buffer)))))))
 
 
 (defun agent-shell-team-events--on-agent-dismissed (params)
@@ -427,26 +360,13 @@ PARAMS contains agent_id, status, project_id (or legacy session_id), current_tas
           (agent-shell-team-events--queue-event agent-id "agent/statusChanged" params)
         ;; Update status in the agent registry alist
         (agent-shell-team-events--set-agent-status agent-id status)
-        ;; When agent becomes idle, finish the shell-maker output cycle
+        ;; When agent becomes idle, finish the turn (backup trigger)
         (when (equal status "idle")
           (let ((buffer (agent-shell-team-events--find-agent-buffer agent-id)))
             (when (and buffer (buffer-live-p buffer))
               (with-current-buffer buffer
-                (message "CALLER: statusChanged-idle -> finalize-overlays")
-                (when (fboundp 'my/agent-shell-server--finalize-overlays)
-                  (my/agent-shell-server--finalize-overlays))
-                ;; Outer spacing — only when pending-finish exists
-                (when agent-shell-team-events--pending-finish
-                  (let ((inhibit-read-only t))
-                    (save-excursion
-                      (goto-char (point-max))
-                      (unless (bolp) (insert "\n"))
-                      (insert "\n"))))
-                (when agent-shell-team-events--pending-finish
-                  (funcall agent-shell-team-events--pending-finish t)
-                  (setq agent-shell-team-events--pending-finish nil)
-                  ;; Hide prompt until user enters insert mode
-                  (agent-shell-team-events--hide-prompt)))))))
+                (message "CALLER: statusChanged-idle -> finish-turn")
+                (agent-shell-team-events--finish-turn))))))
       ;; Refresh sidebar if visible
       (when-let ((sidebar-buf (get-buffer " *team-sidebar*")))
         (when (get-buffer-window sidebar-buf)
@@ -514,35 +434,12 @@ PARAMS contains request_id, title, type, items, description."
 ;;; Session update handlers — streaming agent output
 
 (defun agent-shell-team-events--insert-at-end (buffer text)
-  "Insert TEXT at the end of BUFFER, before the comint prompt if present.
-In server-mode agent buffers the prompt should stay at the bottom so
-follow-up messages don't corrupt it.  When `comint-last-prompt' exists,
-text is inserted just before the prompt; otherwise at `point-max'.
+  "Insert TEXT into the history region of BUFFER.
+Uses `agent-shell-chat-buffer-insert' which inserts before the
+history-end marker.  The marker has insertion-type t so it advances
+automatically — no comint prompt juggling needed.
 Returns (START . END) of the inserted region, or nil."
-  (when (and (buffer-live-p buffer) (stringp text) (> (length text) 0))
-    (with-current-buffer buffer
-      (let* ((inhibit-read-only t)
-             ;; Always insert before the comint prompt (visible or hidden).
-             ;; With FRONT-ADVANCE=t on the invisible overlay, text inserted
-             ;; before it stays visible. The prompt stays at the end naturally.
-             (prompt-pos (when (and (bound-and-true-p agent-shell-team--server-mode-p)
-                                    comint-last-prompt
-                                    (markerp (car comint-last-prompt))
-                                    (marker-position (car comint-last-prompt)))
-                           (marker-position (car comint-last-prompt))))
-             (insert-pos (or prompt-pos (point-max)))
-             start end)
-        (message "insert-at-end: prompt-pos=%s insert-pos=%s point-max=%s text-len=%s"
-                 prompt-pos insert-pos (point-max) (length text))
-        (save-excursion
-          (goto-char insert-pos)
-          (setq start (point))
-          (insert text)
-          (setq end (point)))
-        ;; Scroll windows showing this buffer to bottom
-        (dolist (win (get-buffer-window-list buffer nil t))
-          (set-window-point win (point-max)))
-        (cons start end)))))
+  (agent-shell-chat-buffer-insert buffer text))
 
 (defun agent-shell-team-events--on-message-chunk (buffer update)
   "Handle agent_message_chunk — append text to agent BUFFER.
@@ -550,24 +447,26 @@ UPDATE contains content.text."
   (let* ((content (agent-shell-team-events--get-param update "content"))
          (text (and content (agent-shell-team-events--get-param content "text"))))
     ;; First chunk of a new message: trim leading \n from text AND
-    ;; collapse excess blank lines above the insertion point to one
+    ;; collapse excess blank lines above the insertion point to \n\n
+    ;; (one visible blank line between user input and response block)
     (when (and text (buffer-live-p buffer)
                (not (buffer-local-value 'my/agent-shell-server--current-msg-ov buffer)))
       (setq text (string-trim-left text "\n+"))
       (with-current-buffer buffer
         (let* ((inhibit-read-only t)
-               ;; Always trim at point-max — after submit, the blank lines
-               ;; are between the user's input and the end of the buffer.
-               (trim-pos (point-max)))
-          (save-excursion
-            (goto-char trim-pos)
-            (when (re-search-backward "[^\n\r ]" nil t)
-              (forward-char 1)
-              (let ((gap (- trim-pos (point))))
-                (message "on-message-chunk TRIM: trim-pos=%s last-content=%s gap=%s"
-                         trim-pos (point) gap)
-                (when (> gap 1)
-                  (delete-region (+ (point) 1) trim-pos))))))))
+               ;; Trim at history-end marker — the insertion point
+               (trim-pos (marker-position agent-shell-chat-buffer--history-end)))
+          (when trim-pos
+            (save-excursion
+              (goto-char trim-pos)
+              (when (re-search-backward "[^\n\r ]" nil t)
+                (forward-char 1)
+                (let ((gap (- trim-pos (point))))
+                  (message "on-message-chunk TRIM: trim-pos=%s last-content=%s gap=%s"
+                           trim-pos (point) gap)
+                  ;; Keep up to 2 newlines (\n\n = one blank line gap)
+                  (when (> gap 2)
+                    (delete-region (+ (point) 2) trim-pos)))))))))
     (when-let ((range (agent-shell-team-events--insert-at-end buffer text)))
       (with-current-buffer buffer
         (when (fboundp 'my/agent-shell-server--extend-or-create-msg-ov)

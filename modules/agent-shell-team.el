@@ -1204,17 +1204,20 @@ For server-mode agents, uses the registry status field (updated by
 which only tracks user-initiated submissions."
   (cond
    ((not (buffer-live-p buffer)) 'dead)
+   ;; Server-mode: trust the registry status from statusChanged events.
+   ;; No process check needed — plain chat buffers have no subprocess.
+   ((buffer-local-value 'agent-shell-team--server-mode-p buffer)
+    (if (not (buffer-local-value 'agent-shell-team--init-finished-p buffer))
+        'initializing
+      (let ((reg-status (agent-shell-team--agent-registry-status buffer)))
+        (cond
+         ((equal reg-status "busy") 'busy)
+         ((equal reg-status "initializing") 'initializing)
+         ((buffer-local-value 'agent-shell-team--reserved-p buffer) 'reserved)
+         (t 'idle)))))
+   ;; Local-mode: derive from shell-maker state
    ((not (agent-shell-team--buffer-ready-p buffer)) 'initializing)
    ((not (buffer-local-value 'agent-shell-team--init-finished-p buffer)) 'initializing)
-   ;; Server-mode: trust the registry status from statusChanged events
-   ((buffer-local-value 'agent-shell-team--server-mode-p buffer)
-    (let ((reg-status (agent-shell-team--agent-registry-status buffer)))
-      (cond
-       ((equal reg-status "busy") 'busy)
-       ((equal reg-status "initializing") 'initializing)
-       ((buffer-local-value 'agent-shell-team--reserved-p buffer) 'reserved)
-       (t 'idle))))
-   ;; Local-mode: derive from shell-maker state
    ((agent-shell-team--buffer-busy-p buffer) 'busy)
    ((buffer-local-value 'agent-shell-team--reserved-p buffer) 'reserved)
    (t 'idle)))
