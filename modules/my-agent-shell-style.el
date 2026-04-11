@@ -512,10 +512,11 @@ Padding ensures the prompt doesn't visually touch the last styled block."
     (my/agent-shell-server--freeze-overlay other-ov)
     (setq my/agent-shell-server--current-msg-ov nil
           my/agent-shell-server--current-thought-ov nil)
-    ;; Single newline for spacing between block and next prompt
+    ;; Spacing between block and next prompt
     (save-excursion
       (goto-char (point-max))
-      (unless (bolp) (insert "\n"))))
+      (unless (bolp) (insert "\n"))
+      (insert "\n")))
   (message "finalize-overlays: DONE point-max=%s" (point-max)))
 
 ;; --- Table styling (markdown-overlays) ---

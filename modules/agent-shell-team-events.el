@@ -480,10 +480,19 @@ Returns (START . END) of the inserted region, or nil."
 UPDATE contains content.text."
   (let* ((content (agent-shell-team-events--get-param update "content"))
          (text (and content (agent-shell-team-events--get-param content "text"))))
-    ;; Trim leading newlines from the first chunk of a new message
+    ;; First chunk of a new message: trim leading \n from text AND
+    ;; collapse excess blank lines above the insertion point to one
     (when (and text (buffer-live-p buffer)
                (not (buffer-local-value 'my/agent-shell-server--current-msg-ov buffer)))
-      (setq text (string-trim-left text "\n+")))
+      (setq text (string-trim-left text "\n+"))
+      (with-current-buffer buffer
+        (let ((inhibit-read-only t))
+          (save-excursion
+            (goto-char (point-max))
+            (when (re-search-backward "[^\n]" nil t)
+              (forward-char 1)
+              (when (> (- (point-max) (point)) 1)
+                (delete-region (+ (point) 1) (point-max))))))))
     (when-let ((range (agent-shell-team-events--insert-at-end buffer text)))
       (with-current-buffer buffer
         (when (fboundp 'my/agent-shell-server--extend-or-create-msg-ov)
