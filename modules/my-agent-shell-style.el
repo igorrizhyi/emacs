@@ -461,7 +461,7 @@ Freezes any active message overlay first (type transition)."
            start end my/agent-shell-server-thought-face))))
 
 (defun my/agent-shell-server--pad-and-freeze (ov)
-  "Add padding newlines inside OV so :extend t fills the last line, then freeze.
+  "Add inner padding to OV so :extend t fills the last line, then freeze.
 Inserts a trailing newline (if needed) plus a blank padding line inside the
 overlay range before freezing it to fixed boundaries."
   (when (and ov (overlay-buffer ov))
@@ -512,11 +512,10 @@ Padding ensures the prompt doesn't visually touch the last styled block."
     (my/agent-shell-server--freeze-overlay other-ov)
     (setq my/agent-shell-server--current-msg-ov nil
           my/agent-shell-server--current-thought-ov nil)
-    ;; Spacing after the block (gap between block and next prompt)
+    ;; Single newline for spacing between block and next prompt
     (save-excursion
       (goto-char (point-max))
-      (unless (bolp) (insert "\n"))
-      (insert "\n")))
+      (unless (bolp) (insert "\n"))))
   (message "finalize-overlays: DONE point-max=%s" (point-max)))
 
 ;; --- Table styling (markdown-overlays) ---

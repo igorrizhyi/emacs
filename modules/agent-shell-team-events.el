@@ -59,6 +59,15 @@
 (defvar agent-shell-team--request-to-session)
 (defvar agent-shell-team--task-groups)
 (defvar agent-shell-team--sessions)
+(defvar agent-shell-team--server-mode-p)
+
+;; Variables from shell-maker we reference
+(defvar shell-maker--busy)
+(defvar shell-maker--config)
+
+;; Variables from my-agent-shell-style we reference
+(defvar my/agent-shell-server--current-msg-ov)
+(defvar my/agent-shell-server--current-thought-ov)
 
 ;;; Buffer-local variables for streaming agent output
 
@@ -71,19 +80,113 @@
 (defvar-local agent-shell-team-events--pending-finish nil
   "Closure to call when the agent turn completes (shell-maker :finish-output).")
 
+(defvar-local agent-shell-team-events--prompt-hidden-ov nil
+  "Overlay that hides the comint prompt in normal mode.
+Non-nil means the prompt is currently hidden.")
+
 ;;; Hook point — the WS module sets this to our dispatcher
 
 (defvar agent-shell-team-ws-notification-handler nil
   "Function called by the WS module for every incoming server notification.
 Set to `agent-shell-team-events--handle-notification' on module load.")
 
+;;; Pending events queue — buffers events that arrive before agent/spawned
+
+(defvar agent-shell-team-events--pending-events (make-hash-table :test 'equal)
+  "Hash-table mapping agent-id -> list of (METHOD . PARAMS) conses.
+Events that arrive before the agent is registered are queued here and
+replayed after `agent/spawned' completes registration.")
+
 ;;; Internal helpers
+
+(defun agent-shell-team-events--finish-turn ()
+  "Finish the current agent turn without inserting a duplicate prompt.
+In server-mode buffers the prompt is always visible at the bottom, so
+`shell-maker-finish-output' (which appends reply + prompt) must NOT be
+called.  Instead we just clear the busy flag and the pending-finish
+closure.  Must be called from within the agent buffer."
+  (setq shell-maker--busy nil)
+  (setq agent-shell-team-events--pending-finish nil))
+
+(defun agent-shell-team-events--hide-prompt ()
+  "Hide the comint prompt with an invisible overlay.
+Only acts in server-mode agent buffers that have a prompt."
+  (when (and (bound-and-true-p agent-shell-team--server-mode-p)
+             comint-last-prompt
+             (markerp (car comint-last-prompt))
+             (marker-position (car comint-last-prompt))
+             (not agent-shell-team-events--prompt-hidden-ov))
+    (let ((ov (make-overlay (car comint-last-prompt)
+                            (cdr comint-last-prompt)
+                            nil nil nil)))
+      (overlay-put ov 'invisible t)
+      (overlay-put ov 'evaporate nil)
+      (overlay-put ov 'agent-shell-prompt-hide t)
+      (setq agent-shell-team-events--prompt-hidden-ov ov))))
+
+(defun agent-shell-team-events--show-prompt ()
+  "Remove the invisible overlay from the comint prompt and move point there.
+Only acts in server-mode agent buffers."
+  (when (and (bound-and-true-p agent-shell-team--server-mode-p)
+             agent-shell-team-events--prompt-hidden-ov)
+    (delete-overlay agent-shell-team-events--prompt-hidden-ov)
+    (setq agent-shell-team-events--prompt-hidden-ov nil)
+    ;; Jump to end of prompt so user can type immediately
+    (when (and comint-last-prompt
+               (markerp (cdr comint-last-prompt))
+               (marker-position (cdr comint-last-prompt)))
+      (goto-char (cdr comint-last-prompt)))))
+
+(defun agent-shell-team-events--set-agent-status (agent-id status)
+  "Update the status field of AGENT-ID in the session registry."
+  (when (and agent-id status (boundp 'agent-shell-team--sessions))
+    (catch 'done
+      (maphash
+       (lambda (_session-id agents)
+         (dolist (agent agents)
+           (let ((wt-name (alist-get 'worktree-name agent))
+                 (buf (alist-get 'buffer agent))
+                 (aid (alist-get 'agent-id agent)))
+             (when (or (and wt-name (string= wt-name agent-id))
+                       (and aid (string= aid agent-id))
+                       (and buf (buffer-live-p buf)
+                            (buffer-local-value 'agent-shell-team--agent-id buf)
+                            (equal (buffer-local-value 'agent-shell-team--agent-id buf)
+                                   agent-id)))
+               (setcdr (assq 'status agent) status)
+               (throw 'done t)))))
+       agent-shell-team--sessions))))
+
+(defun agent-shell-team-events--queue-event (agent-id method params)
+  "Queue a (METHOD . PARAMS) event for AGENT-ID to replay after spawned."
+  (let ((queue (gethash agent-id agent-shell-team-events--pending-events)))
+    (puthash agent-id (append queue (list (cons method params)))
+             agent-shell-team-events--pending-events))
+  (message "agent-shell-team-events: queued %s for unregistered agent %s" method agent-id))
+
+(defun agent-shell-team-events--replay-pending (agent-id)
+  "Replay any queued events for AGENT-ID, then clear the queue."
+  (when-let ((events (gethash agent-id agent-shell-team-events--pending-events)))
+    (message "agent-shell-team-events: replaying %d pending events for %s"
+             (length events) agent-id)
+    (remhash agent-id agent-shell-team-events--pending-events)
+    (dolist (event events)
+      (let ((method (car event))
+            (params (cdr event)))
+        (agent-shell-team-events--handle-notification method params)))))
 
 (defun agent-shell-team-events--get-param (params key)
   "Extract KEY from PARAMS, trying keyword, symbol, and string forms."
   (or (plist-get params (intern (concat ":" key)))
       (map-elt params (intern key))
       (map-elt params key)))
+
+(defun agent-shell-team-events--get-agent-id (params)
+  "Extract agent ID from PARAMS, trying agent_id and id keys.
+The backend uses `agent_id' in some frames (spawned, session/update) and
+`id' in others (statusChanged, dismissed)."
+  (or (agent-shell-team-events--get-param params "agent_id")
+      (agent-shell-team-events--get-param params "id")))
 
 (defun agent-shell-team-events--find-agent-buffer (agent-id)
   "Find the Emacs buffer for AGENT-ID by matching worktree-name across all sessions.
@@ -146,7 +249,7 @@ In server mode the backend manages the ACP subprocess.  The buffer uses
         (worktree-path (agent-shell-team-events--get-param params "worktree_path"))
         (worktree-name (agent-shell-team-events--get-param params "worktree_name"))
         (model (agent-shell-team-events--get-param params "model"))
-        (agent-id (agent-shell-team-events--get-param params "agent_id")))
+        (agent-id (agent-shell-team-events--get-agent-id params)))
     (message "agent-shell-team-events: on-agent-spawned ENTER id=%s role=%s session=%s"
              agent-id role session-id)
     ;; Normalize master_lead → lead for buffer naming and UI
@@ -183,7 +286,6 @@ In server mode the backend manages the ACP subprocess.  The buffer uses
                              ;; Finish output when RPC response arrives
                              (when (and shell-buf (buffer-live-p shell-buf))
                                (with-current-buffer shell-buf
-                                 ;; Freeze overlays before shell-maker inserts prompt
                                  (when (fboundp 'my/agent-shell-server--finalize-overlays)
                                    (my/agent-shell-server--finalize-overlays))
                                  (when agent-shell-team-events--pending-finish
@@ -208,6 +310,13 @@ In server mode the backend manages the ACP subprocess.  The buffer uses
           ;; Bind Enter in evil insert mode to shell-maker-submit
           (evil-local-set-key 'insert (kbd "RET") #'shell-maker-submit)
           (evil-local-set-key 'insert (kbd "<return>") #'shell-maker-submit)
+          ;; Show/hide prompt based on evil state
+          (add-hook 'evil-insert-state-entry-hook
+                    #'agent-shell-team-events--show-prompt nil t)
+          (add-hook 'evil-normal-state-entry-hook
+                    #'agent-shell-team-events--hide-prompt nil t)
+          ;; Start with prompt hidden (normal mode is default)
+          (agent-shell-team-events--hide-prompt)
           ;; Enable collapsible section system
           (when (fboundp 'agent-shell-ui-mode)
             (agent-shell-ui-mode +1)))
@@ -217,6 +326,9 @@ In server mode the backend manages the ACP subprocess.  The buffer uses
                                :key (lambda (a) (alist-get 'buffer a)))))
           (when entry
             (push (cons 'agent-id agent-id) (cdr entry))))
+        ;; Replay any events that arrived before this agent was registered
+        (when agent-id
+          (agent-shell-team-events--replay-pending agent-id))
         ;; Refresh sidebar if visible
         (when-let ((sidebar-buf (get-buffer " *team-sidebar*")))
           (when (get-buffer-window sidebar-buf)
@@ -230,7 +342,7 @@ In server mode the backend manages the ACP subprocess.  The buffer uses
   "Handle agent/dismissed — unregister the agent from the session roster.
 PARAMS contains agent_id, project_id (or legacy session_id).
 Matches by worktree-name or buffer-local agent-id, searching all sessions."
-  (let ((agent-id (agent-shell-team-events--get-param params "agent_id")))
+  (let ((agent-id (agent-shell-team-events--get-agent-id params)))
     (message "agent-shell-team-events: agent/dismissed id=%s" agent-id)
     (when agent-id
       ;; Search all sessions for a matching agent
@@ -246,7 +358,7 @@ Matches by worktree-name or buffer-local agent-id, searching all sessions."
 (defun agent-shell-team-events--on-agent-status-changed (params)
   "Handle agent/statusChanged — update sidebar and modeline.
 PARAMS contains agent_id, status, project_id (or legacy session_id), current_task_id."
-  (let ((agent-id (agent-shell-team-events--get-param params "agent_id"))
+  (let ((agent-id (agent-shell-team-events--get-agent-id params))
         (status (agent-shell-team-events--get-param params "status"))
         (session-id (or (agent-shell-team-events--get-param params "session_id")
                         (agent-shell-team-events--get-param params "project_id")
@@ -254,18 +366,21 @@ PARAMS contains agent_id, status, project_id (or legacy session_id), current_tas
     (when agent-id
       (message "agent-shell-team-events: agent/statusChanged id=%s status=%s"
                agent-id status)
-      ;; When agent becomes idle, finish the shell-maker output cycle
-      ;; so a new prompt appears.
-      (when (equal status "idle")
-        (let ((buffer (agent-shell-team-events--find-agent-buffer agent-id)))
-          (when (and buffer (buffer-live-p buffer))
-            (with-current-buffer buffer
-              ;; Freeze overlays before shell-maker inserts prompt
-              (when (fboundp 'my/agent-shell-server--finalize-overlays)
-                (my/agent-shell-server--finalize-overlays))
-              (when agent-shell-team-events--pending-finish
-                (funcall agent-shell-team-events--pending-finish t)
-                (setq agent-shell-team-events--pending-finish nil))))))
+      ;; Check if agent is registered yet; if not, queue for replay after spawned
+      (if (not (agent-shell-team-events--find-agent-buffer agent-id))
+          (agent-shell-team-events--queue-event agent-id "agent/statusChanged" params)
+        ;; Update status in the agent registry alist
+        (agent-shell-team-events--set-agent-status agent-id status)
+        ;; When agent becomes idle, finish the shell-maker output cycle
+        (when (equal status "idle")
+          (let ((buffer (agent-shell-team-events--find-agent-buffer agent-id)))
+            (when (and buffer (buffer-live-p buffer))
+              (with-current-buffer buffer
+                (when (fboundp 'my/agent-shell-server--finalize-overlays)
+                  (my/agent-shell-server--finalize-overlays))
+                (when agent-shell-team-events--pending-finish
+                  (funcall agent-shell-team-events--pending-finish t)
+                  (setq agent-shell-team-events--pending-finish nil)))))))
       ;; Refresh sidebar if visible
       (when-let ((sidebar-buf (get-buffer " *team-sidebar*")))
         (when (get-buffer-window sidebar-buf)
@@ -333,14 +448,25 @@ PARAMS contains request_id, title, type, items, description."
 ;;; Session update handlers — streaming agent output
 
 (defun agent-shell-team-events--insert-at-end (buffer text)
-  "Insert TEXT at the end of BUFFER, preserving point for non-visible windows.
+  "Insert TEXT at the end of BUFFER, before the comint prompt if present.
+In server-mode agent buffers the prompt should stay at the bottom so
+follow-up messages don't corrupt it.  When `comint-last-prompt' exists,
+text is inserted just before the prompt; otherwise at `point-max'.
 Returns (START . END) of the inserted region, or nil."
   (when (and (buffer-live-p buffer) (stringp text) (> (length text) 0))
     (with-current-buffer buffer
-      (let ((inhibit-read-only t)
-            start end)
+      (let* ((inhibit-read-only t)
+             ;; If a comint prompt exists, insert before it so the prompt
+             ;; stays at the very bottom of the buffer.
+             (prompt-pos (when (and (bound-and-true-p agent-shell-team--server-mode-p)
+                                    comint-last-prompt
+                                    (markerp (car comint-last-prompt))
+                                    (marker-position (car comint-last-prompt)))
+                           (marker-position (car comint-last-prompt))))
+             (insert-pos (or prompt-pos (point-max)))
+             start end)
         (save-excursion
-          (goto-char (point-max))
+          (goto-char insert-pos)
           (setq start (point))
           (insert text)
           (setq end (point)))
@@ -354,6 +480,10 @@ Returns (START . END) of the inserted region, or nil."
 UPDATE contains content.text."
   (let* ((content (agent-shell-team-events--get-param update "content"))
          (text (and content (agent-shell-team-events--get-param content "text"))))
+    ;; Trim leading newlines from the first chunk of a new message
+    (when (and text (buffer-live-p buffer)
+               (not (buffer-local-value 'my/agent-shell-server--current-msg-ov buffer)))
+      (setq text (string-trim-left text "\n+")))
     (when-let ((range (agent-shell-team-events--insert-at-end buffer text)))
       (with-current-buffer buffer
         (when (fboundp 'my/agent-shell-server--extend-or-create-msg-ov)
@@ -493,14 +623,15 @@ UPDATE contains usage plist."
 (defun agent-shell-team-events--on-session-update (params)
   "Handle agent/session/update — route streaming output to the agent buffer.
 PARAMS contains agent_id, sessionId, and update with sessionUpdate type."
-  (let* ((agent-id (agent-shell-team-events--get-param params "agent_id"))
+  (let* ((agent-id (agent-shell-team-events--get-agent-id params))
          (update (agent-shell-team-events--get-param params "update"))
          (update-type (and update
                            (agent-shell-team-events--get-param update "sessionUpdate")))
          (buffer (agent-shell-team-events--find-agent-buffer agent-id)))
     (if (not buffer)
-        (message "agent-shell-team-events: agent/session/update — no buffer for agent-id=%s type=%s"
-                 agent-id update-type)
+        ;; Agent not registered yet — queue for replay after spawned
+        (when agent-id
+          (agent-shell-team-events--queue-event agent-id "agent/session/update" params))
       (message "agent-shell-team-events: sessionUpdate type=%s agent=%s" update-type agent-id)
       (pcase update-type
         ("agent_message_chunk"
@@ -549,7 +680,7 @@ PARAMS is the full task object."
 (defun agent-shell-team-events--on-agent-respawned (params)
   "Handle agent/respawned — update or create agent buffer.
 PARAMS contains agent_id, role, status, worktree_name, worktree_path."
-  (let ((agent-id (agent-shell-team-events--get-param params "agent_id"))
+  (let ((agent-id (agent-shell-team-events--get-agent-id params))
         (role (agent-shell-team-events--get-param params "role"))
         (status (agent-shell-team-events--get-param params "status"))
         (worktree-name (agent-shell-team-events--get-param params "worktree_name"))
@@ -567,7 +698,7 @@ PARAMS contains agent_id, role, status, worktree_name, worktree_path."
 (defun agent-shell-team-events--on-permission-request (params)
   "Handle agent/session/request_permission — show permission prompt.
 PARAMS contains agent_id and request (with toolCallId, title, description)."
-  (let* ((agent-id (agent-shell-team-events--get-param params "agent_id"))
+  (let* ((agent-id (agent-shell-team-events--get-agent-id params))
          (request (agent-shell-team-events--get-param params "request"))
          (title (and request (agent-shell-team-events--get-param request "title")))
          (description (and request (agent-shell-team-events--get-param request "description")))

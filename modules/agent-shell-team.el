@@ -1095,6 +1095,7 @@ WORKTREE-NAME is the worktree name (for isolated mode)."
   (let ((agent (list (cons 'buffer buffer)
                      (cons 'role role)
                      (cons 'mode mode)
+                     (cons 'status "initializing")
                      (cons 'worktree worktree)
                      (cons 'worktree-name worktree-name)))
         (agents (gethash session-id agent-shell-team--sessions)))
@@ -1197,14 +1198,39 @@ WORKTREE-NAME is the worktree name (for isolated mode)."
        (process-live-p (get-buffer-process buffer))))
 
 (defun agent-shell-team--agent-status (buffer)
-  "Determine if BUFFER's agent is idle, busy, initializing, or dead."
+  "Determine if BUFFER's agent is idle, busy, initializing, or dead.
+For server-mode agents, uses the registry status field (updated by
+`agent/statusChanged' WebSocket events) rather than `shell-maker--busy'
+which only tracks user-initiated submissions."
   (cond
    ((not (buffer-live-p buffer)) 'dead)
    ((not (agent-shell-team--buffer-ready-p buffer)) 'initializing)
    ((not (buffer-local-value 'agent-shell-team--init-finished-p buffer)) 'initializing)
+   ;; Server-mode: trust the registry status from statusChanged events
+   ((buffer-local-value 'agent-shell-team--server-mode-p buffer)
+    (let ((reg-status (agent-shell-team--agent-registry-status buffer)))
+      (cond
+       ((equal reg-status "busy") 'busy)
+       ((equal reg-status "initializing") 'initializing)
+       ((buffer-local-value 'agent-shell-team--reserved-p buffer) 'reserved)
+       (t 'idle))))
+   ;; Local-mode: derive from shell-maker state
    ((agent-shell-team--buffer-busy-p buffer) 'busy)
    ((buffer-local-value 'agent-shell-team--reserved-p buffer) 'reserved)
    (t 'idle)))
+
+(defun agent-shell-team--agent-registry-status (buffer)
+  "Look up the status field for BUFFER in the agent registry.
+Returns the status string or nil if not found."
+  (catch 'found
+    (maphash
+     (lambda (_session-id agents)
+       (dolist (agent agents)
+         (let ((buf (alist-get 'buffer agent)))
+           (when (eq buf buffer)
+             (throw 'found (alist-get 'status agent))))))
+     agent-shell-team--sessions)
+    nil))
 
 (defun agent-shell-team--buffer-busy-p (buffer)
   "Check if BUFFER's agent-shell is currently processing."
