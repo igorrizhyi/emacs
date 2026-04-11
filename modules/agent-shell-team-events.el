@@ -125,18 +125,35 @@ Only acts in server-mode agent buffers that have a prompt."
       (setq agent-shell-team-events--prompt-hidden-ov ov))))
 
 (defun agent-shell-team-events--show-prompt ()
-  "Remove the invisible overlay from the comint prompt and move point there.
-Also trims excess blank lines before the prompt so only one remains.
+  "Show the comint prompt, relocating it to the end of the buffer if needed.
 Only acts in server-mode agent buffers."
   (when (and (bound-and-true-p agent-shell-team--server-mode-p)
              agent-shell-team-events--prompt-hidden-ov)
     (delete-overlay agent-shell-team-events--prompt-hidden-ov)
     (setq agent-shell-team-events--prompt-hidden-ov nil)
-    (message "show-prompt: comint-last-prompt=%s point-max=%s"
-             comint-last-prompt (point-max))
-    ;; NOTE: Do NOT trim blank lines here — that destroys the spacing
-    ;; between the previous response block and the prompt.
-    ;; Blank-line trimming happens in on-message-chunk instead.
+    (when (and comint-last-prompt
+               (markerp (car comint-last-prompt))
+               (markerp (cdr comint-last-prompt))
+               (marker-position (car comint-last-prompt))
+               (marker-position (cdr comint-last-prompt)))
+      (let* ((inhibit-read-only t)
+             (prompt-start (marker-position (car comint-last-prompt)))
+             (prompt-end (marker-position (cdr comint-last-prompt)))
+             (prompt-text (buffer-substring prompt-start prompt-end)))
+        (message "show-prompt: prompt-pos=%s-%s point-max=%s relocate=%s"
+                 prompt-start prompt-end (point-max)
+                 (if (< prompt-end (point-max)) "yes" "no"))
+        ;; If content was appended after the prompt, relocate prompt to end
+        (when (< prompt-end (point-max))
+          ;; Delete prompt from its current position
+          (delete-region prompt-start prompt-end)
+          ;; Insert at new point-max
+          (goto-char (point-max))
+          (let ((new-start (point)))
+            (insert prompt-text)
+            ;; Update comint markers
+            (set-marker (car comint-last-prompt) new-start)
+            (set-marker (cdr comint-last-prompt) (point))))))
     ;; Jump to end of prompt so user can type immediately
     (when (and comint-last-prompt
                (markerp (cdr comint-last-prompt))
