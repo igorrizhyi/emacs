@@ -126,16 +126,40 @@ Only acts in server-mode agent buffers that have a prompt."
 
 (defun agent-shell-team-events--show-prompt ()
   "Remove the invisible overlay from the comint prompt and move point there.
+Also trims excess blank lines before the prompt so only one remains.
 Only acts in server-mode agent buffers."
   (when (and (bound-and-true-p agent-shell-team--server-mode-p)
              agent-shell-team-events--prompt-hidden-ov)
     (delete-overlay agent-shell-team-events--prompt-hidden-ov)
     (setq agent-shell-team-events--prompt-hidden-ov nil)
+    (message "show-prompt: comint-last-prompt=%s point-max=%s"
+             comint-last-prompt (point-max))
+    ;; NOTE: Do NOT trim blank lines here — that destroys the spacing
+    ;; between the previous response block and the prompt.
+    ;; Blank-line trimming happens in on-message-chunk instead.
     ;; Jump to end of prompt so user can type immediately
     (when (and comint-last-prompt
                (markerp (cdr comint-last-prompt))
                (marker-position (cdr comint-last-prompt)))
       (goto-char (cdr comint-last-prompt)))))
+
+(defun agent-shell-team-events--submit-and-trim ()
+  "Submit input via shell-maker, then trim excess blank lines.
+Ensures only one newline between the user input and subsequent content."
+  (interactive)
+  (shell-maker-submit)
+  ;; After submit, trim excess newlines between user input and point-max/prompt
+  (let ((inhibit-read-only t))
+    (save-excursion
+      (goto-char (point-max))
+      (when (re-search-backward "[^\n]" nil t)
+        (forward-char 1)
+        (let ((gap (- (point-max) (point))))
+          (message "submit-and-trim: point-max=%s last-content=%s gap=%s comint-last-prompt=%s"
+                   (point-max) (point) gap comint-last-prompt)
+          (when (> gap 1)
+            (message "submit-and-trim: TRIMMING %s chars" (- gap 1))
+            (delete-region (+ (point) 1) (point-max))))))))
 
 (defun agent-shell-team-events--set-agent-status (agent-id status)
   "Update the status field of AGENT-ID in the session registry."
@@ -308,8 +332,8 @@ In server mode the backend manages the ACP subprocess.  The buffer uses
           (when model
             (setq agent-shell-team--model-id model))
           ;; Bind Enter in evil insert mode to shell-maker-submit
-          (evil-local-set-key 'insert (kbd "RET") #'shell-maker-submit)
-          (evil-local-set-key 'insert (kbd "<return>") #'shell-maker-submit)
+          (evil-local-set-key 'insert (kbd "RET") #'agent-shell-team-events--submit-and-trim)
+          (evil-local-set-key 'insert (kbd "<return>") #'agent-shell-team-events--submit-and-trim)
           ;; Show/hide prompt based on evil state
           (add-hook 'evil-insert-state-entry-hook
                     #'agent-shell-team-events--show-prompt nil t)
@@ -465,6 +489,8 @@ Returns (START . END) of the inserted region, or nil."
                            (marker-position (car comint-last-prompt))))
              (insert-pos (or prompt-pos (point-max)))
              start end)
+        (message "insert-at-end: prompt-pos=%s insert-pos=%s point-max=%s text-len=%s"
+                 prompt-pos insert-pos (point-max) (length text))
         (save-excursion
           (goto-char insert-pos)
           (setq start (point))
@@ -486,13 +512,19 @@ UPDATE contains content.text."
                (not (buffer-local-value 'my/agent-shell-server--current-msg-ov buffer)))
       (setq text (string-trim-left text "\n+"))
       (with-current-buffer buffer
-        (let ((inhibit-read-only t))
+        (let* ((inhibit-read-only t)
+               ;; Always trim at point-max — after submit, the blank lines
+               ;; are between the user's input and the end of the buffer.
+               (trim-pos (point-max)))
           (save-excursion
-            (goto-char (point-max))
-            (when (re-search-backward "[^\n]" nil t)
+            (goto-char trim-pos)
+            (when (re-search-backward "[^\n\r ]" nil t)
               (forward-char 1)
-              (when (> (- (point-max) (point)) 1)
-                (delete-region (+ (point) 1) (point-max))))))))
+              (let ((gap (- trim-pos (point))))
+                (message "on-message-chunk TRIM: trim-pos=%s last-content=%s gap=%s"
+                         trim-pos (point) gap)
+                (when (> gap 1)
+                  (delete-region (+ (point) 1) trim-pos))))))))
     (when-let ((range (agent-shell-team-events--insert-at-end buffer text)))
       (with-current-buffer buffer
         (when (fboundp 'my/agent-shell-server--extend-or-create-msg-ov)

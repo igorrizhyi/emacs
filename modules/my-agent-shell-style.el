@@ -508,16 +508,20 @@ Padding ensures the prompt doesn't visually touch the last styled block."
                        my/agent-shell-server--current-thought-ov
                      my/agent-shell-server--current-msg-ov))
          (inhibit-read-only t))
-    (my/agent-shell-server--pad-and-freeze last-ov)
-    (my/agent-shell-server--freeze-overlay other-ov)
-    (setq my/agent-shell-server--current-msg-ov nil
-          my/agent-shell-server--current-thought-ov nil)
-    ;; Spacing between block and next prompt
-    (save-excursion
-      (goto-char (point-max))
-      (unless (bolp) (insert "\n"))
-      (insert "\n")))
-  (message "finalize-overlays: DONE point-max=%s" (point-max)))
+    ;; Only do work if there's actually an overlay to finalize
+    (when last-ov
+      (message "finalize-overlays: FREEZING last-ov=%s" last-ov)
+      (my/agent-shell-server--pad-and-freeze last-ov)
+      (my/agent-shell-server--freeze-overlay other-ov)
+      (setq my/agent-shell-server--current-msg-ov nil
+            my/agent-shell-server--current-thought-ov nil)
+      ;; Spacing between block and next prompt
+      (save-excursion
+        (goto-char (point-max))
+        (unless (bolp) (insert "\n"))
+        (insert "\n")))
+    (message "finalize-overlays: DONE point-max=%s had-overlay=%s"
+             (point-max) (if last-ov "yes" "no"))))
 
 ;; --- Table styling (markdown-overlays) ---
 
