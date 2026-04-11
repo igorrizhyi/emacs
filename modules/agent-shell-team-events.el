@@ -118,53 +118,56 @@ Only acts in server-mode agent buffers that have a prompt."
              (not agent-shell-team-events--prompt-hidden-ov))
     (let ((ov (make-overlay (car comint-last-prompt)
                             (cdr comint-last-prompt)
-                            nil nil nil)))
+                            nil t nil)))  ; FRONT-ADVANCE=t: inserts before overlay stay visible
       (overlay-put ov 'invisible t)
       (overlay-put ov 'evaporate nil)
       (overlay-put ov 'agent-shell-prompt-hide t)
       (setq agent-shell-team-events--prompt-hidden-ov ov))))
 
 (defun agent-shell-team-events--show-prompt ()
-  "Show the comint prompt, relocating it to the end of the buffer if needed.
+  "Show the comint prompt by removing the invisible overlay.
+No relocation needed — with FRONT-ADVANCE=t, content inserted before
+the hidden overlay stays visible, so the prompt is always at the end.
 Only acts in server-mode agent buffers."
   (when (and (bound-and-true-p agent-shell-team--server-mode-p)
              agent-shell-team-events--prompt-hidden-ov)
+    (agent-shell-team-events--dump-overlays "BEFORE-SHOW-PROMPT")
     (delete-overlay agent-shell-team-events--prompt-hidden-ov)
     (setq agent-shell-team-events--prompt-hidden-ov nil)
-    (when (and comint-last-prompt
-               (markerp (car comint-last-prompt))
-               (markerp (cdr comint-last-prompt))
-               (marker-position (car comint-last-prompt))
-               (marker-position (cdr comint-last-prompt)))
-      (let* ((inhibit-read-only t)
-             (prompt-start (marker-position (car comint-last-prompt)))
-             (prompt-end (marker-position (cdr comint-last-prompt)))
-             (prompt-text (buffer-substring prompt-start prompt-end)))
-        (message "show-prompt: prompt-pos=%s-%s point-max=%s relocate=%s"
-                 prompt-start prompt-end (point-max)
-                 (if (< prompt-end (point-max)) "yes" "no"))
-        ;; If content was appended after the prompt, relocate prompt to end
-        (when (< prompt-end (point-max))
-          ;; Delete prompt from its current position
-          (delete-region prompt-start prompt-end)
-          ;; Insert at new point-max
-          (goto-char (point-max))
-          (let ((new-start (point)))
-            (insert prompt-text)
-            ;; Update comint markers
-            (set-marker (car comint-last-prompt) new-start)
-            (set-marker (cdr comint-last-prompt) (point))))))
+    (agent-shell-team-events--dump-overlays "AFTER-SHOW-PROMPT")
+    (message "show-prompt: comint-last-prompt=%s point-max=%s"
+             comint-last-prompt (point-max))
     ;; Jump to end of prompt so user can type immediately
     (when (and comint-last-prompt
                (markerp (cdr comint-last-prompt))
                (marker-position (cdr comint-last-prompt)))
       (goto-char (cdr comint-last-prompt)))))
 
+(defun agent-shell-team-events--dump-overlays (label)
+  "Log all styled overlays in the current buffer with LABEL prefix."
+  (let ((ovs (seq-filter
+              (lambda (ov)
+                (or (overlay-get ov 'face)
+                    (overlay-get ov 'agent-shell-prompt-hide)
+                    (overlay-get ov 'invisible)))
+              (overlays-in (point-min) (point-max)))))
+    (message "OVERLAY-DUMP [%s]: %d overlays in %s (point-max=%s)"
+             label (length ovs) (buffer-name) (point-max))
+    (dolist (ov ovs)
+      (message "  ov %s-%s face=%s invis=%s prompt-hide=%s evap=%s"
+               (overlay-start ov) (overlay-end ov)
+               (overlay-get ov 'face)
+               (overlay-get ov 'invisible)
+               (overlay-get ov 'agent-shell-prompt-hide)
+               (overlay-get ov 'evaporate)))))
+
 (defun agent-shell-team-events--submit-and-trim ()
   "Submit input via shell-maker, then trim excess blank lines.
 Ensures only one newline between the user input and subsequent content."
   (interactive)
+  (agent-shell-team-events--dump-overlays "BEFORE-SUBMIT")
   (shell-maker-submit)
+  (agent-shell-team-events--dump-overlays "AFTER-SUBMIT")
   ;; After submit, trim excess newlines between user input and point-max/prompt
   (let ((inhibit-read-only t))
     (save-excursion
@@ -519,12 +522,10 @@ Returns (START . END) of the inserted region, or nil."
   (when (and (buffer-live-p buffer) (stringp text) (> (length text) 0))
     (with-current-buffer buffer
       (let* ((inhibit-read-only t)
-             ;; If a VISIBLE comint prompt exists, insert before it so the
-             ;; prompt stays at the very bottom of the buffer.
-             ;; When prompt is hidden (invisible overlay), insert at point-max
-             ;; instead — the hidden prompt is from a previous turn.
+             ;; Always insert before the comint prompt (visible or hidden).
+             ;; With FRONT-ADVANCE=t on the invisible overlay, text inserted
+             ;; before it stays visible. The prompt stays at the end naturally.
              (prompt-pos (when (and (bound-and-true-p agent-shell-team--server-mode-p)
-                                    (not agent-shell-team-events--prompt-hidden-ov)
                                     comint-last-prompt
                                     (markerp (car comint-last-prompt))
                                     (marker-position (car comint-last-prompt)))
