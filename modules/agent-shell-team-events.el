@@ -326,7 +326,9 @@ In server mode the backend manages the ACP subprocess.  The buffer uses
                                    (funcall agent-shell-team-events--pending-finish
                                             (not error))
                                    (setq agent-shell-team-events--pending-finish
-                                         nil))))))))))
+                                         nil)
+                                   ;; Hide prompt until user enters insert mode
+                                   (agent-shell-team-events--hide-prompt))))))))))
              (buffer (shell-maker-start config t nil nil buf-name)))
         (message "agent-shell-team-events: agent/spawned id=%s role=%s model=%s buffer=%s"
                  agent-id role (or model "default") buf-name)
@@ -422,7 +424,9 @@ PARAMS contains agent_id, status, project_id (or legacy session_id), current_tas
                       (insert "\n"))))
                 (when agent-shell-team-events--pending-finish
                   (funcall agent-shell-team-events--pending-finish t)
-                  (setq agent-shell-team-events--pending-finish nil)))))))
+                  (setq agent-shell-team-events--pending-finish nil)
+                  ;; Hide prompt until user enters insert mode
+                  (agent-shell-team-events--hide-prompt)))))))
       ;; Refresh sidebar if visible
       (when-let ((sidebar-buf (get-buffer " *team-sidebar*")))
         (when (get-buffer-window sidebar-buf)
@@ -498,9 +502,12 @@ Returns (START . END) of the inserted region, or nil."
   (when (and (buffer-live-p buffer) (stringp text) (> (length text) 0))
     (with-current-buffer buffer
       (let* ((inhibit-read-only t)
-             ;; If a comint prompt exists, insert before it so the prompt
-             ;; stays at the very bottom of the buffer.
+             ;; If a VISIBLE comint prompt exists, insert before it so the
+             ;; prompt stays at the very bottom of the buffer.
+             ;; When prompt is hidden (invisible overlay), insert at point-max
+             ;; instead — the hidden prompt is from a previous turn.
              (prompt-pos (when (and (bound-and-true-p agent-shell-team--server-mode-p)
+                                    (not agent-shell-team-events--prompt-hidden-ov)
                                     comint-last-prompt
                                     (markerp (car comint-last-prompt))
                                     (marker-position (car comint-last-prompt)))
