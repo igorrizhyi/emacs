@@ -1,0 +1,7 @@
+name        = "hypr-mods"
+description = "Hyprland tweaks collection — caret highlighter and more."
+authors     = ["igorrizhyi"]
+version     = "0.1.0"
+
+# No commit pins needed: the user will keep this in their config repo.
+commit_pins = []
