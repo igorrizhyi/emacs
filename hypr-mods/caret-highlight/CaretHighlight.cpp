@@ -67,7 +67,7 @@ void CCaretHighlight::onRenderStage(eRenderStage stage) {
     if (!pSurface)
         return;
 
-    auto pCWLSurface = CWLSurface::fromResource(pSurface);
+    auto pCWLSurface = Desktop::View::CWLSurface::fromResource(pSurface);
     if (!pCWLSurface)
         return;
 
@@ -79,38 +79,37 @@ void CCaretHighlight::onRenderStage(eRenderStage stage) {
     // Translate the surface-local cursor box by the surface's global origin.
     const int padding = static_cast<int>(*getSize());
 
-    CBox caretBoxGlobal = {
+    CBox caretBoxGlobal(
         surfaceBoxGlobal->x + cursorBoxLocal.x - padding,
         surfaceBoxGlobal->y + cursorBoxLocal.y - padding,
         (cursorBoxLocal.w > 0 ? cursorBoxLocal.w : 2) + padding * 2,
-        (cursorBoxLocal.h > 0 ? cursorBoxLocal.h : 16) + padding * 2,
-    };
+        (cursorBoxLocal.h > 0 ? cursorBoxLocal.h : 16) + padding * 2);
 
     // ── 6. Map to current monitor ─────────────────────────────────────────────
     // The render stage callback fires once per monitor. We only draw when the
     // caret falls on the monitor currently being composited.
-    const auto pMonitor = g_pHyprOpenGL->m_RenderData.pMonitor;
+    const auto pMonitor = g_pHyprOpenGL->m_renderData.pMonitor;
     if (!pMonitor)
         return;
 
-    const CBox monitorBox = {pMonitor->m_vPosition.x, pMonitor->m_vPosition.y,
-                              pMonitor->m_vSize.x, pMonitor->m_vSize.y};
+    const CBox monitorBox(pMonitor->m_position.x, pMonitor->m_position.y,
+                          pMonitor->m_size.x, pMonitor->m_size.y);
 
     if (!caretBoxGlobal.overlaps(monitorBox))
         return;
 
     // Convert global → monitor-local coordinates (unscaled logical pixels)
     CBox localBox = caretBoxGlobal;
-    localBox.x   -= pMonitor->m_vPosition.x;
-    localBox.y   -= pMonitor->m_vPosition.y;
+    localBox.x   -= pMonitor->m_position.x;
+    localBox.y   -= pMonitor->m_position.y;
 
     // Scale to physical pixels for rendering
-    localBox.scale(pMonitor->scale);
+    localBox.scale(pMonitor->m_scale);
 
     // ── 7. Draw the highlight rectangle ──────────────────────────────────────
     const uint32_t colorRaw = static_cast<uint32_t>(*getColor());
     // Config stores color as 0xRRGGBBAA (Hyprlang RGBA convention)
     const CHyprColor highlightColor{colorRaw};
 
-    g_pHyprOpenGL->renderRect(localBox, highlightColor, /*round=*/2);
+    g_pHyprOpenGL->renderRect(localBox, highlightColor, SRectRenderData{.round = 2});
 }
