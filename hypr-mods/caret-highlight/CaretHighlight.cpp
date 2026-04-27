@@ -1,7 +1,7 @@
 #include "CaretHighlight.hpp"
 
 #include <hyprland/src/Compositor.hpp>
-#include <hyprland/src/desktop/View.hpp>
+#include <hyprland/src/desktop/view/View.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
 #include <hyprland/src/render/OpenGL.hpp>
 #include <hyprland/src/render/Renderer.hpp>
@@ -114,5 +114,5 @@ void CCaretHighlight::onRenderStage(eRenderStage stage) {
     // Config stores color as 0xRRGGBBAA (Hyprlang RGBA convention)
     const CHyprColor highlightColor{colorRaw};
 
-    g_pHyprOpenGL->renderRect(localBox, highlightColor, SRectRenderData{.round = 2});
+    g_pHyprOpenGL->renderRect(localBox, highlightColor, CHyprOpenGLImpl::SRectRenderData{.round = 2});
 }
