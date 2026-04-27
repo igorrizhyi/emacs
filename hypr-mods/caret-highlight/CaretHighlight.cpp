@@ -8,22 +8,25 @@
 
 // ─── Config value accessors ──────────────────────────────────────────────────
 
-static Hyprlang::INT* getEnabled() {
-    static auto* p = (Hyprlang::INT* const*)HyprlandAPI::getConfigValue(
+static Hyprlang::INT getEnabled() {
+    static auto* const p = HyprlandAPI::getConfigValue(
         PHANDLE, "plugin:hypr-mods:caret_highlight:enabled");
-    return *p;
+    if (!p) return 0;
+    return std::any_cast<Hyprlang::INT>(p->getValue());
 }
 
-static Hyprlang::INT* getColor() {
-    static auto* p = (Hyprlang::INT* const*)HyprlandAPI::getConfigValue(
+static Hyprlang::INT getColor() {
+    static auto* const p = HyprlandAPI::getConfigValue(
         PHANDLE, "plugin:hypr-mods:caret_highlight:color");
-    return *p;
+    if (!p) return 0;
+    return std::any_cast<Hyprlang::INT>(p->getValue());
 }
 
-static Hyprlang::INT* getSize() {
-    static auto* p = (Hyprlang::INT* const*)HyprlandAPI::getConfigValue(
+static Hyprlang::INT getSize() {
+    static auto* const p = HyprlandAPI::getConfigValue(
         PHANDLE, "plugin:hypr-mods:caret_highlight:size");
-    return *p;
+    if (!p) return 2;
+    return std::any_cast<Hyprlang::INT>(p->getValue());
 }
 
 // ─── CCaretHighlight ─────────────────────────────────────────────────────────
@@ -43,7 +46,7 @@ void CCaretHighlight::onRenderStage(eRenderStage stage) {
         return;
 
     // ── 1. Check if the feature is enabled ───────────────────────────────────
-    if (*getEnabled() == 0)
+    if (getEnabled() == 0)
         return;
 
     // ── 2. Get the focused text input ────────────────────────────────────────
@@ -77,7 +80,7 @@ void CCaretHighlight::onRenderStage(eRenderStage stage) {
 
     // ── 5. Compute global caret box ───────────────────────────────────────────
     // Translate the surface-local cursor box by the surface's global origin.
-    const int padding = static_cast<int>(*getSize());
+    const int padding = static_cast<int>(getSize());
 
     CBox caretBoxGlobal(
         surfaceBoxGlobal->x + cursorBoxLocal.x - padding,
@@ -107,7 +110,7 @@ void CCaretHighlight::onRenderStage(eRenderStage stage) {
     localBox.scale(pMonitor->m_scale);
 
     // ── 7. Draw the highlight rectangle ──────────────────────────────────────
-    const uint32_t colorRaw = static_cast<uint32_t>(*getColor());
+    const uint32_t colorRaw = static_cast<uint32_t>(getColor());
     // Config stores color as 0xRRGGBBAA (Hyprlang RGBA convention)
     const CHyprColor highlightColor{colorRaw};
 
