@@ -894,28 +894,31 @@
    ((derived-mode-p 'magit-mode 'magit-status-mode 'magit-log-mode 'magit-diff-mode)
     (call-interactively (key-binding (kbd "RET"))))
 
-   ;; In help buffers, follow links
+   ;; In help buffers, follow links/buttons — direct call avoids evil keymap shadowing
    ((derived-mode-p 'help-mode 'helpful-mode)
-    (call-interactively (key-binding (kbd "RET"))))
+    (call-interactively #'push-button))
 
-   ;; In compilation buffers, follow errors
+   ;; In compilation buffers, follow errors — direct call avoids evil keymap shadowing
    ((derived-mode-p 'compilation-mode)
-    (call-interactively (key-binding (kbd "RET"))))
+    (call-interactively #'compile-goto-error))
 
    ;; In org mode, use org's default behavior
+   ;; (evil-org binds RET at a higher priority than evil-normal-state-map, so key-binding works)
    ((derived-mode-p 'org-mode)
     (call-interactively (key-binding (kbd "RET"))))
 
-   ;; In markdown mode, dispatch knowledge queries or default behavior
+   ;; In markdown mode, dispatch knowledge queries or follow links
+   ;; Direct call avoids infinite recursion: evil-collection doesn't bind RET for markdown
    ((derived-mode-p 'markdown-mode 'gfm-mode)
     (if (and (bound-and-true-p my/knowledge-browser-mode)
              (my/at-knowledge-query-block-p))
         (my/execute-knowledge-query)
-      (call-interactively (key-binding (kbd "RET")))))
+      (call-interactively #'markdown-follow-thing-at-point)))
 
-   ;; In sqlite-mode, list table data
+   ;; In sqlite-mode, list table data — direct call avoids infinite recursion:
+   ;; sqlite-mode has no evil-collection support, so key-binding resolves back to my/smart-enter
    ((derived-mode-p 'sqlite-mode)
-    (call-interactively (key-binding (kbd "RET"))))
+    (call-interactively #'sqlite-mode-list-data))
 
    ;; Default: go to definition
    (t
