@@ -2181,10 +2181,11 @@ Called from find-file-hook to track source eshell buffer."
     (when (and (bound-and-true-p claude-code-terminal-mode)
                (bound-and-true-p claude-code-terminal-id))
       (force-mode-line-update)))
-  
-  ;; Add hooks for evil state changes
+
+  ;; Add hooks for evil state changes (entry hooks only — exit hooks
+  ;; cause infinite recursion via evil-execute-repeat-info).
+  (remove-hook 'evil-insert-state-exit-hook 'claude-code-terminal-update-header-line)
   (add-hook 'evil-insert-state-entry-hook 'claude-code-terminal-update-header-line)
-  (add-hook 'evil-insert-state-exit-hook 'claude-code-terminal-update-header-line)
   (add-hook 'evil-normal-state-entry-hook 'claude-code-terminal-update-header-line)
   (add-hook 'evil-visual-state-entry-hook 'claude-code-terminal-update-header-line)
   (add-hook 'evil-emacs-state-entry-hook 'claude-code-terminal-update-header-line)

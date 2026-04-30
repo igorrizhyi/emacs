@@ -39,7 +39,16 @@
   (add-to-list 'projectile-globally-ignored-directories ".agent-shell"))
 
 (after! lsp-mode
-  (add-to-list 'lsp-file-watch-ignored-directories "[/\\\\]\\.agent-shell\\'"))
+  (add-to-list 'lsp-file-watch-ignored-directories "[/\\\\]\\.agent-shell\\'")
+  (add-to-list 'lsp-file-watch-ignored-directories "[/\\\\]\\.claude\\'")
+  (add-to-list 'lsp-file-watch-ignored-directories "[/\\\\]\\.venv\\'")
+  (add-to-list 'lsp-file-watch-ignored-directories "[/\\\\]node_modules\\'"))
+
+;; Add ~/.cargo/bin to PATH and exec-path (for rust toolchain in eshell/shell)
+(let ((cargo-bin (expand-file-name "~/.cargo/bin")))
+  (when (file-directory-p cargo-bin)
+    (add-to-list 'exec-path cargo-bin)
+    (setenv "PATH" (concat cargo-bin ":" (getenv "PATH")))))
 
 ;; Exclude .agent-shell from project-find-regexp (project.el VC backend)
 (setq project-vc-ignores '(".agent-shell/"))
@@ -105,6 +114,21 @@
       (setq my/eshell-last-saved-command (ring-ref eshell-history-ring 0))))
 
   (add-hook 'eshell-mode-hook #'my/eshell-reload-history))
+
+;; Distrobox eshell integration — open eshell inside a container via TRAMP
+(defun eshell-distrobox ()
+  "Pick a distrobox container and open eshell inside it."
+  (interactive)
+  (let* ((output (shell-command-to-string "distrobox list --no-color 2>/dev/null"))
+         (lines (cdr (split-string output "\n" t)))  ; skip header
+         (containers
+          (cl-loop for line in lines
+                   for parts = (split-string line "|" t)
+                   when (>= (length parts) 2)
+                   collect (string-trim (nth 1 parts))))
+         (choice (completing-read "Distrobox: " containers nil t)))
+    (let ((default-directory (format "/podman:%s:%s" choice default-directory)))
+      (eshell 'N))))
 
 (require 'my-magit-utils)
 (require 'my-dired-extension)
@@ -407,7 +431,7 @@
 ;; Configure lsp-pyright for faster completions
 (after! lsp-pyright
   (setq lsp-pyright-auto-import-completions t
-        lsp-pyright-auto-search-paths t
+        lsp-pyright-auto-search-paths nil
         lsp-pyright-use-library-code-for-types t
         lsp-pyright-diagnostic-mode "openFilesOnly"  ;; Don't analyze entire workspace
         lsp-pyright-type-checking-mode "basic"))      ;; Lighter type checking = faster responses
@@ -1010,9 +1034,10 @@
       "Q" #'my/smart-q
       "q" #'kill-current-buffer)
 
-;; Override s key to perform search instead of substitute
+;; s = save-buffer, c = evil-substitute (native s behavior)
 (after! evil
-  (define-key evil-normal-state-map (kbd "s") #'save-buffer))
+  (define-key evil-normal-state-map (kbd "s") #'save-buffer)
+  (define-key evil-normal-state-map (kbd "c") #'evil-substitute))
 
 ;; Global C-t for magit and C-r for revert - works in ALL modes
 (after! evil
@@ -1233,6 +1258,8 @@
 (autoload 'agent-shell-team-status "agent-shell-team" "Team dashboard." t)
 (setq agent-shell-team-lead-quick-research-backend 'flash-lite)
 (setq agent-shell-team-max-agents-per-role 8)
+(after! agent-shell-team
+  (add-to-list 'agent-shell-team-role-models '("dev" . "sonnet")))
 ;; (customize-set-variable 'agent-shell-team-backend 'python)
 
 (defvar my/agent-shell-pending-worktree-path nil
