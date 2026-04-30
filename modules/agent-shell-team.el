@@ -1149,7 +1149,7 @@ WORKTREE-NAME is the worktree name (for isolated mode)."
               (let* ((config (json-read-file config-path))
                      (container-workspace (map-elt config 'workspaceFolder)))
                 (when container-workspace
-                  (let ((host-root (file-name-as-directory project-dir))
+                  (let ((host-root (file-name-as-directory (file-truename project-dir)))
                         (container-root (file-name-as-directory container-workspace)))
                     (setq-local agent-shell-path-resolver-function
                                 (lambda (path)
@@ -2506,9 +2506,6 @@ TITLE and MESSAGE are the notification content."
               (format "%s\n\n[Request ID: %s]\nWrite your detailed report to: %s\nReference this Request ID in your completion notification."
                       message request-id report-path)
             message)))
-    ;; Pre-create empty report file so agents don't need to touch it
-    (when report-path
-      (write-region "" nil report-path nil 'silent))
     ;; Log
     (agent-shell-team--log session-id
                            (format "[%s -> %s] %s: %s%s" from-role target-role title message
@@ -3015,8 +3012,6 @@ AGENT-BUF is the researcher buffer to dismiss."
                       :session-id session-id
                       :report-path dev-report-path
                       :created-at (float-time))))
-    ;; Pre-create report file
-    (write-region "" nil dev-report-path nil 'silent)
     ;; Persist queued state
     (agent-shell-team--persist-task
      session-id
@@ -3435,9 +3430,6 @@ reached its max agent count, auto-spawn a new agent."
          (enriched (if (buffer-local-value 'agent-shell-team--reserved-p buf)
                        (concat enriched "\n\n[Reserved Agent] You are a reserved agent. After completing this task, do NOT look for more work. Simply report completion and wait.")
                      enriched)))
-    ;; Pre-create empty report file so agents don't need to touch it
-    (when report-path
-      (write-region "" nil report-path nil 'silent))
     (agent-shell-team--log session-id
                            (format "[assign] %s -> %s (request: %s)"
                                    (plist-get task :role)
