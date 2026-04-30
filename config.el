@@ -889,6 +889,10 @@
         (my/execute-knowledge-query)
       (call-interactively (key-binding (kbd "RET")))))
 
+   ;; In sqlite-mode, list table data
+   ((derived-mode-p 'sqlite-mode)
+    (call-interactively (key-binding (kbd "RET"))))
+
    ;; Default: go to definition
    (t
     (call-interactively #'+lookup/definition))))
