@@ -1520,7 +1520,8 @@ Fedora atomic's /home -> /var/home symlink."
               (doom-modeline-set-modeline 'my-dired))))
 
 (use-package! elsqlite
-  :commands (elsqlite-open))
+  :commands (elsqlite-open)
+  :config (elsqlite-evil-setup))
 
 ;; Suppress org-persist gc-lock read errors (file gets corrupted during suspend)
 (defadvice! my/silence-org-persist-read-errors (fn &rest args)
