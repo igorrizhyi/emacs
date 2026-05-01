@@ -143,10 +143,11 @@
                 (when (> cleanup-pos (point-min))
                   (dolist (ov (overlays-at (1- cleanup-pos)))
                     (delete-overlay ov)))))
-            ;; Store for submission
-            (setq my/agent-shell--pending-context (list :text text))
-            ;; Show posframe
-            (my/agent-shell--show-context-posframe text buffer))))))
+            ;; Store for submission (only when non-blank)
+            (unless (string-blank-p text)
+              (setq my/agent-shell--pending-context (list :text text))
+              ;; Show posframe
+              (my/agent-shell--show-context-posframe text buffer)))))))
   result)
 
 (defvar my/agent-shell--context-marker-start "«CTX»"
@@ -163,7 +164,7 @@
     (let* ((ctx my/agent-shell--pending-context)
            (text (plist-get ctx :text))
            (inhibit-read-only t))
-      (when text
+      (when (and text (not (string-blank-p text)))
         (save-excursion
           (goto-char (point-max))
           (insert "\n\n" my/agent-shell--context-marker-start
