@@ -933,7 +933,8 @@
 ;; Remap go to definition from gd to ge, and Enter to smart behavior
 (map! :map evil-normal-state-map
       "ge" #'+lookup/references   ; Go to definition with ge instead of gd
-      "<return>" #'my/smart-enter  ; Smart Enter behavior
+      "<return>" #'my/smart-enter  ; Smart Enter behavior (GUI)
+      "RET" #'my/smart-enter      ; Smart Enter behavior (TTY)
       "<tab>" #'evilem-motion-find-char  ; Find char forward
       "<backtab>" #'evilem-motion-find-char-backward  ; Find char backward
       "S" #'diff-hl-show-hunk  ; Show diff hunk with S
