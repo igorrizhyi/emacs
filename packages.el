@@ -130,6 +130,8 @@ Set to nil and run `doom sync' to switch back to upstream.")
               '(:local-repo "modules/agent-shell" :type nil)
             '(:host github :repo "xenodium/agent-shell")))
 
+(package! elsqlite :recipe (:host github :repo "dusanx/elsqlite"))
+
 ;; Doom's packages are pinned to a specific commit and updated from release to
 ;; ?release. The `unpin!' macro allows you to unpin single packages... (unpin!
 ;; pinned-package) ...or multiple packages (unpin! pinned-package

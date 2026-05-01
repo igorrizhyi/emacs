@@ -1519,6 +1519,9 @@ Fedora atomic's /home -> /var/home symlink."
             (lambda ()
               (doom-modeline-set-modeline 'my-dired))))
 
+(use-package! elsqlite
+  :commands (elsqlite-open))
+
 ;; Suppress org-persist gc-lock read errors (file gets corrupted during suspend)
 (defadvice! my/silence-org-persist-read-errors (fn &rest args)
   :around #'org-persist-read
