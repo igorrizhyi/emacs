@@ -2897,7 +2897,10 @@ Mistty becomes the main terminal buffer. When it closes, eshell returns."
         (when (bound-and-true-p evil-mode)
           (evil-local-set-key 'insert (kbd "C-r") #'mistty-send-key)
           (evil-local-set-key 'normal (kbd "C-r") #'mistty-send-key)
-          (evil-local-set-key 'emacs (kbd "C-r") #'mistty-send-key))
+          (evil-local-set-key 'emacs (kbd "C-r") #'mistty-send-key)
+          ;; C-Enter - MCP output capture must override evil normal state keymap
+          (evil-local-set-key 'normal (kbd "C-<return>") #'claude-code-mcp-capture-and-send)
+          (evil-local-set-key 'normal (kbd "C-RET") #'claude-code-mcp-capture-and-send))
 
         ;; doom-modeline handles the modeline via claude-code-terminal-mode hook
         ;; Force modeline update to pick up the new terminal ID and embedded command
