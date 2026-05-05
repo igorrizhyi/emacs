@@ -2211,23 +2211,31 @@ Called from find-file-hook to track source eshell buffer."
 
 ;; Popup input for claude commands
 (defun claude-code-send-emacs-terminal-popup ()
-  "Prompt for a command and send it to agent-shell."
+  "Prompt for a command and send it to agent-shell.
+If a region is active, appends the selected text as context."
   (interactive)
-  (let ((command (read-string "Claude command: ")))
+  (let* ((selection (when (use-region-p)
+                      (buffer-substring-no-properties (region-beginning) (region-end))))
+         (_deactivate (when selection (deactivate-mark)))
+         (command (read-string "Claude command: "))
+         (full-message (if (and selection (not (string-empty-p (string-trim selection))))
+                           (format "Run this command in the Emacs terminal: %s\n\nSelected terminal content:\n```\n%s\n```"
+                                   command selection)
+                         (format "Run this command in the Emacs terminal: %s" command))))
     (when (not (string-empty-p (string-trim command)))
       (let ((agent-buffer (claude-code--find-agent-shell-buffer)))
         (if agent-buffer
             (progn
               (with-current-buffer agent-buffer
                 (goto-char (point-max))
-                (insert (format "/emacs-terminal %s" command))
+                (insert full-message)
                 (when (fboundp 'shell-maker-submit)
                   (shell-maker-submit)))
               (pop-to-buffer agent-buffer)
               (select-window (frame-first-window))
               (message "Command sent to agent-shell"))
           ;; Fallback to claude-code session
-          (claude-code-send-string command)
+          (claude-code-send-string full-message)
           (message "Command sent to Claude"))))))
 
 (defun claude-code-send-command-from-popup ()
