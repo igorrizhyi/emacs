@@ -113,7 +113,15 @@
                (not (ring-empty-p eshell-history-ring)))
       (setq my/eshell-last-saved-command (ring-ref eshell-history-ring 0))))
 
-  (add-hook 'eshell-mode-hook #'my/eshell-reload-history))
+  (add-hook 'eshell-mode-hook #'my/eshell-reload-history)
+
+  ;; Delete word backward without polluting kill-ring/clipboard
+  (defun my/backward-delete-word (arg)
+    "Delete word before point without adding it to the kill ring."
+    (interactive "p")
+    (delete-region (point) (progn (backward-word arg) (point))))
+
+  (define-key eshell-mode-map (kbd "<C-backspace>") #'my/backward-delete-word))
 
 ;; Distrobox eshell integration — open eshell inside a container via TRAMP
 (defun eshell-distrobox ()
