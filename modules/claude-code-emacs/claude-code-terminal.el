@@ -2568,7 +2568,12 @@ Keys are terminal IDs, values are plists with:
   (claude-code-terminal--set-state :first-output t)
   (claude-code-terminal--set-state :output-start-pos nil)
   ;; Don't reset embedded-mode here - it's set in smart-enter before this hook
-  )
+  (claude-code-terminal--set-state :current-command
+    (and (boundp 'eshell-last-input-start)
+         (boundp 'eshell-last-input-end)
+         eshell-last-input-start
+         eshell-last-input-end
+         (buffer-substring-no-properties eshell-last-input-start eshell-last-input-end))))
 
 (defun claude-code-terminal-mark-command-end ()
   "Mark that command finished and add bottom padding for regular mode."
@@ -2585,8 +2590,11 @@ Keys are terminal IDs, values are plists with:
               (overlay-put ov 'after-string
                            (concat (propertize "\n" 'face claude-code-terminal-output-face-regular)
                                    "\n"))
-              (overlay-put ov 'claude-code-terminal-output t)))))))
+              (overlay-put ov 'claude-code-terminal-output t)
+              (overlay-put ov 'claude-code-terminal-command
+                           (claude-code-terminal--get-state :current-command))))))))
   (claude-code-terminal--set-state :in-command nil)
+  (claude-code-terminal--set-state :current-command nil)
   (claude-code-terminal--set-state :embedded-mode nil))
 
 (defun claude-code-terminal-fontify-output ()
@@ -2610,6 +2618,8 @@ Keys are terminal IDs, values are plists with:
                     (overlay-put ov 'line-prefix padding)
                     (overlay-put ov 'wrap-prefix padding)
                     (overlay-put ov 'claude-code-terminal-output t)
+                    (overlay-put ov 'claude-code-terminal-command
+                                 (claude-code-terminal--get-state :current-command))
                     (when (claude-code-terminal--get-state :first-output)
                       (claude-code-terminal--set-state :first-output nil)
                       (claude-code-terminal--set-state :output-start-pos start)))
@@ -2622,6 +2632,8 @@ Keys are terminal IDs, values are plists with:
                   (overlay-put ov 'wrap-prefix padding)
                   (overlay-put ov 'evaporate nil)
                   (overlay-put ov 'claude-code-terminal-output t)
+                  (overlay-put ov 'claude-code-terminal-command
+                               (claude-code-terminal--get-state :current-command))
                   (when (claude-code-terminal--get-state :first-output)
                     (overlay-put ov 'before-string
                                  (concat "" (propertize "\n" 'face face)))
