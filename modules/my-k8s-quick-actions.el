@@ -24,7 +24,7 @@
   "Overlay holding the inline action menu, or nil when not active.")
 
 (defvar-local my-k8s--action-context nil
-  "Plist (:type COMMAND-TYPE :namespace NAMESPACE :pod POD) for the current session.")
+  "Plist (:type COMMAND-TYPE :namespace NAMESPACE :pod POD :kubeconfig KUBECONFIG) for the current session.")
 
 (defvar-local my-k8s--source-buffer nil
   "The eshell buffer that spawned the current k8s result buffer.")
@@ -189,7 +189,10 @@ Returns t if actions were shown, nil otherwise."
     (message "[k8s] enter-action-mode: ctx=%S pod=%S" ctx pod)
     (when (and ctx pod)
       (setq my-k8s--action-context
-            (list :type (car ctx) :namespace (cdr ctx) :pod pod))
+            (list :type (car ctx) :namespace (cdr ctx) :pod pod
+                  :kubeconfig (if (fboundp 'eshell-get-variable)
+                                  (eshell-get-variable "KUBECONFIG")
+                                (getenv "KUBECONFIG"))))
       (my-k8s--show-action-overlay)
       (my-k8s--install-transient-keymap)
       t)))
@@ -198,12 +201,13 @@ Returns t if actions were shown, nil otherwise."
 ;;; Component 6 — Embedded Result Buffer
 ;;; ─────────────────────────────────────────────────────────────────────────────
 
-(defun my-k8s--show-result-buffer (cmd &optional mode-fn short-desc)
+(defun my-k8s--show-result-buffer (cmd &optional mode-fn short-desc kubeconfig)
   "Run CMD asynchronously and display the output in a dedicated buffer.
 
 MODE-FN, when provided, is called (no arguments) to set the buffer's major
 mode after erasure.  SHORT-DESC is used in the buffer name; it defaults to
-a truncated version of CMD.
+a truncated version of CMD.  KUBECONFIG, when non-nil, is prepended to
+`process-environment' so the subprocess inherits the eshell session's value.
 
 The result buffer opens in the same window as the calling eshell buffer.
 Press `q' to kill it and return to eshell."
@@ -225,10 +229,14 @@ Press `q' to kill it and return to eshell."
       (local-set-key (kbd "q") #'my-k8s--close-result-buffer))
     (switch-to-buffer buf)
     ;; Launch async process; output appends into buf
-    (let ((proc (start-process-shell-command
-                 (format "k8s:%s" desc)
-                 buf
-                 cmd)))
+    (let* ((process-environment
+            (if kubeconfig
+                (cons (format "KUBECONFIG=%s" kubeconfig) process-environment)
+              process-environment))
+           (proc (start-process-shell-command
+                  (format "k8s:%s" desc)
+                  buf
+                  cmd)))
       (set-process-sentinel
        proc
        (lambda (p _event)
@@ -289,28 +297,32 @@ Matches the pattern: -<5+alnum>-<5alnum> at end of string."
   "Show sorted environment variables for the pod on the current line."
   (interactive)
   (let* ((pod (plist-get my-k8s--action-context :pod))
-         (ns (or (plist-get my-k8s--action-context :namespace) "webpush")))
+         (ns (or (plist-get my-k8s--action-context :namespace) "webpush"))
+         (kubeconfig (plist-get my-k8s--action-context :kubeconfig)))
     (message "[k8s] action: env pod=%s ns=%s" pod ns)
     (my-k8s--dismiss)
     (when (and pod (not (string-empty-p pod)))
       (my-k8s--show-result-buffer
        (format "kubectl exec %s -n %s -- env | sort" pod ns)
        nil
-       (format "env %s" pod)))))
+       (format "env %s" pod)
+       kubeconfig))))
 
 (defun my-k8s-action-deployment ()
   "Show YAML for the deployment inferred from the pod on the current line."
   (interactive)
   (let* ((pod (plist-get my-k8s--action-context :pod))
          (ns (or (plist-get my-k8s--action-context :namespace) "webpush"))
-         (deploy (when pod (my-k8s--infer-deployment pod))))
+         (deploy (when pod (my-k8s--infer-deployment pod)))
+         (kubeconfig (plist-get my-k8s--action-context :kubeconfig)))
     (message "[k8s] action: deployment pod=%s ns=%s deploy=%s" pod ns deploy)
     (my-k8s--dismiss)
     (when (and pod (not (string-empty-p pod)))
       (my-k8s--show-result-buffer
        (format "kubectl get deployment %s -n %s -o yaml" deploy ns)
        (lambda () (when (fboundp 'yaml-mode) (yaml-mode)))
-       (format "deploy %s" deploy)))))
+       (format "deploy %s" deploy)
+       kubeconfig))))
 
 (defun my-k8s-action-logs ()
   "Tail logs for the pod on the current line, running the command in eshell."
@@ -340,27 +352,31 @@ Matches the pattern: -<5+alnum>-<5alnum> at end of string."
   "Describe the pod on the current line."
   (interactive)
   (let* ((pod (plist-get my-k8s--action-context :pod))
-         (ns (or (plist-get my-k8s--action-context :namespace) "webpush")))
+         (ns (or (plist-get my-k8s--action-context :namespace) "webpush"))
+         (kubeconfig (plist-get my-k8s--action-context :kubeconfig)))
     (message "[k8s] action: describe pod=%s ns=%s" pod ns)
     (my-k8s--dismiss)
     (when (and pod (not (string-empty-p pod)))
       (my-k8s--show-result-buffer
        (format "kubectl describe pod %s -n %s" pod ns)
        nil
-       (format "describe %s" pod)))))
+       (format "describe %s" pod)
+       kubeconfig))))
 
 (defun my-k8s-action-top ()
   "Show resource usage for the pod on the current line."
   (interactive)
   (let* ((pod (plist-get my-k8s--action-context :pod))
-         (ns (or (plist-get my-k8s--action-context :namespace) "webpush")))
+         (ns (or (plist-get my-k8s--action-context :namespace) "webpush"))
+         (kubeconfig (plist-get my-k8s--action-context :kubeconfig)))
     (message "[k8s] action: top pod=%s ns=%s" pod ns)
     (my-k8s--dismiss)
     (when (and pod (not (string-empty-p pod)))
       (my-k8s--show-result-buffer
        (format "kubectl top pod %s -n %s" pod ns)
        nil
-       (format "top %s" pod)))))
+       (format "top %s" pod)
+       kubeconfig))))
 
 ;;; ─────────────────────────────────────────────────────────────────────────────
 ;;; Setup
