@@ -928,6 +928,12 @@
    ((derived-mode-p 'sqlite-mode)
     (call-interactively #'sqlite-mode-list-data))
 
+   ;; In eshell output blocks, show K8s quick actions if applicable
+   ((and (derived-mode-p 'eshell-mode)
+         (not (evil-insert-state-p))
+         (my-k8s-enter-action-mode))
+    nil)  ;; my-k8s-enter-action-mode already handled it
+
    ;; Default: go to definition
    (t
     (call-interactively #'+lookup/definition))))

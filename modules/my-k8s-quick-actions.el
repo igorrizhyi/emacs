@@ -1,8 +1,9 @@
 ;;; my-k8s-quick-actions.el --- K8s quick actions for eshell output -*- lexical-binding: t; -*-
 
-;; When user enters evil visual mode inside a kubectl output block, an inline
-;; action menu appears below the selection.  Pressing an action key extracts
-;; the selected pod name and launches the corresponding kubectl command.
+;; When the user presses Enter (normal state) on a line inside a kubectl output
+;; block, an inline action menu appears.  The pod name is auto-detected from the
+;; first whitespace-delimited token on the current line.  Pressing an action key
+;; launches the corresponding kubectl command.
 ;;
 ;; Non-streaming results (env, describe, top, deployment YAML) open in a
 ;; temporary read-only buffer in the same window.  Press `q` to return to
@@ -23,10 +24,7 @@
   "Overlay holding the inline action menu, or nil when not active.")
 
 (defvar-local my-k8s--action-context nil
-  "Plist (:type COMMAND-TYPE :namespace NAMESPACE) for the current visual session.")
-
-(defvar-local my-k8s--bindings-installed nil
-  "Non-nil while k8s visual-state action keybindings are active.")
+  "Plist (:type COMMAND-TYPE :namespace NAMESPACE :pod POD) for the current session.")
 
 (defvar-local my-k8s--source-buffer nil
   "The eshell buffer that spawned the current k8s result buffer.")
@@ -105,7 +103,21 @@ Return nil otherwise."
     (my-k8s--parse-kubectl-command (my-k8s--find-command-for-output))))
 
 ;;; ─────────────────────────────────────────────────────────────────────────────
-;;; Component 2 — Inline Action Overlay
+;;; Component 2 — Pod Auto-Detection
+;;; ─────────────────────────────────────────────────────────────────────────────
+
+(defun my-k8s--detect-pod-at-line ()
+  "Extract pod name from the current line in kubectl output.
+Matches the first whitespace-delimited token that looks like a k8s resource name
+(contains at least one hyphen and one alphanumeric segment)."
+  (let* ((line (string-trim (buffer-substring-no-properties
+                              (line-beginning-position) (line-end-position))))
+         (first-token (car (split-string line))))
+    (when (and first-token (string-match-p "-" first-token))
+      first-token)))
+
+;;; ─────────────────────────────────────────────────────────────────────────────
+;;; Component 3 — Inline Action Overlay
 ;;; ─────────────────────────────────────────────────────────────────────────────
 
 (defun my-k8s--make-menu-string ()
@@ -140,28 +152,50 @@ Return nil otherwise."
   (setq my-k8s--action-overlay nil))
 
 ;;; ─────────────────────────────────────────────────────────────────────────────
-;;; Component 3 — Evil Visual-State Keybindings
+;;; Component 4 — Transient Keymap
 ;;; ─────────────────────────────────────────────────────────────────────────────
 
-(defun my-k8s--install-visual-bindings ()
-  "Override single-letter evil visual keybindings with k8s actions (buffer-local)."
-  (evil-local-set-key 'visual (kbd "e") #'my-k8s-action-env)
-  (evil-local-set-key 'visual (kbd "d") #'my-k8s-action-deployment)
-  (evil-local-set-key 'visual (kbd "l") #'my-k8s-action-logs)
-  (evil-local-set-key 'visual (kbd "x") #'my-k8s-action-exec)
-  (evil-local-set-key 'visual (kbd "D") #'my-k8s-action-describe)
-  (evil-local-set-key 'visual (kbd "t") #'my-k8s-action-top)
-  (setq my-k8s--bindings-installed t))
+(defun my-k8s--install-transient-keymap ()
+  "Install a transient keymap for k8s actions.  Auto-deactivates on unbound key."
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "e") #'my-k8s-action-env)
+    (define-key map (kbd "d") #'my-k8s-action-deployment)
+    (define-key map (kbd "l") #'my-k8s-action-logs)
+    (define-key map (kbd "x") #'my-k8s-action-exec)
+    (define-key map (kbd "D") #'my-k8s-action-describe)
+    (define-key map (kbd "t") #'my-k8s-action-top)
+    (define-key map (kbd "<escape>") #'my-k8s--dismiss)
+    (define-key map (kbd "q") #'my-k8s--dismiss)
+    (set-transient-map map t #'my-k8s--dismiss)))
 
-(defun my-k8s--remove-visual-bindings ()
-  "Unbind k8s action keys from evil visual state (buffer-local)."
-  (when my-k8s--bindings-installed
-    (dolist (key '("e" "d" "l" "x" "D" "t"))
-      (evil-local-set-key 'visual (kbd key) nil))
-    (setq my-k8s--bindings-installed nil)))
+(defun my-k8s--dismiss ()
+  "Remove the action overlay and clean up."
+  (interactive)
+  (my-k8s--remove-action-overlay)
+  (setq my-k8s--action-context nil))
 
 ;;; ─────────────────────────────────────────────────────────────────────────────
-;;; Component 4 — Embedded Result Buffer
+;;; Component 5 — Enter Action Mode Entry Point
+;;; ─────────────────────────────────────────────────────────────────────────────
+
+;;;###autoload
+(defun my-k8s-enter-action-mode ()
+  "Show K8s quick actions for the pod on the current line.
+Called from `my/smart-enter' when cursor is inside kubectl output.
+Returns t if actions were shown, nil otherwise."
+  (interactive)
+  (let ((ctx (my-k8s--in-k8s-output-p))
+        (pod (my-k8s--detect-pod-at-line)))
+    (message "[k8s] enter-action-mode: ctx=%S pod=%S" ctx pod)
+    (when (and ctx pod)
+      (setq my-k8s--action-context
+            (list :type (car ctx) :namespace (cdr ctx) :pod pod))
+      (my-k8s--show-action-overlay)
+      (my-k8s--install-transient-keymap)
+      t)))
+
+;;; ─────────────────────────────────────────────────────────────────────────────
+;;; Component 6 — Embedded Result Buffer
 ;;; ─────────────────────────────────────────────────────────────────────────────
 
 (defun my-k8s--show-result-buffer (cmd &optional mode-fn short-desc)
@@ -218,7 +252,7 @@ Press `q' to kill it and return to eshell."
       (switch-to-buffer src))))
 
 ;;; ─────────────────────────────────────────────────────────────────────────────
-;;; Component 5 — Buffer-Tie Auto-Hide/Show
+;;; Component 7 — Buffer-Tie Auto-Hide/Show
 ;;; ─────────────────────────────────────────────────────────────────────────────
 
 (defun my-k8s--window-buffer-change (win)
@@ -231,24 +265,8 @@ Added to `window-buffer-change-functions' when the module is active."
                  (not (eq (window-buffer win) (current-buffer))))))
 
 ;;; ─────────────────────────────────────────────────────────────────────────────
-;;; Component 6 — Action Helpers and Actions
+;;; Component 8 — Action Helpers and Actions
 ;;; ─────────────────────────────────────────────────────────────────────────────
-
-(defun my-k8s--get-pod-and-ns ()
-  "Capture (POD-NAME . NAMESPACE) from the active visual selection and context.
-
-Reads the region text and stored namespace BEFORE exiting visual mode so that
-the values are safe from the exit-hook cleanup."
-  (let* ((pod (string-trim
-               (buffer-substring-no-properties
-                (region-beginning) (region-end))))
-         (ns (or (and my-k8s--action-context
-                      (plist-get my-k8s--action-context :namespace))
-                 "webpush")))
-    ;; Exit visual mode last — this fires my-k8s--on-visual-exit which clears
-    ;; my-k8s--action-context, but `ns' is already a local binding.
-    (evil-normal-state)
-    (cons pod ns)))
 
 (defun my-k8s--infer-deployment (pod-name)
   "Strip the trailing ReplicaSet and pod hash suffixes from POD-NAME.
@@ -268,94 +286,81 @@ Matches the pattern: -<5+alnum>-<5alnum> at end of string."
 ;;; Actions ────────────────────────────────────────────────────────────────────
 
 (defun my-k8s-action-env ()
-  "Show sorted environment variables for the visually selected pod."
+  "Show sorted environment variables for the pod on the current line."
   (interactive)
-  (let* ((pair (my-k8s--get-pod-and-ns))
-         (pod (car pair))
-         (ns (cdr pair)))
-    (unless (string-empty-p pod)
+  (let* ((pod (plist-get my-k8s--action-context :pod))
+         (ns (or (plist-get my-k8s--action-context :namespace) "webpush")))
+    (message "[k8s] action: env pod=%s ns=%s" pod ns)
+    (my-k8s--dismiss)
+    (when (and pod (not (string-empty-p pod)))
       (my-k8s--show-result-buffer
        (format "kubectl exec %s -n %s -- env | sort" pod ns)
        nil
        (format "env %s" pod)))))
 
 (defun my-k8s-action-deployment ()
-  "Show YAML for the deployment inferred from the visually selected pod."
+  "Show YAML for the deployment inferred from the pod on the current line."
   (interactive)
-  (let* ((pair (my-k8s--get-pod-and-ns))
-         (pod (car pair))
-         (ns (cdr pair))
-         (deploy (my-k8s--infer-deployment pod)))
-    (unless (string-empty-p pod)
+  (let* ((pod (plist-get my-k8s--action-context :pod))
+         (ns (or (plist-get my-k8s--action-context :namespace) "webpush"))
+         (deploy (when pod (my-k8s--infer-deployment pod))))
+    (message "[k8s] action: deployment pod=%s ns=%s deploy=%s" pod ns deploy)
+    (my-k8s--dismiss)
+    (when (and pod (not (string-empty-p pod)))
       (my-k8s--show-result-buffer
        (format "kubectl get deployment %s -n %s -o yaml" deploy ns)
        (lambda () (when (fboundp 'yaml-mode) (yaml-mode)))
        (format "deploy %s" deploy)))))
 
 (defun my-k8s-action-logs ()
-  "Tail logs for the visually selected pod, running the command in eshell."
+  "Tail logs for the pod on the current line, running the command in eshell."
   (interactive)
-  (let* ((pair (my-k8s--get-pod-and-ns))
-         (pod (car pair))
-         (ns (cdr pair)))
-    (unless (string-empty-p pod)
+  (let* ((pod (plist-get my-k8s--action-context :pod))
+         (ns (or (plist-get my-k8s--action-context :namespace) "webpush")))
+    (message "[k8s] action: logs pod=%s ns=%s" pod ns)
+    (my-k8s--dismiss)
+    (when (and pod (not (string-empty-p pod)))
       (my-k8s--send-eshell-command
        (format "kubectl logs -n %s --tail=100 -f %s" ns pod)))))
 
 (defun my-k8s-action-exec ()
-  "Exec into the visually selected pod via mistty (falls back to eshell)."
+  "Exec into the pod on the current line via mistty (falls back to eshell)."
   (interactive)
-  (let* ((pair (my-k8s--get-pod-and-ns))
-         (pod (car pair))
-         (ns (cdr pair))
+  (let* ((pod (plist-get my-k8s--action-context :pod))
+         (ns (or (plist-get my-k8s--action-context :namespace) "webpush"))
          (cmd (format "kubectl exec -it %s -n %s -- /bin/bash" pod ns)))
-    (unless (string-empty-p pod)
+    (message "[k8s] action: exec pod=%s ns=%s" pod ns)
+    (my-k8s--dismiss)
+    (when (and pod (not (string-empty-p pod)))
       (if (fboundp 'claude-code-terminal-spawn-mistty)
           (claude-code-terminal-spawn-mistty cmd)
         (my-k8s--send-eshell-command cmd)))))
 
 (defun my-k8s-action-describe ()
-  "Describe the visually selected pod."
+  "Describe the pod on the current line."
   (interactive)
-  (let* ((pair (my-k8s--get-pod-and-ns))
-         (pod (car pair))
-         (ns (cdr pair)))
-    (unless (string-empty-p pod)
+  (let* ((pod (plist-get my-k8s--action-context :pod))
+         (ns (or (plist-get my-k8s--action-context :namespace) "webpush")))
+    (message "[k8s] action: describe pod=%s ns=%s" pod ns)
+    (my-k8s--dismiss)
+    (when (and pod (not (string-empty-p pod)))
       (my-k8s--show-result-buffer
        (format "kubectl describe pod %s -n %s" pod ns)
        nil
        (format "describe %s" pod)))))
 
 (defun my-k8s-action-top ()
-  "Show resource usage for the visually selected pod."
+  "Show resource usage for the pod on the current line."
   (interactive)
-  (let* ((pair (my-k8s--get-pod-and-ns))
-         (pod (car pair))
-         (ns (cdr pair)))
-    (unless (string-empty-p pod)
+  (let* ((pod (plist-get my-k8s--action-context :pod))
+         (ns (or (plist-get my-k8s--action-context :namespace) "webpush")))
+    (message "[k8s] action: top pod=%s ns=%s" pod ns)
+    (my-k8s--dismiss)
+    (when (and pod (not (string-empty-p pod)))
       (my-k8s--show-result-buffer
        (format "kubectl top pod %s -n %s" pod ns)
        nil
        (format "top %s" pod)))))
-
-;;; ─────────────────────────────────────────────────────────────────────────────
-;;; Visual State Hooks
-;;; ─────────────────────────────────────────────────────────────────────────────
-
-(defun my-k8s--on-visual-enter ()
-  "Entry hook: show k8s action overlay when cursor is inside kubectl output."
-  (let ((ctx (my-k8s--in-k8s-output-p)))
-    (when ctx
-      (setq my-k8s--action-context
-            (list :type (car ctx) :namespace (cdr ctx)))
-      (my-k8s--show-action-overlay)
-      (my-k8s--install-visual-bindings))))
-
-(defun my-k8s--on-visual-exit ()
-  "Exit hook: remove action overlay and restore keybindings."
-  (my-k8s--remove-action-overlay)
-  (my-k8s--remove-visual-bindings)
-  (setq my-k8s--action-context nil))
 
 ;;; ─────────────────────────────────────────────────────────────────────────────
 ;;; Setup
@@ -365,8 +370,6 @@ Matches the pattern: -<5+alnum>-<5alnum> at end of string."
 (defun my-k8s-quick-actions-setup ()
   "Enable K8s quick actions in the current eshell buffer.
 Add to `eshell-mode-hook'."
-  (add-hook 'evil-visual-state-entry-hook #'my-k8s--on-visual-enter nil t)
-  (add-hook 'evil-visual-state-exit-hook  #'my-k8s--on-visual-exit  nil t)
   (add-hook 'window-buffer-change-functions #'my-k8s--window-buffer-change nil t))
 
 (add-hook 'eshell-mode-hook #'my-k8s-quick-actions-setup)
