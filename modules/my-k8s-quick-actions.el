@@ -32,6 +32,18 @@
 (defvar-local my-k8s--result-kubeconfig nil
   "KUBECONFIG path for the kubectl apply command in an editable result buffer.")
 
+(defvar-local my-k8s--env-deploy nil
+  "Deployment name for the current env buffer.")
+
+(defvar-local my-k8s--env-namespace nil
+  "Namespace for the current env buffer.")
+
+(defvar-local my-k8s--env-kubeconfig nil
+  "KUBECONFIG path for the current env buffer.")
+
+(defvar-local my-k8s--env-baseline-file nil
+  "Path to temp file holding the baseline env content for diffing.")
+
 ;;; ─────────────────────────────────────────────────────────────────────────────
 ;;; Component 1 — K8s Output Detection
 ;;; ─────────────────────────────────────────────────────────────────────────────
@@ -310,6 +322,194 @@ Uses the KUBECONFIG stored when the deployment buffer was opened."
     (when (and src (buffer-live-p src))
       (switch-to-buffer src))))
 
+(defun my-k8s--close-env-buffer ()
+  "Kill the k8s env buffer (and set-env output buffer) and restore eshell."
+  (interactive)
+  (let ((src (bound-and-true-p my-k8s--source-buffer))
+        (baseline (bound-and-true-p my-k8s--env-baseline-file)))
+    (when-let ((proc (get-buffer-process (current-buffer))))
+      (kill-process proc))
+    (when-let ((buf (get-buffer "*k8s: set-env output*")))
+      (kill-buffer buf))
+    (when (and baseline (file-exists-p baseline))
+      (delete-file baseline))
+    (kill-buffer (current-buffer))
+    (when (and src (buffer-live-p src))
+      (switch-to-buffer src))))
+
+(defun my-k8s--parse-env-lines (text)
+  "Parse TEXT (KEY=VALUE lines) into an alist, skipping blanks and comments."
+  (let (result)
+    (dolist (line (split-string text "\n"))
+      (setq line (string-trim line))
+      (when (and (not (string-empty-p line))
+                 (not (string-prefix-p "#" line))
+                 (string-match "^\\([^=]+\\)=\\(.*\\)$" line))
+        (push (cons (match-string 1 line) (match-string 2 line)) result)))
+    (nreverse result)))
+
+(defun my-k8s--apply-env-changes ()
+  "Apply env changes from current buffer to the deployment via kubectl set env."
+  (interactive)
+  (let* ((deploy (bound-and-true-p my-k8s--env-deploy))
+         (ns (bound-and-true-p my-k8s--env-namespace))
+         (kubeconfig (bound-and-true-p my-k8s--env-kubeconfig))
+         (baseline-file (bound-and-true-p my-k8s--env-baseline-file)))
+    (unless (and deploy ns baseline-file)
+      (user-error "[k8s] env buffer not properly initialized"))
+    (let* ((current-text (buffer-substring-no-properties (point-min) (point-max)))
+           (current-alist (my-k8s--parse-env-lines current-text))
+           (baseline-text (with-temp-buffer
+                            (insert-file-contents baseline-file)
+                            (buffer-string)))
+           (baseline-alist (my-k8s--parse-env-lines baseline-text))
+           args)
+      ;; Find added/changed vars
+      (dolist (pair current-alist)
+        (let* ((key (car pair))
+               (val (cdr pair))
+               (old-val (cdr (assoc key baseline-alist))))
+          (unless (equal old-val val)
+            (push (shell-quote-argument (format "%s=%s" key val)) args))))
+      ;; Find removed vars (key with trailing dash removes the var)
+      (dolist (pair baseline-alist)
+        (let ((key (car pair)))
+          (unless (assoc key current-alist)
+            (push (shell-quote-argument (format "%s-" key)) args))))
+      (if (null args)
+          (message "[k8s] No env changes to apply")
+        (let* ((args-str (mapconcat #'identity args " "))
+               (cmd (format "kubectl set env deployment/%s -n %s %s"
+                            deploy ns args-str))
+               (process-environment
+                (if kubeconfig
+                    (cons (format "KUBECONFIG=%s" kubeconfig) process-environment)
+                  process-environment))
+               (out-buf (get-buffer-create "*k8s: set-env output*"))
+               (env-buf (current-buffer)))
+          (with-current-buffer out-buf
+            (let ((inhibit-read-only t))
+              (erase-buffer)
+              (insert (propertize (format "# %s\n\n" cmd) 'face 'font-lock-comment-face))
+              (setq buffer-read-only nil)))
+          (display-buffer out-buf)
+          (let ((proc (start-process-shell-command "k8s:set-env" out-buf cmd)))
+            (set-process-sentinel
+             proc
+             (lambda (p _event)
+               (when (buffer-live-p (process-buffer p))
+                 (with-current-buffer (process-buffer p)
+                   (let ((inhibit-read-only t))
+                     (goto-char (point-max))
+                     (insert (propertize "\n-- done --\n" 'face 'font-lock-comment-face)))
+                   (setq buffer-read-only t)))
+               ;; Update baseline on clean exit
+               (when (and (buffer-live-p env-buf)
+                          (= 0 (process-exit-status p)))
+                 (with-current-buffer env-buf
+                   (when (bound-and-true-p my-k8s--env-baseline-file)
+                     (write-region (point-min) (point-max)
+                                   my-k8s--env-baseline-file nil 'silent))))))
+            (message "[k8s] kubectl set env started")))))))
+
+(defun my-k8s--show-env-buffer (deploy ns kubeconfig src-buf)
+  "Fetch and display deployment env vars in an editable buffer.
+DEPLOY is the deployment name, NS the namespace, KUBECONFIG the kubeconfig
+path, and SRC-BUF the eshell buffer to return to on quit.
+
+Runs `kubectl get deployment DEPLOY -n NS -o json' asynchronously, parses the
+container env array from the JSON, formats as sorted KEY=VALUE lines (one per
+line), and stores a baseline temp file for change detection.  Vars using
+valueFrom (secrets/configmaps) are shown as read-only comments."
+  (let* ((buf-name (format "*k8s: env %s*" deploy))
+         (buf (get-buffer-create buf-name))
+         (collect-buf (generate-new-buffer " *k8s-env-json*"))
+         (cmd (format "kubectl get deployment %s -n %s -o json" deploy ns))
+         (process-environment
+          (if kubeconfig
+              (cons (format "KUBECONFIG=%s" kubeconfig) process-environment)
+            process-environment)))
+    (with-current-buffer buf
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (insert (propertize (format "# Loading env for deployment/%s -n %s ...\n"
+                                    deploy ns)
+                            'face 'font-lock-comment-face)))
+      (setq buffer-read-only nil)
+      (setq-local my-k8s--source-buffer src-buf)
+      (setq-local my-k8s--env-deploy deploy)
+      (setq-local my-k8s--env-namespace ns)
+      (setq-local my-k8s--env-kubeconfig kubeconfig)
+      (setq-local my-k8s--env-baseline-file nil)
+      (use-local-map (copy-keymap (or (current-local-map) (make-sparse-keymap))))
+      (local-set-key (kbd "q")       #'my-k8s--close-env-buffer)
+      (local-set-key (kbd "C-c C-c") #'my-k8s--apply-env-changes)
+      (local-set-key (kbd "C-x C-s") #'my-k8s--apply-env-changes)
+      (evil-local-set-key 'normal "q" #'my-k8s--close-env-buffer)
+      (evil-local-set-key 'motion "q" #'my-k8s--close-env-buffer)
+      (setq header-line-format
+            (propertize
+             "  Edit KEY=VALUE then C-c C-c or C-x C-s to apply  |  q to close"
+             'face 'font-lock-comment-face)))
+    (switch-to-buffer buf)
+    (let ((proc (start-process-shell-command
+                 (format "k8s:env-fetch %s" deploy)
+                 collect-buf
+                 cmd)))
+      (set-process-sentinel
+       proc
+       (lambda (p _event)
+         (let ((json-str (if (buffer-live-p collect-buf)
+                             (with-current-buffer collect-buf (buffer-string))
+                           "")))
+           (when (buffer-live-p collect-buf)
+             (kill-buffer collect-buf))
+           (when (buffer-live-p buf)
+             (with-current-buffer buf
+               (let* ((env-lines
+                       (condition-case err
+                           (let* ((data (json-parse-string
+                                         json-str
+                                         :object-type 'alist
+                                         :array-type  'list))
+                                  (tspec (alist-get
+                                          'spec
+                                          (alist-get 'template
+                                                     (alist-get 'spec data))))
+                                  (envs (alist-get 'env (car (alist-get 'containers tspec))))
+                                  lines)
+                             (dolist (e envs)
+                               (let ((name (alist-get 'name e))
+                                     (val  (alist-get 'value e))
+                                     (from (alist-get 'valueFrom e)))
+                                 (cond
+                                  (val
+                                   (push (format "%s=%s" name val) lines))
+                                  (from
+                                   (push (format "# %s=<from:%s>"
+                                                 name
+                                                 (cond
+                                                  ((alist-get 'secretKeyRef from)
+                                                   "secretKeyRef")
+                                                  ((alist-get 'configMapKeyRef from)
+                                                   "configMapKeyRef")
+                                                  (t "valueFrom")))
+                                         lines)))))
+                             (sort lines #'string<))
+                         (error
+                          (list (format "# Error parsing JSON: %s"
+                                        (error-message-string err))))))
+                      (content (mapconcat #'identity env-lines "\n"))
+                      (inhibit-read-only t))
+                 (erase-buffer)
+                 (insert content)
+                 (goto-char (point-min))
+                 ;; Write baseline file (for diffing on apply)
+                 (let ((baseline (make-temp-file "k8s-env-" nil ".env")))
+                   (write-region content nil baseline nil 'silent)
+                   (setq-local my-k8s--env-baseline-file baseline)))))))))
+    buf))
+
 ;;; ─────────────────────────────────────────────────────────────────────────────
 ;;; Component 7 — Buffer-Tie Auto-Hide/Show
 ;;; ─────────────────────────────────────────────────────────────────────────────
@@ -345,19 +545,21 @@ Matches the pattern: -<5+alnum>-<5alnum> at end of string."
 ;;; Actions ────────────────────────────────────────────────────────────────────
 
 (defun my-k8s-action-env ()
-  "Show sorted environment variables for the pod on the current line."
+  "Show editable deployment environment variables for the pod on the current line.
+
+Fetches the env vars from the deployment spec (not via kubectl exec), formats
+them as KEY=VALUE lines in an editable buffer, and allows applying changes back
+to the deployment via `kubectl set env'."
   (interactive)
   (let* ((pod (plist-get my-k8s--action-context :pod))
          (ns (or (plist-get my-k8s--action-context :namespace) "webpush"))
-         (kubeconfig (plist-get my-k8s--action-context :kubeconfig)))
-    (message "[k8s] action: env pod=%s ns=%s" pod ns)
+         (kubeconfig (plist-get my-k8s--action-context :kubeconfig))
+         (deploy (when pod (my-k8s--infer-deployment pod)))
+         (src-buf (current-buffer)))
+    (message "[k8s] action: env pod=%s ns=%s deploy=%s" pod ns deploy)
     (my-k8s--dismiss)
     (when (and pod (not (string-empty-p pod)))
-      (my-k8s--show-result-buffer
-       (format "kubectl exec %s -n %s -- env | sort" pod ns)
-       nil
-       (format "env %s" pod)
-       kubeconfig))))
+      (my-k8s--show-env-buffer deploy ns kubeconfig src-buf))))
 
 (defun my-k8s-action-deployment ()
   "Show YAML for the deployment inferred from the pod on the current line."
