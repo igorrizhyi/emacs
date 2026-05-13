@@ -137,16 +137,21 @@ Matches the first whitespace-delimited token that looks like a k8s resource name
 
 (defun my-k8s--make-menu-string ()
   "Return a propertized string for the inline action menu."
-  (let ((face (list :font (font-spec :family "SF Mono" :weight 'semibold)
-                    :height 0.75 :inherit nil :background "#372413")))
+  (let* ((face (list :font (font-spec :family "SF Mono" :weight 'semibold)
+                     :height 0.75 :inherit nil :background "#1a1a2e"))
+         (sep (concat "  " (make-string 60 ?─) "\n")))
     (propertize
      (concat "\n"
+             sep
+             "\n"
              "  e — Environment variables   (kubectl exec ... env)\n"
              "  d — Deployment YAML         (kubectl get deployment ... -o yaml)\n"
              "  l — Tail logs               (kubectl logs --tail=100 -f ...)\n"
              "  x — Exec into pod           (kubectl exec -it ... bash)\n"
              "  D — Describe pod            (kubectl describe pod ...)\n"
-             "  t — Resource usage          (kubectl top pod ...)\n")
+             "  t — Resource usage          (kubectl top pod ...)\n"
+             "\n"
+             sep)
      'face face)))
 
 (defun my-k8s--show-action-overlay ()
