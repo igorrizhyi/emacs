@@ -234,6 +234,9 @@ Press `q' to kill it and return to eshell."
       (use-local-map (copy-keymap (or (current-local-map)
                                       (make-sparse-keymap))))
       (local-set-key (kbd "q") #'my-k8s--close-result-buffer)
+      ;; Also bind in evil states: evil intercepts keys before the local map
+      (evil-local-set-key 'normal "q" #'my-k8s--close-result-buffer)
+      (evil-local-set-key 'motion "q" #'my-k8s--close-result-buffer)
       (when editable
         (setq-local my-k8s--result-kubeconfig kubeconfig)
         (local-set-key (kbd "C-c C-c") #'my-k8s--apply-yaml-buffer)
