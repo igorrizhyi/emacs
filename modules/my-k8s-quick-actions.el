@@ -29,6 +29,9 @@
 (defvar-local my-k8s--source-buffer nil
   "The eshell buffer that spawned the current k8s result buffer.")
 
+(defvar-local my-k8s--result-kubeconfig nil
+  "KUBECONFIG path for the kubectl apply command in an editable result buffer.")
+
 ;;; ─────────────────────────────────────────────────────────────────────────────
 ;;; Component 1 — K8s Output Detection
 ;;; ─────────────────────────────────────────────────────────────────────────────
@@ -201,13 +204,17 @@ Returns t if actions were shown, nil otherwise."
 ;;; Component 6 — Embedded Result Buffer
 ;;; ─────────────────────────────────────────────────────────────────────────────
 
-(defun my-k8s--show-result-buffer (cmd &optional mode-fn short-desc kubeconfig)
+(defun my-k8s--show-result-buffer (cmd &optional mode-fn short-desc kubeconfig editable)
   "Run CMD asynchronously and display the output in a dedicated buffer.
 
 MODE-FN, when provided, is called (no arguments) to set the buffer's major
 mode after erasure.  SHORT-DESC is used in the buffer name; it defaults to
 a truncated version of CMD.  KUBECONFIG, when non-nil, is prepended to
 `process-environment' so the subprocess inherits the eshell session's value.
+
+When EDITABLE is non-nil the buffer is left writable after the process
+finishes, a `C-c C-c' binding is installed to run `kubectl apply -f -' with
+the buffer contents, and a header line explains how to apply changes.
 
 The result buffer opens in the same window as the calling eshell buffer.
 Press `q' to kill it and return to eshell."
@@ -226,7 +233,13 @@ Press `q' to kill it and return to eshell."
       ;; Install quit binding on a copy of the current local map
       (use-local-map (copy-keymap (or (current-local-map)
                                       (make-sparse-keymap))))
-      (local-set-key (kbd "q") #'my-k8s--close-result-buffer))
+      (local-set-key (kbd "q") #'my-k8s--close-result-buffer)
+      (when editable
+        (setq-local my-k8s--result-kubeconfig kubeconfig)
+        (local-set-key (kbd "C-c C-c") #'my-k8s--apply-yaml-buffer)
+        (setq header-line-format
+              (propertize "  Edit YAML then C-c C-c to kubectl apply  |  q to close"
+                          'face 'font-lock-comment-face))))
     (switch-to-buffer buf)
     ;; Launch async process; output appends into buf
     (let* ((process-environment
@@ -246,8 +259,40 @@ Press `q' to kill it and return to eshell."
                (goto-char (point-max))
                (insert (propertize "\n\n-- done --\n"
                                    'face 'font-lock-comment-face)))
-             (setq buffer-read-only t))))))
+             (unless editable
+               (setq buffer-read-only t)))))))
     buf))
+
+(defun my-k8s--apply-yaml-buffer ()
+  "Pipe the current buffer's contents to `kubectl apply -f -'.
+Uses the KUBECONFIG stored when the deployment buffer was opened."
+  (interactive)
+  (let* ((kubeconfig (bound-and-true-p my-k8s--result-kubeconfig))
+         (yaml (buffer-substring-no-properties (point-min) (point-max)))
+         (process-environment
+          (if kubeconfig
+              (cons (format "KUBECONFIG=%s" kubeconfig) process-environment)
+            process-environment))
+         (out-buf (get-buffer-create "*k8s: apply output*")))
+    (with-current-buffer out-buf
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (insert (propertize "# kubectl apply -f -\n\n" 'face 'font-lock-comment-face))))
+    (display-buffer out-buf)
+    (let ((proc (start-process-shell-command
+                 "k8s:apply" out-buf "kubectl apply -f -")))
+      (process-send-string proc yaml)
+      (process-send-eof proc)
+      (set-process-sentinel
+       proc
+       (lambda (p _event)
+         (when (buffer-live-p (process-buffer p))
+           (with-current-buffer (process-buffer p)
+             (let ((inhibit-read-only t))
+               (goto-char (point-max))
+               (insert (propertize "\n-- done --\n" 'face 'font-lock-comment-face)))
+             (setq buffer-read-only t)))))
+      (message "[k8s] kubectl apply started"))))
 
 (defun my-k8s--close-result-buffer ()
   "Kill the k8s result buffer (and any running process) and restore eshell."
@@ -322,7 +367,8 @@ Matches the pattern: -<5+alnum>-<5alnum> at end of string."
        (format "kubectl get deployment %s -n %s -o yaml" deploy ns)
        (lambda () (when (fboundp 'yaml-mode) (yaml-mode)))
        (format "deploy %s" deploy)
-       kubeconfig))))
+       kubeconfig
+       t))))
 
 (defun my-k8s-action-logs ()
   "Tail logs for the pod on the current line, running the command in eshell."
