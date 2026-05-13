@@ -256,11 +256,11 @@ Press `q' to kill it and return to eshell."
        (lambda (p _event)
          (when (buffer-live-p (process-buffer p))
            (with-current-buffer (process-buffer p)
-             (let ((inhibit-read-only t))
-               (goto-char (point-max))
-               (insert (propertize "\n\n-- done --\n"
-                                   'face 'font-lock-comment-face)))
              (unless editable
+               (let ((inhibit-read-only t))
+                 (goto-char (point-max))
+                 (insert (propertize "\n\n-- done --\n"
+                                     'face 'font-lock-comment-face)))
                (setq buffer-read-only t)))))))
     buf))
 
