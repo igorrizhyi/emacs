@@ -304,6 +304,8 @@ Uses the KUBECONFIG stored when the deployment buffer was opened."
   (let ((src (bound-and-true-p my-k8s--source-buffer)))
     (when-let ((proc (get-buffer-process (current-buffer))))
       (kill-process proc))
+    (when-let ((buf (get-buffer "*k8s: apply output*")))
+      (kill-buffer buf))
     (kill-buffer (current-buffer))
     (when (and src (buffer-live-p src))
       (switch-to-buffer src))))
