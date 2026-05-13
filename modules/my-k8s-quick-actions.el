@@ -237,6 +237,7 @@ Press `q' to kill it and return to eshell."
       (when editable
         (setq-local my-k8s--result-kubeconfig kubeconfig)
         (local-set-key (kbd "C-c C-c") #'my-k8s--apply-yaml-buffer)
+        (local-set-key (kbd "C-x C-s") #'my-k8s--apply-yaml-buffer)
         (setq header-line-format
               (propertize "  Edit YAML then C-c C-c to kubectl apply  |  q to close"
                           'face 'font-lock-comment-face))))
