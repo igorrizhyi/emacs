@@ -1005,8 +1005,50 @@ If terminal has active mistty buffer, routes command there instead."
     ;; Check if terminal has active mistty buffer - use mistty buffer instead
     (when (and (fboundp 'claude-code-terminal-has-active-mistty-p)
                (claude-code-terminal-has-active-mistty-p terminal-id))
-      (setq buffer (claude-code-terminal-get-mistty-buffer terminal-id))
-)
+      (setq buffer (claude-code-terminal-get-mistty-buffer terminal-id)))
+
+    ;; If command requires an interactive TTY and no mistty is active yet,
+    ;; spawn mistty to handle it (eshell has no TTY, so ssh/kubectl exec/etc. break there)
+    (when (and (fboundp 'claude-code-terminal--is-embedded-command-p)
+               (claude-code-terminal--is-embedded-command-p command)
+               (not (claude-code-terminal-has-active-mistty-p terminal-id)))
+      (let ((user-choice (claude-code-show-command-confirmation-popup command project-root)))
+        (pcase user-choice
+          ;; Execute or edit: spawn mistty — it auto-sends the command after shell is ready.
+          ;; Edit is treated as execute for interactive commands since mistty provides real TTY editing.
+          ((or 'execute 'edit)
+           (let ((mistty-buf (with-current-buffer buffer
+                               (claude-code-terminal-spawn-mistty command))))
+             (when (and mistty-buf (buffer-live-p mistty-buf))
+               (pop-to-buffer mistty-buf))
+             (cl-return-from claude-code-mcp-handle-executeTerminalCommandInEmacs
+               `((success . t)
+                 (message . "Interactive command launched in mistty terminal")
+                 (terminalId . ,terminal-id)
+                 (command . ,command)
+                 (stdout . "")
+                 (stderr . "")
+                 (exitCode . 0)
+                 (timeout . ,json-false)
+                 (interrupted . ,json-false)
+                 (largeOutput . ,json-false)
+                 (workingDirectory . ,(or project-root default-directory))
+                 (error . "")))))
+          ;; User cancelled
+          (_
+           (cl-return-from claude-code-mcp-handle-executeTerminalCommandInEmacs
+             `((success . nil)
+               (message . "Command execution was cancelled by user")
+               (terminalId . ,terminal-id)
+               (command . ,command)
+               (stdout . "")
+               (stderr . "KeyboardInterrupt: User cancelled command execution")
+               (exitCode . 130)
+               (timeout . ,json-false)
+               (interrupted . nil)
+               (largeOutput . nil)
+               (workingDirectory . ,(or project-root default-directory))
+               (error . "KeyboardInterrupt: User cancelled command execution")))))))
 
     ;; Show confirmation popup before executing
     (let ((user-choice (claude-code-show-command-confirmation-popup command project-root)))
