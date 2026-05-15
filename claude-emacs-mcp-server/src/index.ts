@@ -792,7 +792,10 @@ async function getTargetInstanceId(
 
 // Notify a specific Emacs instance, or discover the sole running instance
 async function notifyEmacsInstance(port: number, projectRoot: string, instanceId?: number): Promise<boolean> {
-  const elisp = `(claude-code-mcp-register-port "${projectRoot}" ${port})`;
+  const agentBuffer = process.env.EMACS_AGENT_BUFFER;
+  const elisp = agentBuffer
+    ? `(claude-code-mcp-register-port "${projectRoot}" ${port} "${agentBuffer}")`
+    : `(claude-code-mcp-register-port "${projectRoot}" ${port})`;
 
   if (instanceId) {
     // Direct: use emacs-{instanceId} server name

@@ -69,6 +69,8 @@
 (declare-function my/team-sidebar--show "my-agent-shell-sidebar")
 (declare-function agent-shell-namespace--format-peers-for-prompt "agent-shell-namespace")
 (declare-function claude-code-mcp-disconnect "claude-code-mcp-connection" (conn-key))
+(declare-function claude-code-mcp-get-connection-info "claude-code-mcp-connection" (conn-key))
+(defvar claude-code-mcp--current-conn-key)
 (declare-function websocket-openp "websocket" (websocket))
 (declare-function agent-shell-team-ws-connect "agent-shell-team-ws" (url callback))
 (declare-function agent-shell-team-ws-disconnect "agent-shell-team-ws" ())
@@ -2868,11 +2870,40 @@ Delegate to `claude-code-mcp-handle-listPendingReviews'."
 
 ;;; Task queue — enqueue, assign, group tracking
 
+(defun agent-shell-team--resolve-mcp-caller-role ()
+  "Return the role of the agent that initiated the current MCP call, or nil.
+Uses `claude-code-mcp--current-conn-key' (bound dynamically by the MCP
+protocol handler) to look up the connection info, then finds the Emacs
+buffer identified by `agent-shell-buffer-name' in that connection, and
+returns its `agent-shell-team--role' buffer-local value."
+  (when (and (boundp 'claude-code-mcp--current-conn-key)
+             claude-code-mcp--current-conn-key
+             (fboundp 'claude-code-mcp-get-connection-info))
+    (when-let* ((info (claude-code-mcp-get-connection-info
+                       claude-code-mcp--current-conn-key))
+                (buf-name (cdr (assoc 'agent-buffer-name info)))
+                (buf (get-buffer buf-name))
+                ((buffer-live-p buf)))
+      (buffer-local-value 'agent-shell-team--role buf))))
+
 (defun agent-shell-team--handle-tasks-put (raw-input)
   "Process a tasksPut tool call with RAW-INPUT.
 Extract tasks, generate IDs, register groups, and enqueue for assignment.
 Return the number of tasks actually enqueued, or signal an error if
 `agent-shell-team--session-id' is nil."
+  ;; Role guard: only lead and dev agents may dispatch tasks.
+  ;; The check fires only when the call arrives via MCP (conn-key is set);
+  ;; direct Elisp calls (e.g. from the lead's orchestration code) bypass it.
+  (let ((caller-role (agent-shell-team--resolve-mcp-caller-role)))
+    (when (member caller-role '("researcher" "tester"))
+      (let ((msg (format "[team] tasksPut rejected: %s agents cannot dispatch tasks (request from %s)"
+                         caller-role
+                         (or (and (boundp 'claude-code-mcp--current-conn-key)
+                                  claude-code-mcp--current-conn-key)
+                             "unknown"))))
+        (agent-shell-team--log agent-shell-team--session-id msg)
+        (warn "%s" msg)
+        (error "%s" msg))))
   (let ((session-id agent-shell-team--session-id))
     (unless session-id
       (error "Team session not initialized (session-id is nil)"))

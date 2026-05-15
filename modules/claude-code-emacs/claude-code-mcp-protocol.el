@@ -69,6 +69,13 @@
 (declare-function claude-code-mcp-handle-dismissAgent "claude-code-mcp-tools" (params))
 (declare-function claude-code-mcp-handle-messageNamespacePeer "claude-code-mcp-tools" (params))
 
+;;; Caller identification
+
+(defvar claude-code-mcp--current-conn-key nil
+  "The conn-key of the MCP connection that triggered the current tool-call handler.
+Bound dynamically in `claude-code-mcp-handle-message' so that handlers can
+identify which agent connection initiated the request.")
+
 ;;; JSON-RPC Communication
 
 (defun claude-code-mcp-send-response (id result error project-root &optional websocket)
@@ -111,7 +118,8 @@ CONN-KEY identifies the specific connection for pong and pending-request lookup.
 
          ;; Request from server (check method first)
          ((assoc 'method msg)
-          (claude-code-mcp-handle-request msg project-root websocket))
+          (let ((claude-code-mcp--current-conn-key conn-key))
+            (claude-code-mcp-handle-request msg project-root websocket)))
 
          ;; Response to our request
          ((assoc 'id msg)

@@ -204,7 +204,8 @@ PROJECT-ROOT is stored in the info for later retrieval by internal functions."
                     (cons 'ping-timer nil)
                     (cons 'ping-timeout-timer nil)
                     (cons 'last-pong-time nil)
-                    (cons 'reconnect-timer nil))))
+                    (cons 'reconnect-timer nil)
+                    (cons 'agent-buffer-name nil))))
     (puthash conn-key info claude-code-mcp-project-connections)
     info))
 
@@ -242,11 +243,12 @@ use /project/ as their project root for MCP connection scoping."
         (substring path 0 pos)
       path)))
 
-(defun claude-code-mcp-register-port (project-root port)
+(defun claude-code-mcp-register-port (project-root port &optional agent-buffer-name)
   "Register PORT for PROJECT-ROOT.
 Each port gets its own connection slot keyed by {pid}:{project}:{port}.
 Multiple MCP servers (lead + agents) can coexist for the same project
-without clobbering each other's connections."
+without clobbering each other's connections.
+Optional AGENT-BUFFER-NAME identifies the Emacs buffer that owns this MCP server."
   (let* ((resolved-root (claude-code-mcp--resolve-main-project-root project-root))
          (normalized-root (claude-code-normalize-project-root resolved-root))
          (conn-key (claude-code-mcp-make-connection-key normalized-root port)))
@@ -263,10 +265,14 @@ without clobbering each other's connections."
       (claude-code-mcp-disconnect conn-key))
     ;; Initialize connection info for this port
     (claude-code-mcp-initialize-connection-info conn-key normalized-root)
-    ;; Store port
+    ;; Store port and optional agent buffer name
     (let ((info (claude-code-mcp-get-connection-info conn-key)))
-      (setcdr (assoc 'port info) port))
-    (message "MCP server registered on port %d for project %s (conn: %s)" port normalized-root conn-key)
+      (setcdr (assoc 'port info) port)
+      (when agent-buffer-name
+        (setcdr (assoc 'agent-buffer-name info) agent-buffer-name)))
+    (message "MCP server registered on port %d for project %s (conn: %s%s)"
+             port normalized-root conn-key
+             (if agent-buffer-name (format ", buffer: %s" agent-buffer-name) ""))
     ;; Delay connection to allow old WebSocket close frame to complete,
     ;; avoiding MASK errors from close/connect frame collision
     (run-at-time 0.1 nil
