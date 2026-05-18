@@ -38,6 +38,18 @@
 (declare-function my/team-sidebar--render "my-agent-shell-sidebar")
 (declare-function my/approval--receive-request "my-approval-ui"
                   (request))
+(declare-function my/approval--remove-request "my-approval-ui"
+                  (request-id))
+(declare-function agent-shell-team-merge--show-conflict "agent-shell-team-merge"
+                  (request-id error-msg))
+(declare-function agent-shell-team-state-set-task "agent-shell-team-state"
+                  (request-id task-alist))
+(declare-function agent-shell-team-state-set-approval "agent-shell-team-state"
+                  (request-id approval-alist))
+(declare-function agent-shell-team-state-remove-approval "agent-shell-team-state"
+                  (request-id))
+(declare-function agent-shell-team-state-remove-task "agent-shell-team-state"
+                  (request-id))
 (declare-function agent-shell-team-dispatch-prompt-agent "agent-shell-team-dispatch"
                   (agent-id message &optional callback))
 ;; agent-shell-ui — collapsible section system (works in any buffer)
@@ -48,6 +60,12 @@
                   (model &rest args))
 (declare-function agent-shell--make-status-kind-label "agent-shell-styles"
                   (&rest args))
+
+;; Task chat — mirror session updates to task-scoped buffers
+(declare-function agent-shell-team-task-chat--on-status-changed
+                  "agent-shell-team-task-chat" (params))
+(declare-function agent-shell-team-task-chat--on-session-update
+                  "agent-shell-team-task-chat" (params))
 
 ;; Variables from agent-shell-team we reference
 (defvar agent-shell-team--session-id)
@@ -355,6 +373,9 @@ PARAMS contains agent_id, status, project_id (or legacy session_id), current_tas
     (when agent-id
       (message "agent-shell-team-events: agent/statusChanged id=%s status=%s"
                agent-id status)
+      ;; Update agent → task mapping for task chat routing
+      (when (fboundp 'agent-shell-team-task-chat--on-status-changed)
+        (agent-shell-team-task-chat--on-status-changed params))
       ;; Check if agent is registered yet; if not, queue for replay after spawned
       (if (not (agent-shell-team-events--find-agent-buffer agent-id))
           (agent-shell-team-events--queue-event agent-id "agent/statusChanged" params)
@@ -611,6 +632,10 @@ PARAMS contains agent_id, sessionId, and update with sessionUpdate type."
          (update-type (and update
                            (agent-shell-team-events--get-param update "sessionUpdate")))
          (buffer (agent-shell-team-events--find-agent-buffer agent-id)))
+    ;; Mirror to task chat buffer (if agent has an active task with open chat)
+    (when (and agent-id update
+               (fboundp 'agent-shell-team-task-chat--on-session-update))
+      (agent-shell-team-task-chat--on-session-update params))
     (if (not buffer)
         ;; Agent not registered yet — queue for replay after spawned
         (when agent-id
@@ -701,10 +726,140 @@ PARAMS contains agent_id and request (with toolCallId, title, description)."
                  (or description "")))))))
 
 (defun agent-shell-team-events--on-approval-cancelled (params)
-  "Handle approval/cancelled — log cancellation.
+  "Handle approval/cancelled — remove from approval UI.
 PARAMS contains request_id."
   (let ((request-id (agent-shell-team-events--get-param params "request_id")))
-    (message "agent-shell-team-events: approval/cancelled request_id=%s" request-id)))
+    (message "agent-shell-team-events: approval/cancelled request_id=%s" request-id)
+    (when (and request-id (fboundp 'my/approval--remove-request))
+      (my/approval--remove-request request-id))))
+
+;;; Merge approval event handlers
+
+(defun agent-shell-team-events--on-task-implemented (params)
+  "Handle task/implemented — update state and create merge approval.
+PARAMS contains request_id, objective, dev_branch, commit, report_path."
+  (let ((request-id (agent-shell-team-events--get-param params "request_id"))
+        (objective (or (agent-shell-team-events--get-param params "objective")
+                       (agent-shell-team-events--get-param params "message") ""))
+        (dev-branch (agent-shell-team-events--get-param params "dev_branch"))
+        (commit (agent-shell-team-events--get-param params "commit")))
+    (message "agent-shell-team-events: task/implemented request_id=%s branch=%s"
+             request-id dev-branch)
+    ;; Update task state to implemented
+    (when (fboundp 'agent-shell-team-state-set-task)
+      (agent-shell-team-state-set-task
+       request-id
+       `((request_id . ,request-id)
+         (status . "implemented")
+         (objective . ,objective)
+         (dev_branch . ,dev-branch)
+         (commit . ,commit))))
+    ;; Create a merge approval in the approval UI
+    (when (fboundp 'my/approval--receive-request)
+      (my/approval--receive-request
+       (list :request-id (concat "merge:" request-id)
+             :title (format "Merge: %s" (truncate-string-to-width objective 50))
+             :description (format "Branch: %s  Commit: %s"
+                                  (or dev-branch "?") (or commit "?"))
+             :type "choice"
+             :merge-p t
+             :merge-request-id request-id
+             :merge-branch dev-branch
+             :merge-commit commit
+             :items (list (list :id "approve" :label "Approve & Merge" :selected t
+                                :description "Merge the dev branch into main")
+                          (list :id "reject" :label "Reject"
+                                :description "Reject and send back for revision"))
+             :notes ""
+             :timestamp (float-time))))))
+
+(defun agent-shell-team-events--on-merge-approval-created (params)
+  "Handle merge_approval/created — show merge approval in approval UI.
+PARAMS contains approval_id, request_id, task data."
+  (let ((approval-id (agent-shell-team-events--get-param params "approval_id"))
+        (request-id (agent-shell-team-events--get-param params "request_id"))
+        (objective (or (agent-shell-team-events--get-param params "objective") ""))
+        (dev-branch (agent-shell-team-events--get-param params "dev_branch"))
+        (commit (agent-shell-team-events--get-param params "commit")))
+    (message "agent-shell-team-events: merge_approval/created approval=%s task=%s"
+             approval-id request-id)
+    ;; Store in approval state
+    (when (fboundp 'agent-shell-team-state-set-approval)
+      (agent-shell-team-state-set-approval
+       (or approval-id request-id)
+       `((approval_id . ,approval-id)
+         (request_id . ,request-id)
+         (type . "merge_approval")
+         (status . "pending")
+         (objective . ,objective)
+         (dev_branch . ,dev-branch)
+         (commit . ,commit))))
+    ;; Route to approval UI
+    (when (fboundp 'my/approval--receive-request)
+      (my/approval--receive-request
+       (list :request-id (or approval-id (concat "merge:" request-id))
+             :title (format "Merge: %s" (truncate-string-to-width objective 50))
+             :description (format "Branch: %s  Commit: %s"
+                                  (or dev-branch "?") (or commit "?"))
+             :type "choice"
+             :merge-p t
+             :merge-request-id request-id
+             :merge-approval-id approval-id
+             :merge-branch dev-branch
+             :merge-commit commit
+             :items (list (list :id "approve" :label "Approve & Merge" :selected t
+                                :description "Merge the dev branch into main")
+                          (list :id "reject" :label "Reject"
+                                :description "Reject and send back for revision"))
+             :notes ""
+             :timestamp (float-time))))))
+
+(defun agent-shell-team-events--on-merge-approval-merged (params)
+  "Handle merge_approval/merged — merge succeeded, clean up.
+PARAMS contains approval_id, request_id."
+  (let ((approval-id (agent-shell-team-events--get-param params "approval_id"))
+        (request-id (agent-shell-team-events--get-param params "request_id")))
+    (message "agent-shell-team-events: merge_approval/merged approval=%s task=%s"
+             approval-id request-id)
+    ;; Remove from approval state
+    (when (and approval-id (fboundp 'agent-shell-team-state-remove-approval))
+      (agent-shell-team-state-remove-approval approval-id))
+    ;; Remove task from implemented list
+    (when (and request-id (fboundp 'agent-shell-team-state-remove-task))
+      (agent-shell-team-state-remove-task request-id))
+    ;; Remove from approval UI
+    (when (fboundp 'my/approval--remove-request)
+      (my/approval--remove-request
+       (or approval-id (concat "merge:" request-id))))
+    ;; Desktop notification
+    (agent-shell-team--notify "Merge Complete"
+                               (format "Task %s merged successfully" request-id))))
+
+(defun agent-shell-team-events--on-merge-approval-conflict (params)
+  "Handle merge_approval/conflict — show conflict UI.
+PARAMS contains approval_id, request_id, error or details."
+  (let ((approval-id (agent-shell-team-events--get-param params "approval_id"))
+        (request-id (agent-shell-team-events--get-param params "request_id"))
+        (error-msg (or (agent-shell-team-events--get-param params "error")
+                       (agent-shell-team-events--get-param params "details")
+                       "Merge conflict detected")))
+    (message "agent-shell-team-events: merge_approval/conflict approval=%s task=%s"
+             approval-id request-id)
+    ;; Update approval state
+    (when (and approval-id (fboundp 'agent-shell-team-state-set-approval))
+      (agent-shell-team-state-set-approval
+       approval-id
+       `((approval_id . ,approval-id)
+         (request_id . ,request-id)
+         (type . "merge_approval")
+         (status . "conflict"))))
+    ;; Show conflict buffer
+    (when (fboundp 'agent-shell-team-merge--show-conflict)
+      (agent-shell-team-merge--show-conflict
+       (or request-id approval-id) error-msg))
+    ;; Desktop notification
+    (agent-shell-team--notify "Merge Conflict"
+                               (format "Conflict on task %s" request-id))))
 
 ;;; Main dispatcher
 
@@ -731,6 +886,14 @@ Called by the WS module for every incoming server notification."
      (agent-shell-team-events--on-approval-request params))
     ("approval/cancelled"
      (agent-shell-team-events--on-approval-cancelled params))
+    ("task/implemented"
+     (agent-shell-team-events--on-task-implemented params))
+    ("merge_approval/created"
+     (agent-shell-team-events--on-merge-approval-created params))
+    ("merge_approval/merged"
+     (agent-shell-team-events--on-merge-approval-merged params))
+    ("merge_approval/conflict"
+     (agent-shell-team-events--on-merge-approval-conflict params))
     ("task/created"
      (agent-shell-team-events--on-task-created params))
     ("agent/respawned"

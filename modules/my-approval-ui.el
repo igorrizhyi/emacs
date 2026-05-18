@@ -12,7 +12,8 @@
 
 (require 'cl-lib)
 
-(declare-function shell-maker-submit "shell-maker")
+(declare-function agent-shell-chat-buffer-submit-programmatic "agent-shell-chat-buffer"
+                  (buffer text))
 (declare-function evil-define-key* "evil-core")
 (declare-function evil-set-initial-state "evil-core")
 (declare-function agent-shell-team--get-lead "agent-shell-team")
@@ -224,7 +225,7 @@ Returns a plist with :request-id :title :description :type
           (mtime (float-time (file-attribute-modification-time
                               (file-attributes file))))
           title type description items notes refine decisions
-          current-item current-section)
+          merge-meta current-item current-section)
       (with-temp-buffer
         (insert-file-contents file)
         (goto-char (point-min))
@@ -270,6 +271,16 @@ Returns a plist with :request-id :title :description :type
              ;; Type: <!-- type: ... -->
              ((string-match "<!-- *type: *\\([^ ]+\\) *-->" line)
               (setq type (match-string 1 line)))
+             ;; Merge metadata: <!-- merge: request_id=... branch=... commit=... -->
+             ((string-match "<!-- *merge: *\\(.*\\) *-->" line)
+              (let ((meta-str (match-string 1 line)))
+                (setq merge-meta (list))
+                (when (string-match "request_id=\\([^ ]+\\)" meta-str)
+                  (setq merge-meta (plist-put merge-meta :merge-request-id (match-string 1 meta-str))))
+                (when (string-match "branch=\\([^ ]+\\)" meta-str)
+                  (setq merge-meta (plist-put merge-meta :merge-branch (match-string 1 meta-str))))
+                (when (string-match "commit=\\([^ ]+\\)" meta-str)
+                  (setq merge-meta (plist-put merge-meta :merge-commit (match-string 1 meta-str))))))
              ;; Description: > ...
              ((string-match "^> \\(.*\\)" line)
               (setq description
@@ -310,16 +321,21 @@ Returns a plist with :request-id :title :description :type
              ((string-empty-p (string-trim line))
               (setq current-item nil))))
           (forward-line 1)))
-      (list :request-id slug
-            :title (or title slug)
-            :description (or description "")
-            :type (or type "checklist")
-            :items (nreverse items)
-            :notes (or notes "")
-            :refine (or refine "")
-            :decisions (nreverse decisions)
-            :timestamp (or mtime (float-time))
-            :file-mtime mtime))))
+      (append (list :request-id slug
+                    :title (or title slug)
+                    :description (or description "")
+                    :type (or type "checklist")
+                    :items (nreverse items)
+                    :notes (or notes "")
+                    :refine (or refine "")
+                    :decisions (nreverse decisions)
+                    :timestamp (or mtime (float-time))
+                    :file-mtime mtime)
+              (when merge-meta
+                (list :merge-p t
+                      :merge-request-id (plist-get merge-meta :merge-request-id)
+                      :merge-branch (plist-get merge-meta :merge-branch)
+                      :merge-commit (plist-get merge-meta :merge-commit)))))))
 
 (defun my/approval--write-review-file (req)
   "Write request plist REQ back to its markdown review file.
@@ -334,6 +350,12 @@ Full rewrite — files are small (5-30 lines)."
       (insert (format "# %s\n" (or (plist-get req :title) slug)))
       ;; Type
       (insert (format "<!-- type: %s -->\n" (or (plist-get req :type) "checklist")))
+      ;; Merge metadata (if merge approval)
+      (when (plist-get req :merge-p)
+        (insert (format "<!-- merge: request_id=%s branch=%s commit=%s -->\n"
+                        (or (plist-get req :merge-request-id) "")
+                        (or (plist-get req :merge-branch) "")
+                        (or (plist-get req :merge-commit) ""))))
       ;; Description
       (let ((desc (plist-get req :description)))
         (when (and desc (not (string-empty-p desc)))
@@ -393,7 +415,13 @@ Full rewrite — files are small (5-30 lines)."
           (plist-put req :notes (plist-get updated :notes))
           (plist-put req :refine (plist-get updated :refine))
           (plist-put req :decisions (plist-get updated :decisions))
-          (plist-put req :file-mtime (plist-get updated :file-mtime)))))))
+          (plist-put req :file-mtime (plist-get updated :file-mtime))
+          ;; Preserve merge metadata from disk
+          (when (plist-get updated :merge-p)
+            (plist-put req :merge-p t)
+            (plist-put req :merge-request-id (plist-get updated :merge-request-id))
+            (plist-put req :merge-branch (plist-get updated :merge-branch))
+            (plist-put req :merge-commit (plist-get updated :merge-commit))))))))
 
 (defun my/approval--delete-review-file (req)
   "Delete the markdown review file for REQ if it exists."
@@ -838,8 +866,8 @@ For choice type, returns the single selected item's ID."
        "submitApproval"
        (list :request_id request-id
              :selected_items (vconcat selected)
-             :notes (or notes :null)
-             :refine (or refine :null))
+             :notes (or notes :json-null)
+             :refine (or refine :json-null))
        (lambda (_result error)
          (when error
            (message "approval-ui: WS submitApproval failed: %s"
@@ -864,39 +892,44 @@ For choice type, returns the single selected item's ID."
   (let ((req (my/approval--current-request)))
     (unless req
       (user-error "No request selected"))
-    ;; Submit to backend via WS (fire-and-forget with error logging)
-    (my/approval--submit-via-ws req)
-    ;; Also deliver to the lead agent via shell-maker / queue
-    (let* ((msg (my/approval--format-submission req))
-           (lead-buf (agent-shell-team--get-lead agent-shell-team--session-id)))
-      (unless (buffer-live-p lead-buf)
-        (user-error "Lead buffer not found"))
-      (let ((status (agent-shell-team--agent-status lead-buf)))
-        (if (eq status 'idle)
-            (with-current-buffer lead-buf
-              (shell-maker-submit :input msg))
-          (agent-shell-team--queue-message
-           nil lead-buf
-           (list :from "approval-ui"
-                 :title "Approval Response"
-                 :message msg))
-          (agent-shell-team--start-drain-timer)))
-      ;; Delete review file and remove submitted request from list
-      (my/approval--delete-review-file req)
-      (setq my/approval--requests
-            (cl-remove-if (lambda (r)
-                            (equal (plist-get r :request-id)
-                                   (plist-get req :request-id)))
-                          my/approval--requests))
-      (my/approval--clamp-indices)
-      (my/approval--render)
-      (message "Approval submitted.")
-      (when (null my/approval--requests)
-        (my/approval--hide)
-        (let ((target (or (get-mru-window nil nil t)
-                          (next-window nil 'no-minibuf))))
-          (when (and target (window-live-p target))
-            (select-window target)))))))
+    (if (my/approval--merge-p req)
+        ;; Merge approval: backend-only, no lead message
+        (progn
+          (my/approval--submit-merge req)
+          (my/approval--delete-review-file req)
+          (my/approval--remove-request (plist-get req :request-id))
+          (message "Merge approval submitted."))
+      ;; Regular approval: existing flow
+      (my/approval--submit-via-ws req)
+      (let* ((msg (my/approval--format-submission req))
+             (lead-buf (agent-shell-team--get-lead agent-shell-team--session-id)))
+        (unless (buffer-live-p lead-buf)
+          (user-error "Lead buffer not found"))
+        (let ((status (agent-shell-team--agent-status lead-buf)))
+          (if (eq status 'idle)
+              (agent-shell-chat-buffer-submit-programmatic lead-buf msg)
+            (agent-shell-team--queue-message
+             nil lead-buf
+             (list :from "approval-ui"
+                   :title "Approval Response"
+                   :message msg))
+            (agent-shell-team--start-drain-timer)))
+        ;; Delete review file and remove submitted request from list
+        (my/approval--delete-review-file req)
+        (setq my/approval--requests
+              (cl-remove-if (lambda (r)
+                              (equal (plist-get r :request-id)
+                                     (plist-get req :request-id)))
+                            my/approval--requests))
+        (my/approval--clamp-indices)
+        (my/approval--render)
+        (message "Approval submitted.")
+        (when (null my/approval--requests)
+          (my/approval--hide)
+          (let ((target (or (get-mru-window nil nil t)
+                            (next-window nil 'no-minibuf))))
+            (when (and target (window-live-p target))
+              (select-window target))))))))
 
 ;;; ---- Window Management ------------------------------------------------------
 
@@ -950,8 +983,7 @@ remaining requests or an empty state."
         (when (buffer-live-p lead-buf)
           (let ((status (agent-shell-team--agent-status lead-buf)))
             (if (eq status 'idle)
-                (with-current-buffer lead-buf
-                  (shell-maker-submit :input msg))
+                (agent-shell-chat-buffer-submit-programmatic lead-buf msg)
               (agent-shell-team--queue-message
                nil lead-buf
                (list :from "approval-ui"
@@ -1015,7 +1047,13 @@ REQUEST keys: :request-id :title :description :type
           (plist-put request :notes (plist-get disk-req :notes))
           (plist-put request :refine (plist-get disk-req :refine))
           (plist-put request :decisions (plist-get disk-req :decisions))
-          (plist-put request :file-mtime (plist-get disk-req :file-mtime))))))
+          (plist-put request :file-mtime (plist-get disk-req :file-mtime))
+          ;; Preserve merge metadata from disk
+          (when (plist-get disk-req :merge-p)
+            (plist-put request :merge-p t)
+            (plist-put request :merge-request-id (plist-get disk-req :merge-request-id))
+            (plist-put request :merge-branch (plist-get disk-req :merge-branch))
+            (plist-put request :merge-commit (plist-get disk-req :merge-commit)))))))
   ;; Ensure items have proper structure
   (when (equal (plist-get request :type) "checklist")
     (dolist (item (plist-get request :items))
@@ -1098,6 +1136,52 @@ Auto-expand if collapsed and there are pending requests."
         (my/approval--schedule-render)))))
 
 (add-hook 'window-selection-change-functions #'my/approval--on-window-selection-change)
+
+;;; ---- Merge Approval Support ------------------------------------------------
+
+(declare-function agent-shell-team-dispatch-merge-task "agent-shell-team-dispatch"
+                  (task-id &optional callback))
+(declare-function agent-shell-team-api-merge-task "agent-shell-team-api"
+                  (request-id))
+
+(defun my/approval--remove-request (request-id)
+  "Remove the approval request with REQUEST-ID from the queue.
+Used by event handlers when a merge completes or approval is cancelled."
+  (setq my/approval--requests
+        (cl-remove-if (lambda (r)
+                        (equal (plist-get r :request-id) request-id))
+                      my/approval--requests))
+  (my/approval--clamp-indices)
+  (when-let ((buf (get-buffer my/approval-buffer-name)))
+    (when (get-buffer-window buf)
+      (my/approval--render)
+      (when (null my/approval--requests)
+        (my/approval--hide)))))
+
+(defun my/approval--merge-p (req)
+  "Return non-nil if REQ is a merge approval request."
+  (plist-get req :merge-p))
+
+(defun my/approval--submit-merge (req)
+  "Submit a merge approval for REQ.
+Calls mergeTask WS RPC for approved merges, or sends rejection."
+  (let* ((selected-id (car (my/approval--selected-item-ids req)))
+         (merge-request-id (plist-get req :merge-request-id)))
+    (cond
+     ((equal selected-id "approve")
+      (message "approval-ui: executing merge for task %s" merge-request-id)
+      ;; Call mergeTask via WS RPC
+      (when (fboundp 'agent-shell-team-dispatch-merge-task)
+        (agent-shell-team-dispatch-merge-task
+         merge-request-id
+         (lambda (result error)
+           (if error
+               (message "approval-ui: merge RPC error: %s" error)
+             (message "approval-ui: merge RPC result: %s" result))))))
+     ((equal selected-id "reject")
+      (message "approval-ui: rejected merge for task %s" merge-request-id)
+      ;; Send rejection via regular approval flow
+      (my/approval--submit-via-ws req)))))
 
 (provide 'my-approval-ui)
 ;;; my-approval-ui.el ends here

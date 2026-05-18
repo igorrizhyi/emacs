@@ -1256,7 +1256,17 @@
 (autoload 'agent-shell-team-status "agent-shell-team" "Team dashboard." t)
 (setq agent-shell-team-lead-quick-research-backend 'flash-lite)
 (setq agent-shell-team-max-agents-per-role 8)
-(customize-set-variable 'agent-shell-team-backend 'python)
+(customize-set-variable 'agent-shell-team-backend 'elisp)
+
+;; Backend load-path priority: ensure the right agent-shell-team.el
+;; and my-* modules load based on the configured backend.
+;; - elisp: modules/agent-shell/ (old proven monolith) takes priority
+;; - python: modules/ (new split modules) takes priority
+(let ((modules-dir (expand-file-name "modules" doom-user-dir))
+      (old-pkg-dir (expand-file-name "modules/agent-shell" doom-user-dir)))
+  (if (eq agent-shell-team-backend 'elisp)
+      (setq load-path (cons old-pkg-dir (delete old-pkg-dir load-path)))
+    (setq load-path (cons modules-dir (delete modules-dir load-path)))))
 
 (defvar my/agent-shell-pending-worktree-path nil
   "Dynamic variable carrying worktree-path during agent-shell--start.

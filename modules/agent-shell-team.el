@@ -72,6 +72,8 @@
 (declare-function websocket-openp "websocket" (websocket))
 (declare-function agent-shell-team-ws-connect "agent-shell-team-ws" (url callback))
 (declare-function agent-shell-team-ws-disconnect "agent-shell-team-ws" ())
+(declare-function agent-shell-chat-buffer-submit-programmatic "agent-shell-chat-buffer"
+                  (buffer text))
 
 ;;; Devcontainer command prefix
 
@@ -3575,17 +3577,30 @@ SESSION-ID identifies the team.  GROUP contains the completed request IDs."
   "Return non-nil if BUFFER has user-typed text at the prompt."
   (when (buffer-live-p buffer)
     (with-current-buffer buffer
-      (let* ((proc (get-buffer-process buffer))
-             (busy shell-maker--busy)
-             (pm (and proc (marker-position (process-mark proc))))
-             (pmax (point-max))
-             (text (when (and pm (> pmax pm))
-                     (string-trim (buffer-substring-no-properties pm pmax))))
-             (result (and proc (not busy) pm (> pmax pm)
-                         text (not (string-empty-p text)))))
-        (message "pending-input-check: proc=%s busy=%s pm=%s pmax=%s text-len=%s result=%s"
-                 (not (null proc)) busy pm pmax (and text (length text)) result)
-        result))))
+      (if (bound-and-true-p agent-shell-team--server-mode-p)
+          ;; Server-mode (plain chat buffer): check if there's text after the prompt
+          (let* ((marker (bound-and-true-p agent-shell-chat-buffer--history-end))
+                 (prompt-len (length (or (bound-and-true-p agent-shell-chat-buffer--prompt-string) "")))
+                 (input-start (and marker (+ (marker-position marker) prompt-len)))
+                 (busy (bound-and-true-p agent-shell-team-events--turn-in-progress))
+                 (text (when (and input-start (> (point-max) input-start))
+                         (string-trim (buffer-substring-no-properties input-start (point-max)))))
+                 (result (and (not busy) text (not (string-empty-p text)))))
+            (message "pending-input-check [server]: busy=%s input-start=%s pmax=%s text-len=%s result=%s"
+                     busy input-start (point-max) (and text (length text)) result)
+            result)
+        ;; Local-mode (shell-maker): check process mark
+        (let* ((proc (get-buffer-process buffer))
+               (busy (and (boundp 'shell-maker--busy) shell-maker--busy))
+               (pm (and proc (marker-position (process-mark proc))))
+               (pmax (point-max))
+               (text (when (and pm (> pmax pm))
+                       (string-trim (buffer-substring-no-properties pm pmax))))
+               (result (and proc (not busy) pm (> pmax pm)
+                           text (not (string-empty-p text)))))
+          (message "pending-input-check [local]: proc=%s busy=%s pm=%s pmax=%s text-len=%s result=%s"
+                   (not (null proc)) busy pm pmax (and text (length text)) result)
+          result)))))
 
 (defun agent-shell-team--interrupt-agent (buffer agent task session-id)
   "Cancel BUFFER's current turn and deliver TASK immediately.
@@ -3620,11 +3635,9 @@ The task message is enriched with previous-task context."
                  (plist-get task :request-id) (buffer-name buffer)))))))
 
 (defun agent-shell-team--prompt-agent (buffer message)
-  "Deliver MESSAGE to BUFFER's agent via shell-maker-submit.
-This goes through shell-maker's normal prompt flow so that:
-- The message appears in the shell buffer
-- shell-maker--busy is set correctly
-- ACP notifications render in-buffer instead of as stale minibuffer messages.
+  "Deliver MESSAGE to BUFFER's agent.
+For server-mode (plain chat) buffers, uses `agent-shell-chat-buffer-submit-programmatic'.
+For local-mode buffers, uses `shell-maker-submit'.
 If the user has uncommitted text at the prompt, defer delivery by re-queuing."
   (when (buffer-live-p buffer)
     (let ((has-input (agent-shell-team--user-has-pending-input-p buffer)))
@@ -3638,8 +3651,11 @@ If the user has uncommitted text at the prompt, defer delivery by re-queuing."
             (agent-shell-team--start-drain-timer))
         (message "prompt-guard: DELIVERING to %s" (buffer-name buffer))
         (puthash buffer message agent-shell-team--agent-current-task)
-        (with-current-buffer buffer
-          (shell-maker-submit :input (format "«TEAM»\n%s\n«/TEAM»" message)))))))
+        (let ((formatted (format "«TEAM»\n%s\n«/TEAM»" message)))
+          (if (buffer-local-value 'agent-shell-team--server-mode-p buffer)
+              (agent-shell-chat-buffer-submit-programmatic buffer formatted)
+            (with-current-buffer buffer
+              (shell-maker-submit :input formatted))))))))
 
 (defun agent-shell-team--prompt-agent-silent (buffer message)
   "Deliver MESSAGE to BUFFER's agent via raw ACP request.

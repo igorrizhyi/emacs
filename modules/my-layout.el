@@ -342,6 +342,7 @@ If already in the lead buffer, toggle back to the previous buffer."
                  (agent-shell-team-dispatch--python-p))
         (require 'agent-shell-team-ws)
         (require 'agent-shell-team-events)
+        (require 'agent-shell-team-task-sidebar)
         ;; Ensure project exists on backend, then connect WS (no session needed)
         (agent-shell-team--ensure-backend-project)
         (when agent-shell-team--backend-project-id
@@ -350,7 +351,9 @@ If already in the lead buffer, toggle back to the previous buffer."
             (agent-shell-team-ws-connect ws-url
                                          (lambda ()
                                            (message "agent-shell-team: WS connected for project %s"
-                                                    agent-shell-team--backend-project-id))))))
+                                                    agent-shell-team--backend-project-id)
+                                           (agent-shell-team-task-sidebar-show)
+                                           (agent-shell-team-task-sidebar-hydrate))))))
       (let* ((context-buffer (current-buffer))
              (session-id agent-shell-team--session-id))
         (if (and (fboundp 'agent-shell-team-dispatch--python-p)
@@ -380,6 +383,8 @@ If already in the lead buffer, toggle back to the previous buffer."
                      (agent-shell-team--short-session-id session-id))
             (switch-to-buffer buf)
             (agent-shell-team--start-drain-timer)
+            (when (fboundp 'my/team-sidebar--show)
+              (my/team-sidebar--show))
             (unless (with-current-buffer context-buffer (derived-mode-p 'agent-shell-mode))
               (when-let ((text (with-current-buffer context-buffer
                                 (agent-shell--context :shell-buffer buf))))

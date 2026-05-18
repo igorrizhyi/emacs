@@ -521,10 +521,13 @@ Padding ensures the prompt doesn't visually touch the last styled block."
             my/agent-shell-server--current-thought-ov nil)
       ;; Spacing between block and next prompt
       (save-excursion
-        (goto-char (point-max))
+        (goto-char (if (and (boundp 'agent-shell-chat-buffer--history-end)
+                            agent-shell-chat-buffer--history-end)
+                       (marker-position agent-shell-chat-buffer--history-end)
+                     (point-max)))
         (unless (bolp) (insert "\n"))
         (insert "\n")
-        (message "finalize-overlays: added outer spacing at point-max=%s" (point-max))))
+        (message "finalize-overlays: added outer spacing at pos=%s" (point))))
     (message "finalize-overlays: DONE point-max=%s had-overlay=%s tail=%S"
              (point-max) (if last-ov "yes" "no")
              (buffer-substring-no-properties

@@ -342,5 +342,55 @@ Optional CALLBACK receives (result error)."
       (when callback (funcall callback err nil))
       err)))
 
+(defun agent-shell-team-dispatch-send-message-to-agent
+    (agent-id message &optional task-id callback)
+  "Dispatch sendMessageToAgent — send MESSAGE to AGENT-ID.
+Optional TASK-ID provides task context.
+Optional CALLBACK receives (result error)."
+  (if (agent-shell-team-dispatch--python-p)
+      (progn
+        (agent-shell-team-dispatch--log "sendMessageToAgent")
+        (agent-shell-team-dispatch--ws-require)
+        (let ((params `((agent_id . ,agent-id)
+                        (message . ,message)
+                        ,@(when task-id `((task_id . ,task-id))))))
+          (agent-shell-team-ws-call "sendMessageToAgent" params callback)))
+    (let ((err '((success . :json-false)
+                 (message . "sendMessageToAgent requires python backend"))))
+      (when callback (funcall callback err nil))
+      err)))
+
+(defun agent-shell-team-dispatch-send-task-message (task-id message &optional callback)
+  "Dispatch sendTaskMessage — send MESSAGE in context of TASK-ID.
+TASK-ID is the UUID, not the request-id.
+Optional CALLBACK receives (result error)."
+  (if (agent-shell-team-dispatch--python-p)
+      (progn
+        (agent-shell-team-dispatch--log "sendTaskMessage")
+        (agent-shell-team-dispatch--ws-require)
+        (agent-shell-team-ws-call "sendTaskMessage"
+                                   `((task_id . ,task-id)
+                                     (message . ,message))
+                                   callback))
+    (let ((err '((success . :json-false)
+                 (message . "sendTaskMessage requires python backend"))))
+      (when callback (funcall callback err nil))
+      err)))
+
+(defun agent-shell-team-dispatch-merge-task (task-id &optional callback)
+  "Dispatch mergeTask — merge implemented TASK-ID.
+Optional CALLBACK receives (result error)."
+  (if (agent-shell-team-dispatch--python-p)
+      (progn
+        (agent-shell-team-dispatch--log "mergeTask")
+        (agent-shell-team-dispatch--ws-require)
+        (agent-shell-team-ws-call "mergeTask"
+                                   `((task_id . ,task-id))
+                                   callback))
+    (let ((err '((success . :json-false)
+                 (message . "mergeTask requires python backend"))))
+      (when callback (funcall callback err nil))
+      err)))
+
 (provide 'agent-shell-team-dispatch)
 ;;; agent-shell-team-dispatch.el ends here
