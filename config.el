@@ -1399,8 +1399,6 @@ Fedora atomic's /home -> /var/home symlink."
   (require 'my-agent-shell-stuck-busy-fixes)
   ;; Auto-recover from "Session not found" ACP errors
   (require 'my-agent-shell-session-recovery)
-  ;; TEMPORARY: Debug logging for ACP init pipeline (remove when done)
-  (require 'my-agent-shell-debug-logging)
   ;; Animated sprite icon — disabled (user doesn't use it)
   ;; (require 'my-agent-shell-sprite)
   ;; Gemini transient error retry with exponential backoff
