@@ -32,6 +32,7 @@
 (require 'my-search)
 (require 'my-request-human)
 (require 'my-eshell-funcs)
+(require 'my-k8s-quick-actions)
 (require 'my-knowledge-browser)
 
 ;; Exclude .agent-shell from project searches and LSP file watchers

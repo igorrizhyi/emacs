@@ -48,47 +48,15 @@
 ;;; Component 1 — K8s Output Detection
 ;;; ─────────────────────────────────────────────────────────────────────────────
 
-(defun my-k8s--find-output-block-start ()
-  "Return the start position of the kubectl output block at point, or nil.
-
-Finds the earliest `claude-code-terminal-output' overlay at/before point,
-then walks backward through contiguous output overlays to find the true
-start of the block."
-  (let ((block-start nil))
-    ;; Find minimum overlay start among output overlays at point
+(defun my-k8s--get-command-from-overlay ()
+  "Return the command text from the `claude-code-terminal-command' overlay at point.
+Reads directly from the overlay property set during output rendering."
+  (let ((cmd nil))
     (dolist (ov (overlays-at (point)))
-      (when (overlay-get ov 'claude-code-terminal-output)
-        (let ((s (overlay-start ov)))
-          (setq block-start (if block-start (min block-start s) s)))))
-    (when block-start
-      ;; Walk backward through contiguous output overlays
-      (let ((check (1- block-start)))
-        (while (and (> check (point-min))
-                    (cl-some (lambda (ov)
-                               (overlay-get ov 'claude-code-terminal-output))
-                             (overlays-at check)))
-          (setq block-start check)
-          (setq check (1- check))))
-      block-start)))
-
-(defun my-k8s--find-command-for-output ()
-  "Return the command text that produced the output block at point, or nil.
-
-Locates the output block start, steps up one line (the eshell command line),
-and strips the prompt prefix (everything up to and including `$ ' or `❯ ')."
-  (let ((block-start (my-k8s--find-output-block-start)))
-    (when block-start
-      (save-excursion
-        (goto-char block-start)
-        (forward-line -1)
-        (let ((line (string-trim
-                     (buffer-substring-no-properties
-                      (line-beginning-position)
-                      (line-end-position)))))
-          ;; Strip any prompt prefix before the command
-          (if (string-match "[$❯]\\s-+" line)
-              (string-trim (substring line (match-end 0)))
-            line))))))
+      (when-let ((c (overlay-get ov 'claude-code-terminal-command)))
+        (unless (string-empty-p c)
+          (setq cmd c))))
+    cmd))
 
 (defun my-k8s--parse-kubectl-command (cmd)
   "Parse CMD as a kubectl invocation.
@@ -96,7 +64,8 @@ Return (COMMAND-TYPE . NAMESPACE) or nil if CMD is not a kubectl command.
 
 COMMAND-TYPE is one of: pods, deployments, services, containers, generic.
 NAMESPACE defaults to \"webpush\" when not found in CMD."
-  (when (and cmd (string-match-p "\\`kubectl\\b" cmd))
+  (when (and cmd (not (string-empty-p cmd))
+             (string-match-p "kubectl\\b" cmd))
     (let* ((ns (or (and (string-match
                          "\\(?:-n\\|--namespace\\)\\s-+\\(\\S-+\\)" cmd)
                         (match-string 1 cmd))
@@ -111,11 +80,8 @@ NAMESPACE defaults to \"webpush\" when not found in CMD."
 
 (defun my-k8s--in-k8s-output-p ()
   "Return (COMMAND-TYPE . NAMESPACE) if point is inside a kubectl output block.
-Return nil otherwise."
-  (when (cl-some (lambda (ov)
-                   (overlay-get ov 'claude-code-terminal-output))
-                 (overlays-at (point)))
-    (my-k8s--parse-kubectl-command (my-k8s--find-command-for-output))))
+Return nil otherwise.  Reads command from overlay property."
+  (my-k8s--parse-kubectl-command (my-k8s--get-command-from-overlay)))
 
 ;;; ─────────────────────────────────────────────────────────────────────────────
 ;;; Component 2 — Pod Auto-Detection
