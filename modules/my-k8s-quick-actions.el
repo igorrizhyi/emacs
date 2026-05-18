@@ -139,20 +139,22 @@ Matches the first whitespace-delimited token that looks like a k8s resource name
   "Return a propertized string for the inline action menu."
   (let* ((face (list :font (font-spec :family "SF Mono" :weight 'semibold)
                      :height 0.75 :inherit nil :background "#1a1a2e"))
-         (sep (concat "  " (make-string 60 ?─) "\n")))
-    (propertize
-     (concat "\n"
-             sep
-             "\n"
-             "  e — Environment variables   (kubectl exec ... env)\n"
-             "  d — Deployment YAML         (kubectl get deployment ... -o yaml)\n"
-             "  l — Tail logs               (kubectl logs --tail=100 -f ...)\n"
-             "  x — Exec into pod           (kubectl exec -it ... bash)\n"
-             "  D — Describe pod            (kubectl describe pod ...)\n"
-             "  t — Resource usage          (kubectl top pod ...)\n"
-             "\n"
-             sep)
-     'face face)))
+         ;; A space that stretches to the right window edge, carrying the same
+         ;; background face so the coloured block spans the full window width.
+         (fill (propertize " " 'display '(space :align-to right) 'face face))
+         (line (lambda (s) (concat (propertize s 'face face) fill "\n")))
+         (sep (funcall line (concat "  " (make-string 60 ?─)))))
+    (concat "\n"
+            sep
+            (funcall line "")
+            (funcall line "  e — Environment variables   (kubectl exec ... env)")
+            (funcall line "  d — Deployment YAML         (kubectl get deployment ... -o yaml)")
+            (funcall line "  l — Tail logs               (kubectl logs --tail=100 -f ...)")
+            (funcall line "  x — Exec into pod           (kubectl exec -it ... bash)")
+            (funcall line "  D — Describe pod            (kubectl describe pod ...)")
+            (funcall line "  t — Resource usage          (kubectl top pod ...)")
+            (funcall line "")
+            sep)))
 
 (defun my-k8s--show-action-overlay ()
   "Place the action menu overlay at the end of the current line."
