@@ -204,6 +204,21 @@ hides the input area.  Must be called from within the agent buffer."
       (map-elt params (intern key))
       (map-elt params key)))
 
+(defun agent-shell-team-events--plist-to-alist (plist)
+  "Convert a keyword PLIST to a symbol alist.
+E.g. (:request_id \"foo\" :status \"bar\") → ((request_id . \"foo\") (status . \"bar\")).
+Non-plist input is returned as-is."
+  (if (and (listp plist) (keywordp (car-safe plist)))
+      (let (alist)
+        (while plist
+          (let ((key (pop plist))
+                (val (pop plist)))
+            (when (keywordp key)
+              (push (cons (intern (substring (symbol-name key) 1)) val)
+                    alist))))
+        (nreverse alist))
+    plist))
+
 (defun agent-shell-team-events--get-agent-id (params)
   "Extract agent ID from PARAMS, trying agent_id and id keys.
 The backend uses `agent_id' in some frames (spawned, session/update) and
@@ -237,9 +252,33 @@ Returns the buffer or nil if not found.  Also checks buffer-local agent-id."
 ;;; Event handlers
 
 (defun agent-shell-team-events--on-task-status-changed (params)
-  "Handle task/statusChanged — delegate to `agent-shell-team--handle-task-update'.
-PARAMS contains request_id, status, content, commit."
-  (agent-shell-team--handle-task-update params))
+  "Handle task/statusChanged — update state store and delegate to lead routing.
+PARAMS contains request_id, status, content, commit, report_path."
+  ;; Update centralized state so sidebar refreshes in real time
+  (let ((request-id (or (agent-shell-team-events--get-param params "request_id")
+                        (agent-shell-team-events--get-param params "id")))
+        (status (agent-shell-team-events--get-param params "status"))
+        (content (agent-shell-team-events--get-param params "content"))
+        (commit (agent-shell-team-events--get-param params "commit"))
+        (report-path (agent-shell-team-events--get-param params "report_path")))
+    (when (and request-id status (fboundp 'agent-shell-team-state-set-task))
+      (let* ((existing (cdr (assoc request-id agent-shell-team-state--tasks)))
+             (task-alist `((request_id . ,request-id)
+                           (status . ,status)
+                           ,@(when commit `((commit . ,commit)))
+                           ,@(when report-path `((report_path . ,report-path)))
+                           ,@(when content `((content . ,content))))))
+        ;; Merge with existing task data to preserve role, objective, etc.
+        (when existing
+          (dolist (pair existing)
+            (unless (assoc (car pair) task-alist)
+              (push pair task-alist))))
+        (agent-shell-team-state-set-task request-id task-alist))))
+  ;; Existing lead routing + SQLite persistence.
+  ;; handle-task-update expects alist keys (symbols/strings), but WS params
+  ;; are plists with keyword keys.  Convert to alist for compatibility.
+  (agent-shell-team--handle-task-update
+   (agent-shell-team-events--plist-to-alist params)))
 
 (defun agent-shell-team-events--on-task-group-complete (params)
   "Handle task/groupComplete — delegate to `agent-shell-team--notify-group-complete'.
@@ -678,12 +717,149 @@ PARAMS contains agent_id, sessionId, and update with sessionUpdate type."
   "Plist of the current pending permission request, or nil.")
 
 (defun agent-shell-team-events--on-task-created (params)
-  "Handle task/created — log new task creation.
+  "Handle task/created — register task in state store as pending.
 PARAMS is the full task object."
   (let ((request-id (agent-shell-team-events--get-param params "request_id"))
-        (role (agent-shell-team-events--get-param params "role")))
+        (role (agent-shell-team-events--get-param params "role"))
+        (message-text (or (agent-shell-team-events--get-param params "message") "")))
     (message "agent-shell-team-events: task/created request_id=%s role=%s"
-             request-id role)))
+             request-id role)
+    (when (and request-id (fboundp 'agent-shell-team-state-set-task))
+      (agent-shell-team-state-set-task
+       request-id
+       `((request_id . ,request-id)
+         (status . "pending")
+         (role . ,role)
+         (message . ,message-text))))))
+
+(defun agent-shell-team-events--on-task-assigned (params)
+  "Handle task/assigned — update task status to assigned.
+PARAMS contains request_id, agent_id, role."
+  (let ((request-id (agent-shell-team-events--get-param params "request_id"))
+        (agent-id (agent-shell-team-events--get-param params "agent_id"))
+        (role (agent-shell-team-events--get-param params "role")))
+    (message "agent-shell-team-events: task/assigned request_id=%s agent=%s"
+             request-id agent-id)
+    (when (and request-id (fboundp 'agent-shell-team-state-set-task))
+      (let* ((existing (cdr (assoc request-id agent-shell-team-state--tasks)))
+             (task-alist `((request_id . ,request-id)
+                           (status . "assigned")
+                           ,@(when agent-id `((agent_id . ,agent-id)))
+                           ,@(when role `((role . ,role))))))
+        (when existing
+          (dolist (pair existing)
+            (unless (assoc (car pair) task-alist)
+              (push pair task-alist))))
+        (agent-shell-team-state-set-task request-id task-alist)))))
+
+(defun agent-shell-team-events--on-task-objective-extracted (params)
+  "Handle task/objective_extracted — update task objective text.
+PARAMS contains id (UUID) or request_id, and objective."
+  (let ((request-id (or (agent-shell-team-events--get-param params "request_id")
+                        (agent-shell-team-events--resolve-task-id
+                         (agent-shell-team-events--get-param params "id"))))
+        (objective (agent-shell-team-events--get-param params "objective")))
+    (message "agent-shell-team-events: task/objective_extracted request_id=%s"
+             request-id)
+    (when (and request-id objective (fboundp 'agent-shell-team-state-set-task))
+      (let* ((existing (cdr (assoc request-id agent-shell-team-state--tasks)))
+             (task-alist `((request_id . ,request-id)
+                           (objective . ,objective))))
+        ;; Merge existing fields, but let objective override
+        (when existing
+          (dolist (pair existing)
+            (unless (assoc (car pair) task-alist)
+              (push pair task-alist))))
+        (unless (assoc 'status task-alist)
+          (push '(status . "assigned") task-alist))
+        (agent-shell-team-state-set-task request-id task-alist)))))
+
+(defun agent-shell-team-events--on-task-awaiting-user (params)
+  "Handle task/awaiting_user — mark task as needing user attention.
+PARAMS contains request_id."
+  (let ((request-id (agent-shell-team-events--get-param params "request_id")))
+    (message "agent-shell-team-events: task/awaiting_user request_id=%s" request-id)
+    (when (and request-id (fboundp 'agent-shell-team-state-set-task))
+      (let* ((existing (cdr (assoc request-id agent-shell-team-state--tasks)))
+             (task-alist `((request_id . ,request-id)
+                           (status . "awaiting_user"))))
+        (when existing
+          (dolist (pair existing)
+            (unless (assoc (car pair) task-alist)
+              (push pair task-alist))))
+        (agent-shell-team-state-set-task request-id task-alist)))
+    (agent-shell-team--notify "Action Required"
+                               (format "Task %s needs your input" request-id))))
+
+(defun agent-shell-team-events--on-task-submitted (params)
+  "Handle task/submitted — user responded, task resumes.
+PARAMS contains request_id."
+  (let ((request-id (agent-shell-team-events--get-param params "request_id")))
+    (message "agent-shell-team-events: task/submitted request_id=%s" request-id)
+    (when (and request-id (fboundp 'agent-shell-team-state-set-task))
+      (let* ((existing (cdr (assoc request-id agent-shell-team-state--tasks)))
+             (task-alist `((request_id . ,request-id)
+                           (status . "assigned"))))
+        (when existing
+          (dolist (pair existing)
+            (unless (assoc (car pair) task-alist)
+              (push pair task-alist))))
+        (agent-shell-team-state-set-task request-id task-alist)))))
+
+(defun agent-shell-team-events--on-task-finished (params)
+  "Handle task/finished — mark task as completed.
+PARAMS contains request_id, report_path."
+  (let ((request-id (agent-shell-team-events--get-param params "request_id"))
+        (report-path (agent-shell-team-events--get-param params "report_path")))
+    (message "agent-shell-team-events: task/finished request_id=%s" request-id)
+    (when (and request-id (fboundp 'agent-shell-team-state-set-task))
+      (let* ((existing (cdr (assoc request-id agent-shell-team-state--tasks)))
+             (task-alist `((request_id . ,request-id)
+                           (status . "finished")
+                           ,@(when report-path `((report_path . ,report-path))))))
+        (when existing
+          (dolist (pair existing)
+            (unless (assoc (car pair) task-alist)
+              (push pair task-alist))))
+        (agent-shell-team-state-set-task request-id task-alist)))))
+
+(defun agent-shell-team-events--on-task-conflict (params)
+  "Handle task/conflict — mark task as having a conflict.
+PARAMS contains request_id, error or details."
+  (let ((request-id (agent-shell-team-events--get-param params "request_id"))
+        (error-msg (or (agent-shell-team-events--get-param params "error")
+                       (agent-shell-team-events--get-param params "details"))))
+    (message "agent-shell-team-events: task/conflict request_id=%s" request-id)
+    (when (and request-id (fboundp 'agent-shell-team-state-set-task))
+      (let* ((existing (cdr (assoc request-id agent-shell-team-state--tasks)))
+             (task-alist `((request_id . ,request-id)
+                           (status . "conflict")
+                           ,@(when error-msg `((error . ,error-msg))))))
+        (when existing
+          (dolist (pair existing)
+            (unless (assoc (car pair) task-alist)
+              (push pair task-alist))))
+        (agent-shell-team-state-set-task request-id task-alist)))
+    (agent-shell-team--notify "Task Conflict"
+                               (format "Conflict on task %s" request-id))))
+
+(defun agent-shell-team-events--on-task-merged (params)
+  "Handle task/merged — remove task from sidebar.
+PARAMS contains request_id."
+  (let ((request-id (agent-shell-team-events--get-param params "request_id")))
+    (message "agent-shell-team-events: task/merged request_id=%s" request-id)
+    (when (and request-id (fboundp 'agent-shell-team-state-remove-task))
+      (agent-shell-team-state-remove-task request-id))))
+
+(defun agent-shell-team-events--resolve-task-id (uuid)
+  "Resolve a task UUID to its request_id by scanning state.
+Returns request_id if found, UUID otherwise."
+  (or (when uuid
+        (catch 'found
+          (dolist (entry agent-shell-team-state--tasks)
+            (when (equal (alist-get 'id (cdr entry)) uuid)
+              (throw 'found (car entry))))))
+      uuid))
 
 (defun agent-shell-team-events--on-agent-respawned (params)
   "Handle agent/respawned — update or create agent buffer.
@@ -896,6 +1072,20 @@ Called by the WS module for every incoming server notification."
      (agent-shell-team-events--on-merge-approval-conflict params))
     ("task/created"
      (agent-shell-team-events--on-task-created params))
+    ("task/assigned"
+     (agent-shell-team-events--on-task-assigned params))
+    ("task/objective_extracted"
+     (agent-shell-team-events--on-task-objective-extracted params))
+    ("task/awaiting_user"
+     (agent-shell-team-events--on-task-awaiting-user params))
+    ("task/submitted"
+     (agent-shell-team-events--on-task-submitted params))
+    ("task/finished"
+     (agent-shell-team-events--on-task-finished params))
+    ("task/conflict"
+     (agent-shell-team-events--on-task-conflict params))
+    ("task/merged"
+     (agent-shell-team-events--on-task-merged params))
     ("agent/respawned"
      (agent-shell-team-events--on-agent-respawned params))
     ("agent/session/request_permission"
@@ -903,6 +1093,7 @@ Called by the WS module for every incoming server notification."
     ;; Silent — modeline/polling only
     ("quota/update" nil)
     ("agent/usage" nil)
+    ("agent/escalation" nil)
     (_
      (message "agent-shell-team-events: unknown method %S" method))))
 
