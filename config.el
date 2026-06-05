@@ -750,7 +750,18 @@
         :desc "Complete" "TAB" #'corfu-complete
         :desc "Complete" "<tab>" #'corfu-complete
         :desc "Previous" "S-TAB" #'corfu-previous
-        :desc "Previous" "<backtab>" #'corfu-previous))
+        :desc "Previous" "<backtab>" #'corfu-previous)
+
+  ;; Guard against malformed posn from posn-at-point in eshell/comint.
+  ;; posn-at-point can return a truncated 4-element posn (frame instead of
+  ;; window, no object-width-height slot) when buffer output is being inserted
+  ;; asynchronously.  corfu--popup-show calls (cdr (posn-object-width-height
+  ;; pos)) which yields nil, then (max <n> nil) crashes.  Silently skip the
+  ;; popup when the posn is malformed — post-command-hook retries next cycle.
+  (define-advice corfu--popup-show (:around (fn pos &rest args) guard-posn)
+    "Skip popup display when posn is malformed (e.g. from async eshell output)."
+    (when (and pos (posn-x-y pos))
+      (apply fn pos args))))
 
 ;; Smart window navigation function for C-h
 (defun my/smart-move-left ()
