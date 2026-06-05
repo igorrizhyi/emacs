@@ -2089,7 +2089,7 @@ The process sentinel will handle that when the subprocess actually exits."
           (remhash terminal-id claude-code-terminal-shell-stack)
           (remhash terminal-id claude-code-terminal-embedded-shells)
           ;; Strip read-only properties left by subprocess output
-          (when-let ((buf (claude-code-terminal-get-buffer terminal-id)))
+          (when-let ((buf (claude-code-terminal-get-by-id terminal-id)))
             (with-current-buffer buf
               (let ((inhibit-read-only t))
                 (remove-text-properties (point-min) (point-max) '(read-only nil)))))

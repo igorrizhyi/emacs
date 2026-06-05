@@ -132,6 +132,8 @@ Set to nil and run `doom sync' to switch back to upstream.")
 
 (package! elsqlite :recipe (:host github :repo "dusanx/elsqlite"))
 
+(package! org-side-tree :disable t)
+
 ;; Doom's packages are pinned to a specific commit and updated from release to
 ;; ?release. The `unpin!' macro allows you to unpin single packages... (unpin!
 ;; pinned-package) ...or multiple packages (unpin! pinned-package
