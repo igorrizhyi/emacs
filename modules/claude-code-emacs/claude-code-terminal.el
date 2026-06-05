@@ -118,6 +118,10 @@ These commands typically create interactive sessions or long-running processes."
 (defvar claude-code-terminal-debug-mode nil
   "Enable debug messages for shell nesting detection.")
 
+(defvar-local claude-code-terminal--cleanup-in-progress nil
+  "When non-nil, `claude-code-terminal--kill-guard' allows the buffer to be killed.
+Set to t by the exit sentinel and any other intentional cleanup code.")
+
 ;;; Directory Tracking Functions
 
 (defun claude-code-terminal-sync-directory (terminal-id)
@@ -1314,6 +1318,8 @@ Called after Enter, C-c, or C-d keystrokes."
                    (bound-and-true-p claude-code-terminal-id)))
         (message "Terminal %s closed"
                  (with-current-buffer buf claude-code-terminal-id))
+        (with-current-buffer buf
+          (setq claude-code-terminal--cleanup-in-progress t))
         (kill-buffer buf)))))
 
 ;; Add cleanup hook
@@ -1887,6 +1893,19 @@ Called explicitly from create functions to avoid eshell-mode-hook race condition
     ;; Just check the basic focus flag for now - remove complex window checking
     (and terminal-id focus-flag)))
 
+(defun claude-code-terminal--kill-guard ()
+  "Return nil to block unauthorized kills of claude-code-terminal buffers.
+Added to `kill-buffer-query-functions' (buffer-local) when the mode is enabled.
+Authorized kills:
+  - `claude-code-terminal--cleanup-in-progress' is t (programmatic cleanup)
+  - Interactive invocation (user explicitly chose to kill)"
+  (cond
+   (claude-code-terminal--cleanup-in-progress t)
+   ((called-interactively-p 'any) t)
+   (t
+    (message "claude-code-terminal: blocked external kill of %s" (buffer-name))
+    nil)))
+
 (define-minor-mode claude-code-terminal-mode
   "Minor mode for Claude Code terminal buffers."
   :lighter " CC-Term"
@@ -1903,6 +1922,14 @@ Called explicitly from create functions to avoid eshell-mode-hook race condition
                    (get-buffer-process (current-buffer)))
           (set-process-sentinel (get-buffer-process (current-buffer))
                                #'claude-code-terminal--eshell-exit-sentinel))
+
+        ;; Block unauthorized kills (e.g. persp-mode foreign-buffer cleanup with 'kill setting)
+        (add-hook 'kill-buffer-query-functions #'claude-code-terminal--kill-guard nil t)
+
+        ;; Ensure this buffer is registered in the current perspective so persp-mode
+        ;; does not treat it as "foreign" and kill it on workspace switches.
+        (when (bound-and-true-p persp-mode)
+          (persp-add-buffer (current-buffer)))
 
         ;; Ensure mode-line is visible (don't override, let telephone-line handle it)
         (unless mode-line-format
