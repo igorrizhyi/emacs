@@ -139,8 +139,24 @@
     (let ((default-directory (format "/podman:%s:%s" choice default-directory)))
       (eshell 'N))))
 
+;; SSH eshell integration — open eshell on a remote host via TRAMP
+(defun eshell-ssh ()
+  "Pick an SSH host from ~/.ssh/config and open eshell on it."
+  (interactive)
+  (let* ((hosts
+          (cl-loop for line in (split-string
+                                (shell-command-to-string "grep -i '^Host ' ~/.ssh/config 2>/dev/null")
+                                "\n" t)
+                   for host = (string-trim (replace-regexp-in-string "^[Hh]ost " "" line))
+                   unless (string-match-p "[*?]" host)
+                   collect host))
+         (choice (completing-read "SSH host: " hosts nil t)))
+    (let ((default-directory (format "/ssh:%s:~/" choice)))
+      (eshell 'N))))
+
 (require 'my-magit-utils)
 (require 'my-dired-extension)
+(require 'my-org-sidebar)
 (require 'text-functions)
 (require' claude-code-emacs)
 
@@ -198,6 +214,9 @@
   (setq persp-auto-resume-time -1)
   ;; Override workspaces module - open dired instead of find-file on project switch
   (setq projectile-switch-project-action #'projectile-dired))
+
+;; Prevent persp-mode from killing eshell buffers as "foreign"
+(add-hook 'eshell-mode-hook (lambda () (setq-local doom-real-buffer-p t)))
 
 ;; Keep HYPRLAND_INSTANCE_SIGNATURE current
 (defun my/update-hyprland-signature ()
@@ -1276,6 +1295,7 @@
 
 ;; Bridge agent-shell with our Emacs MCP server
 (add-to-list 'load-path (expand-file-name "modules" doom-user-dir))
+(add-to-list 'load-path (expand-file-name "modules/agent-shell" doom-user-dir))
 (autoload 'agent-shell-emacs-mcp "agent-shell-emacs-mcp" "Start Claude with Emacs MCP integration." t)
 (autoload 'agent-shell-team "agent-shell-team" "Start multi-agent team session." t)
 (autoload 'agent-shell-team-status "agent-shell-team" "Team dashboard." t)
