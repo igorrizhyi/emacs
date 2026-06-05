@@ -9,8 +9,16 @@ export const bufferResourceHandler: ResourceHandler = {
       const result = await bridge.sendRequest('get-open-buffers', { includeHidden: false });
       console.log('Buffer list result:', JSON.stringify(result, null, 2));
 
-      // The response from Emacs doesn't include 'success' field, just check for buffers array
-      if (!result || !Array.isArray(result.buffers)) {
+      // Emacs encodes empty lists as JSON null (Elisp nil = null).
+      // Treat null as an empty array; only fail if result itself is missing.
+      if (!result) {
+        console.log('Returning empty array due to failed check');
+        return [];
+      }
+      if (result.buffers === null || result.buffers === undefined) {
+        return [];
+      }
+      if (!Array.isArray(result.buffers)) {
         console.log('Returning empty array due to failed check');
         return [];
       }

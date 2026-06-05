@@ -202,7 +202,7 @@ For edit mode (command not yet executed):
                   (modified . ,(if (buffer-modified-p buffer) t json-false)))
                 buffers))))
 
-    `((buffers . ,(nreverse buffers)))))
+    `((buffers . ,(vconcat (nreverse buffers))))))
 
 (defun claude-code-mcp-handle-getCurrentSelection (_params)
   "Handle getCurrentSelection request."

@@ -43,6 +43,19 @@
                   (should (assoc 'modified buffer-info))))))
         (kill-buffer test-buffer)))))
 
+(ert-deftest test-mcp-handle-getOpenBuffers-empty ()
+  "Test getOpenBuffers returns a JSON-array-compatible vector when no buffers match.
+Regression test: Elisp nil (empty list) encodes to JSON null, not [].
+Using vconcat ensures the result is always a vector (JSON array)."
+  (cl-letf (((symbol-function 'projectile-project-root)
+             (lambda () "/nonexistent/project/")))
+    (let ((result (claude-code-mcp-handle-getOpenBuffers '((includeHidden . nil)))))
+      (should (assoc 'buffers result))
+      (let ((buffers (cdr (assoc 'buffers result))))
+        ;; Must be a vector, not nil — nil JSON-encodes to null, breaking TypeScript Array.isArray check
+        (should (vectorp buffers))
+        (should (= (length buffers) 0))))))
+
 (ert-deftest test-mcp-handle-getCurrentSelection ()
   "Test getCurrentSelection handler."
   (with-temp-buffer
